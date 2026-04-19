@@ -30,36 +30,36 @@ lca-normalization-engine/
 ### Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  HISTORICAL BACKFILL (one-time)                                         │
-│                                                                         │
-│  Local Archive ──▶ cli-tool seed ──▶ BullMQ (ingest-tasks)             │
-│                                            │                            │
-│                                            ▼                            │
-│                                    ingestor worker                      │
-│                                    (xlstream, ≤250MB RAM)               │
-│                                            │                            │
-│                          ┌─────────────────┴──────────────────┐        │
-│                          ▼                                     ▼        │
+┌──────────────────────────────────────────────────────────────────────────┐
+│  HISTORICAL BACKFILL (one-time)                                          │
+│                                                                          │
+│  Local Archive ──▶ cli-tool seed ──▶ BullMQ (ingest-tasks)               │
+│                                            │                             │
+│                                            ▼                             │
+│                                    ingestor worker                       │
+│                                    (xlstream, ≤250MB RAM)                │
+│                                            │                             │
+│                          ┌─────────────────┴──────────────────┐          │
+│                          ▼                                    ▼          │
 │                  valid records                         invalid records   │
 │                  pg-copy-streams                       staging.          │
 │                  lca_records (JSONB)                   quarantine_records│
-│                          │                                              │
-│                          ▼                                              │
-│                  BullMQ (nlp-tasks) ──▶ nlp-worker (Python)            │
-│                                              │                          │
-│                                    SOC classification (BERT)            │
-│                                    Employer dedup (3-layer)             │
-│                                              │                          │
-│                                              ▼                          │
-│                                    lca_records UPDATE (soc_code,        │
-│                                               canonical_employer_id)    │
-└─────────────────────────────────────────────────────────────────────────┘
+│                          │                                               │
+│                          ▼                                               │
+│                  BullMQ (nlp-tasks) ──▶ nlp-worker (Python)              │
+│                                              │                           │
+│                                    SOC classification (BERT)             │
+│                                    Employer dedup (3-layer)              │
+│                                              │                           │
+│                                              ▼                           │
+│                                    lca_records UPDATE (soc_code,         │
+│                                               canonical_employer_id)     │
+└──────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  PRODUCTION MODE (ongoing quarterly)                                    │
 │                                                                         │
-│  DOL Website ──▶ harvester (cron) ──▶ Shared Volume (/data/downloads)  │
+│  DOL Website ──▶ harvester (cron) ──▶ Shared Volume (/data/downloads)   │
 │                                              │                          │
 │                                              ▼                          │
 │                                    BullMQ (ingest-tasks)                │
@@ -295,10 +295,10 @@ table check).
 cli-tool ──┐
 ingestor ──┤──▶ @lca/db-lib ──▶ PostgreSQL 16
 harvester ─┘         │                │
-                      │           (pg_trgm, pgvector,
-                      │            jsonb_path_ops)
-                      │
-                 zod (validation)
+                     │           (pg_trgm, pgvector,
+                     │            jsonb_path_ops)
+                     │
+               zod (validation)
 
 nlp-engine (Python) ──▶ PostgreSQL 16 (soc_code, canonical_employer_id writes)
                     └──▶ Redis (results stream: lca:nlp-results)
