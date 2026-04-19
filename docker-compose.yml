@@ -1,0 +1,138 @@
+##############################################################################
+# LCA Normalization Engine — Local "Historical Backfill" Stack
+#
+# Services:
+#   db               PostgreSQL 16 with declarative partitioning
+#   redis            Redis 7 — BullMQ backend
+#   nlp-worker       Python NLP worker (SOC classification + entity resolution)
+#   ingestion-worker Node.js BullMQ worker (XLSX → PostgreSQL COPY)
+#
+# Usage:
+#   cp .env.example .env          # configure credentials / paths
+#   docker compose up -d          # start all services
+#   docker compose logs -f        # tail logs
+##############################################################################
+
+services:
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL 16
+  # --------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: lca_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lca_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lca_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-lca_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    command:
+      # Tuning for bulk-load workloads (12M rows)
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - synchronous_commit=off   # safe for backfill; re-enable for production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lca_user} -d ${POSTGRES_DB:-lca_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # Redis 7
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: lca_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # NLP Worker (Python)
+  # Runs packages/nlp-engine — SOC classification + entity resolution
+  # --------------------------------------------------------------------------
+  nlp-worker:
+    build:
+      context: ./packages/nlp-engine
+      dockerfile: Dockerfile
+    container_name: lca_nlp_worker
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lca_user}:${POSTGRES_PASSWORD:-lca_pass}@db:5432/${POSTGRES_DB:-lca_db}
+      NLP_MODEL_PATH: /app/models/soc-bert
+      NLP_WORKER_CONCURRENCY: ${NLP_WORKER_CONCURRENCY:-2}
+      NLP_DEVICE: ${NLP_DEVICE:-cpu}
+    volumes:
+      # Mount local model weights so they are not baked into the image
+      - ./models:/app/models:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # --------------------------------------------------------------------------
+  # Ingestion Worker (Node.js)
+  # Runs apps/ingestor — XLSX streaming → pg-copy-streams → PostgreSQL
+  # --------------------------------------------------------------------------
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: apps/ingestor/Dockerfile
+    container_name: lca_ingestion_worker
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lca_user}:${POSTGRES_PASSWORD:-lca_pass}@db:5432/${POSTGRES_DB:-lca_db}
+      INGESTOR_CONCURRENCY: ${INGESTOR_CONCURRENCY:-4}
+      INGESTOR_BATCH_SIZE: ${INGESTOR_BATCH_SIZE:-5000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      # Mount the local LCA archive so the worker can access XLSX files
+      - ${LOCAL_FILES_DIR:-./data}:/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# --------------------------------------------------------------------------
+# Named volumes (Docker-managed, survives container restarts)
+# --------------------------------------------------------------------------
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local

@@ -1,0 +1,21 @@
+{
+  "name": "ingestor",
+  "version": "0.1.0",
+  "description": "BullMQ worker that streams large XLSX files into PostgreSQL via pg-copy-streams",
+  "type": "module",
+  "main": "./index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@lca/db-lib": "workspace:*",
+    "bullmq": "^5.12.0",
+    "xlstream": "^2.3.0",
+    "ioredis": "^5.3.2",
+    "dotenv": "^16.4.0",
+    "pino": "^9.2.0"
+  }
+}

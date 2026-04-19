@@ -1,0 +1,25 @@
+{
+  "name": "lca-normalization-engine",
+  "version": "0.1.0",
+  "description": "High-load monorepo for processing and normalizing 12M+ LCA records from the US Department of Labor",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "db:init": "pnpm --filter cli-tool run db:init",
+    "ingestor:start": "pnpm --filter ingestor run start",
+    "harvester:start": "pnpm --filter harvester run start",
+    "lint": "pnpm -r run lint",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0"
+  }
+}

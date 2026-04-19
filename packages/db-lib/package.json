@@ -1,0 +1,24 @@
+{
+  "name": "@lca/db-lib",
+  "version": "0.1.0",
+  "description": "Shared PostgreSQL client library with bulk COPY streaming into JSONB partitioned tables",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./migrations": "./migrations/index.js",
+    "./schema": "./schema/index.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "pg": "^8.13.0",
+    "pg-copy-streams": "^6.0.6",
+    "pg-pool": "^3.7.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.0"
+  }
+}
