@@ -10,14 +10,23 @@
   },
   "scripts": {
     "db:init": "pnpm --filter cli-tool run db:init",
+    "seed": "pnpm --filter cli-tool run seed",
+    "queue:stats": "node apps/cli-tool/index.js queue:stats",
     "ingestor:start": "pnpm --filter ingestor run start",
+    "ingestor:dev": "pnpm --filter ingestor run dev",
     "harvester:start": "pnpm --filter harvester run start",
+    "harvester:dev": "pnpm --filter harvester run dev",
     "lint": "pnpm -r run lint",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "docker:build": "docker compose build",
+    "docker:restart": "docker compose down && docker compose up -d",
+    "up": "docker compose up -d",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f"
   },
   "devDependencies": {
     "eslint": "^9.0.0"

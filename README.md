@@ -306,6 +306,71 @@ nlp-engine (Python) ──▶ PostgreSQL 16 (soc_code, canonical_employer_id wri
 
 ---
 
+## Commands Reference
+
+All commands are run from the **monorepo root** via `pnpm`.
+
+### Infrastructure (Docker)
+
+| Command | Short | Description |
+|---|---|---|
+| `pnpm docker:up` | `pnpm up` | Start all Docker services (db, redis, workers) in detached mode |
+| `pnpm docker:down` | `pnpm down` | Stop and remove all Docker containers |
+| `pnpm docker:logs` | `pnpm logs` | Tail logs from all running Docker services |
+| `pnpm docker:build` | — | Rebuild all Docker images (nlp-worker, ingestion-worker) |
+| `pnpm docker:restart` | — | Stop all containers and start them again |
+
+### Database
+
+| Command | Description |
+|---|---|
+| `pnpm db:init` | Initialise PostgreSQL schema — creates extensions (`pg_trgm`, `pgvector`, `btree_gin`), partitioned tables, indexes, and the quarantine schema |
+
+### Data Pipeline
+
+| Command | Description |
+|---|---|
+| `pnpm seed` | Seed the BullMQ task tree — enqueues one ingest job per XLSX file, grouped by filing year. Pass args via `pnpm seed -- --files-dir /path --dry-run` |
+| `pnpm queue:stats` | Display current BullMQ queue depth, active/waiting/completed/failed job counts |
+| `pnpm ingestor:start` | Start the ingestor BullMQ worker (XLSX streaming → validation → `COPY` to PostgreSQL) |
+| `pnpm ingestor:dev` | Start the ingestor in watch mode — auto-restarts on file changes |
+| `pnpm harvester:start` | Start the harvester cron service (polls DOL for new quarterly releases) |
+| `pnpm harvester:dev` | Start the harvester in watch mode — auto-restarts on file changes |
+
+### Code Quality
+
+| Command | Description |
+|---|---|
+| `pnpm lint` | Run ESLint across all JavaScript/TypeScript workspaces recursively |
+| `pnpm build` | Build all packages and apps across the monorepo |
+| `pnpm test` | Run `node --test` in every workspace that defines a test script |
+
+### NLP Engine (Python)
+
+Run from `packages/nlp-engine/` after installing with `pip install -e ".[dev]"`:
+
+| Command | Description |
+|---|---|
+| `nlp-worker` | Start the Python NLP worker — listens for BullMQ jobs from Redis |
+| `classify-soc` | CLI entry point for SOC code classification using the fine-tuned BERT model |
+| `dedup-companies` | CLI entry point for the 3-layer employer deduplication pipeline |
+| `ruff check .` | Lint Python source code |
+| `mypy .` | Run static type checking on Python source |
+| `pytest` | Run Python test suite |
+
+### Per-Package Scripts
+
+Each workspace exposes its own scripts, runnable via `pnpm --filter <name> run <script>`:
+
+| Package | Scripts |
+|---|---|
+| `@lca/db-lib` | `test`, `lint` |
+| `ingestor` | `start`, `dev`, `test`, `lint` |
+| `harvester` | `start`, `dev`, `test`, `lint` |
+| `cli-tool` | `start`, `db:init`, `seed`, `test`, `lint` |
+
+---
+
 ## Environment Variables
 
 See `.env.example` for the full list. Key variables:
