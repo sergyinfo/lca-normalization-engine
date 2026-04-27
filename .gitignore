@@ -49,3 +49,5 @@ redis-data/
 packages/nlp-engine/models/*.bin
 packages/nlp-engine/models/*.pt
 packages/nlp-engine/models/*.safetensors
+
+data

@@ -71,30 +71,43 @@ export async function closePool() {
 // ---------------------------------------------------------------------------
 
 /**
- * Streams an array of plain JS objects into a PostgreSQL table using COPY FROM STDIN.
- * Each object is serialised as a single JSONB column row.
+ * Streams rows into a PostgreSQL table using COPY FROM STDIN.
  *
- * The target table must have the shape:
- *   CREATE TABLE <table> (data JSONB NOT NULL, ...);
+ * Supports two calling conventions:
+ *   1. Single JSONB column:  { table, column, rows: [obj, ...] }
+ *   2. Multi-column:         { table, columns: ['a','b','data'], rows: [[v1,v2,obj], ...] }
  *
  * @param {object}   opts
- * @param {string}   opts.table         - Target table name (e.g. 'lca_records')
- * @param {string}   [opts.column]      - JSONB column name (default: 'data')
- * @param {object[]} opts.rows          - Array of plain objects to insert
- * @param {pg.PoolClient} [opts.client] - Existing client (uses pool if omitted)
- * @returns {Promise<number>}           - Number of rows inserted
+ * @param {string}   opts.table           - Target table name
+ * @param {string}   [opts.column]        - Single column name (legacy, default: 'data')
+ * @param {string[]} [opts.columns]       - Multiple column names
+ * @param {Array}    opts.rows            - Array of objects (single) or arrays (multi)
+ * @param {pg.PoolClient} [opts.client]   - Existing client (uses pool if omitted)
+ * @returns {Promise<number>}             - Number of rows inserted
  */
-export async function bulkCopyJsonb({ table, column = 'data', rows, client }) {
+export async function bulkCopyJsonb({ table, column = 'data', columns, rows, client }) {
   const shouldRelease = !client;
-  const conn = client ?? (await pool.connect());
+  const conn = client ?? (await getPool().connect());
 
   try {
-    const sql = `COPY ${table} (${column}) FROM STDIN`;
+    const colList = columns ? columns.join(', ') : column;
+    const sql = `COPY ${table} (${colList}) FROM STDIN`;
     const copyStream = conn.query(copyFrom(sql));
 
-    // Build a newline-delimited JSON stream (one JSON object per line)
     const readable = Readable.from(
-      rows.map((row) => JSON.stringify(row) + '\n'),
+      rows.map((row) => {
+        if (Array.isArray(row)) {
+          // Multi-column: tab-separated, with COPY text-format escaping
+          return row.map((v) => {
+            if (v == null) return '\\N';
+            const str = typeof v === 'object' ? JSON.stringify(v) : String(v);
+            // Escape backslash, tab, newline, carriage return for COPY text format
+            return str.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+          }).join('\t') + '\n';
+        }
+        // Single JSONB column (legacy)
+        return JSON.stringify(row) + '\n';
+      }),
     );
 
     await pipelineAsync(readable, copyStream);

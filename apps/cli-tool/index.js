@@ -60,9 +60,9 @@ async function cmdSeed(opts) {
 
   log.info({ filesDir, concurrency, dryRun }, 'cli.seed.start');
 
+  const resolvedDir = path.resolve(filesDir);
   const xlsxFiles = await glob('**/*.xlsx', {
-    cwd: path.resolve(filesDir),
-    absolute: true,
+    cwd: resolvedDir,
     nocase: true,
   });
 
@@ -73,8 +73,12 @@ async function cmdSeed(opts) {
 
   log.info({ count: xlsxFiles.length }, 'cli.seed.files_found');
 
+  // Map relative paths to the container mount point (/data)
+  const containerMount = process.env.CONTAINER_MOUNT_DIR ?? '/data';
+  const containerPaths = xlsxFiles.map((f) => path.join(containerMount, f));
+
   if (dryRun) {
-    for (const f of xlsxFiles) log.info({ file: f }, 'cli.seed.dry_run');
+    for (const f of containerPaths) log.info({ file: f }, 'cli.seed.dry_run');
     return;
   }
 
@@ -91,7 +95,7 @@ async function cmdSeed(opts) {
 
   // Build a BullMQ flow: one parent job per year, child jobs per file.
   // This creates a task tree so year-level progress can be tracked.
-  const byYear = groupByYear(xlsxFiles);
+  const byYear = groupByYear(containerPaths);
 
   for (const [year, files] of Object.entries(byYear)) {
     // Add all files for this year as a bulk batch
@@ -151,7 +155,7 @@ async function cmdQueueDrain() {
  */
 function groupByYear(files) {
   return files.reduce((acc, f) => {
-    const m = path.basename(f).match(/\b(20\d{2})\b/);
+    const m = path.basename(f).match(/FY(20\d{2})/);
     const year = m ? m[1] : 'unknown';
     (acc[year] ??= []).push(f);
     return acc;

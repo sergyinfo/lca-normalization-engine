@@ -90,8 +90,8 @@ async function flushBatch(rows, batchIndex, sourceFile, filingYear) {
 
   await bulkCopyJsonb({
     table: 'lca_records',
-    column: 'data',
-    rows,
+    columns: ['filing_year', 'source_file', 'data'],
+    rows: rows.map((r) => [filingYear, sourceFile, r]),
   });
 
   log.info({ batchId, rows: rows.length }, 'ingestor.batch.flushed');

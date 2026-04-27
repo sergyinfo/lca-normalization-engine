@@ -52,17 +52,21 @@ class NlpWorker:
 
         async def process_one() -> None:
             async with sem:
-                # BRPOPLPUSH — atomically move job to active list
-                job_str = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
-                if not job_str:
+                # BullMQ stores job IDs in the wait list; data is in a hash
+                job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
+                if not job_id:
                     return
                 try:
-                    job = json.loads(job_str)
+                    job_data_str = await redis.hget(f"bull:nlp-tasks:{job_id}", "data")
+                    if not job_data_str:
+                        log.warning("nlp_worker.missing_job_data", job_id=job_id)
+                        return
+                    job = json.loads(job_data_str)
                     await self._handle_job(redis, job)
                 except Exception:
-                    log.exception("nlp_worker.job_failed", job=job_str[:200])
+                    log.exception("nlp_worker.job_failed", job_id=job_id)
                 finally:
-                    await redis.lrem(PROCESSING_KEY, 1, job_str)
+                    await redis.lrem(PROCESSING_KEY, 1, job_id)
 
         while self._running:
             await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
