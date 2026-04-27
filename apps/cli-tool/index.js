@@ -13,7 +13,9 @@
  *   lca-cli seed --files-dir /data/lca-archive --concurrency 4
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'node:url';
+dotenv.config({ path: new URL('../../.env', import.meta.url).pathname });
 import { Command } from 'commander';
 import { Queue, QueueEvents } from 'bullmq';
 import { glob } from 'glob';

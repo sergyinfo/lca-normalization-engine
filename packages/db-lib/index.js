@@ -47,8 +47,14 @@ export function getPool(connectionString) {
   return _pool;
 }
 
-/** Convenience alias */
-export const pool = getPool();
+/** @deprecated Use getPool() directly for lazy access. */
+export const pool = new Proxy({}, {
+  get(_, prop) {
+    const p = getPool();
+    const val = p[prop];
+    return typeof val === 'function' ? val.bind(p) : val;
+  },
+});
 
 /**
  * Gracefully shut down the connection pool.

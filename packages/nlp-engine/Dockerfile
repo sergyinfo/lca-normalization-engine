@@ -6,7 +6,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    libc6-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip/setuptools for modern pyproject.toml support
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Install Python dependencies first (layer cache)
 COPY requirements.txt .

@@ -7,7 +7,7 @@ WORKDIR /app
 
 # ---- deps stage ----
 FROM base AS deps
-COPY package.json pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/db-lib/package.json ./packages/db-lib/
 COPY apps/ingestor/package.json ./apps/ingestor/
 

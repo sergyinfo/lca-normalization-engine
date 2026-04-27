@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=70", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "lca-nlp-engine"
@@ -37,8 +37,8 @@ dev = [
     "ruff>=0.4.0",
 ]
 gpu = [
-    # Replace torch CPU above with CUDA build in GPU environments
-    "torch>=2.2.0+cu121",
+    # In GPU environments, install torch with CUDA support via:
+    #   pip install torch>=2.2.0 --index-url https://download.pytorch.org/whl/cu121
 ]
 
 [project.scripts]
