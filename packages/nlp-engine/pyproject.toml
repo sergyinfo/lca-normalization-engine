@@ -22,6 +22,7 @@ dependencies = [
     # Data processing
     "pandas>=2.2.0",
     "numpy>=1.26.0",
+    "openpyxl>=3.1.0",
     # Utilities
     "python-dotenv>=1.0.0",
     "pydantic>=2.7.0",
@@ -45,6 +46,7 @@ gpu = [
 nlp-worker = "lca_nlp_engine.worker:main"
 classify-soc = "lca_nlp_engine.soc_classifier:cli_main"
 dedup-companies = "lca_nlp_engine.entity_resolution:cli_main"
+load-dmtf = "lca_nlp_engine.dmtf_loader:cli_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

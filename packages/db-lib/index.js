@@ -162,4 +162,79 @@ export async function ensureSchema(conn = pool) {
       ON lca_records ((data->>'soc_code'))
       WHERE data->>'soc_code' IS NOT NULL;
   `);
+
+  // ---------------------------------------------------------------------------
+  // NLP enrichment tables
+  // ---------------------------------------------------------------------------
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS canonical_employers (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      canonical_name TEXT NOT NULL,
+      fein          TEXT,
+      employer_city TEXT,
+      employer_state CHAR(2),
+      record_count  INT NOT NULL DEFAULT 1,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await conn.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_canonical_employers_fein
+      ON canonical_employers (fein)
+      WHERE fein IS NOT NULL;
+  `);
+
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_canonical_employers_name_trgm
+      ON canonical_employers USING GIN (canonical_name gin_trgm_ops);
+  `);
+
+  await conn.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS employer_embeddings (
+      employer_id   UUID PRIMARY KEY REFERENCES canonical_employers(id) ON DELETE CASCADE,
+      embedding     vector(768),
+      model_version TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS soc_aliases (
+      id            BIGSERIAL PRIMARY KEY,
+      job_title     TEXT NOT NULL,
+      soc_code      CHAR(7) NOT NULL,
+      soc_title     TEXT NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'dmtf',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await conn.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_soc_aliases_title_lower
+      ON soc_aliases (lower(job_title));
+  `);
+
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_soc_aliases_soc_code
+      ON soc_aliases (soc_code);
+  `);
+
+  // Quarantine schema for invalid / low-confidence records
+  await conn.query(`CREATE SCHEMA IF NOT EXISTS staging;`);
+
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS staging.quarantine_records (
+      id              BIGSERIAL PRIMARY KEY,
+      source_file     TEXT,
+      filing_year     SMALLINT,
+      raw_data        JSONB NOT NULL,
+      errors          JSONB NOT NULL,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reprocessed_at  TIMESTAMPTZ
+    );
+  `);
 }

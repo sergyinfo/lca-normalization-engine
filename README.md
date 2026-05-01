@@ -75,9 +75,9 @@ lca-normalization-engine/
 |---|---|---|
 | Runtime (JS) | Node.js 20+ (ESM) | All packages use `"type": "module"` |
 | Runtime (Python) | Python 3.11+ | `pyproject.toml`, `src/` layout |
-| Database | PostgreSQL 16 | Declarative range partitioning by `filing_year` |
+| Database | PostgreSQL 16 | Docker image: `pgvector/pgvector:pg16`; declarative range partitioning by `filing_year` |
 | PG extension | `pg_trgm` | Fuzzy company name matching (probabilistic layer) |
-| PG extension | `pgvector` | HNSW semantic embeddings (semantic layer) |
+| PG extension | `pgvector` | HNSW semantic embeddings (semantic layer); bundled in the `pgvector/pgvector:pg16` image |
 | PG extension | `jsonb_path_ops` | GIN operator class — ~60% smaller indexes vs default |
 | PG extension | `btree_gin` | Composite GIN + btree indexes |
 | Queue | BullMQ 5 on Redis 7 | Flow producers, DLQ, exponential backoff |
@@ -120,20 +120,61 @@ CREATE TABLE lca_records (
 | GIN on `data->>'employer_name'` | `gin_trgm_ops` | Fuzzy trigram search via `pg_trgm` |
 | HNSW on `employer_embedding` | pgvector | Approximate nearest-neighbour for semantic dedup |
 
+### NLP Enrichment Tables
+
+Created by `ensureSchema()` alongside the core tables:
+
+```sql
+-- Deduplicated employer registry; canonical target for entity resolution
+CREATE TABLE canonical_employers (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  canonical_name TEXT NOT NULL,
+  fein           TEXT,                   -- UNIQUE when non-null
+  employer_city  TEXT,
+  employer_state CHAR(2),
+  record_count   INT NOT NULL DEFAULT 1,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 768-dim pgvector embeddings for Layer 3 semantic dedup (HNSW)
+CREATE TABLE employer_embeddings (
+  employer_id   UUID PRIMARY KEY REFERENCES canonical_employers(id) ON DELETE CASCADE,
+  embedding     vector(768),
+  model_version TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- BLS Direct Match Title File (DMTF) + human-reviewed aliases for Stage 1 SOC lookup
+CREATE TABLE soc_aliases (
+  id         BIGSERIAL PRIMARY KEY,
+  job_title  TEXT NOT NULL,             -- UNIQUE lower(job_title)
+  soc_code   CHAR(7) NOT NULL,
+  soc_title  TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'dmtf',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+`soc_aliases` is populated by the `load-dmtf` CLI command before the NLP
+worker starts. Human-reviewed corrections from `staging.quarantine_records`
+can also be merged here to progressively reduce BERT invocations over time.
+
 ### Quarantine Schema
 
-Invalid records (Zod/Pydantic validation failures) are never silently dropped:
+Invalid records (Zod/Pydantic validation failures, low-confidence SOC predictions)
+are never silently dropped:
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS staging;
 
 CREATE TABLE staging.quarantine_records (
-  id            BIGSERIAL PRIMARY KEY,
-  source_file   TEXT,
-  filing_year   SMALLINT,
-  raw_data      JSONB  NOT NULL,
-  errors        JSONB  NOT NULL,   -- Zod/Pydantic error list
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  id             BIGSERIAL PRIMARY KEY,
+  source_file    TEXT,
+  filing_year    SMALLINT,
+  raw_data       JSONB NOT NULL,
+  errors         JSONB NOT NULL,   -- Zod/Pydantic error list
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   reprocessed_at TIMESTAMPTZ        -- NULL until successfully reprocessed
 );
 ```
@@ -229,7 +270,7 @@ as `canonical_employer_id` back to `lca_records`.
 - Node.js >= 20
 - pnpm >= 9 (`npm i -g pnpm`)
 - Python >= 3.11
-- Docker & Docker Compose v2
+- Docker & Docker Compose v2 — the stack uses `pgvector/pgvector:pg16` which bundles the `vector` extension; no manual pgvector installation is required
 
 ---
 
@@ -354,6 +395,7 @@ Run from `packages/nlp-engine/` after installing with `pip install -e ".[dev]"`:
 | `nlp-worker` | Start the Python NLP worker — listens for BullMQ jobs from Redis |
 | `classify-soc` | CLI entry point for SOC code classification using the fine-tuned BERT model |
 | `dedup-companies` | CLI entry point for the 3-layer employer deduplication pipeline |
+| `load-dmtf --file <path>` | Load BLS Direct Match Title File into `soc_aliases` for Stage 1 exact-match (pass `--url` to download automatically from BLS) |
 | `ruff check .` | Lint Python source code |
 | `mypy .` | Run static type checking on Python source |
 | `pytest` | Run Python test suite |

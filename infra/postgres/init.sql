@@ -12,5 +12,8 @@ CREATE EXTENSION IF NOT EXISTS btree_gin;
 -- Enable uuid-ossp for deterministic UUIDs in deduplication
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Enable pgvector for HNSW semantic embeddings (Layer 3 entity resolution)
+CREATE EXTENSION IF NOT EXISTS vector;
+
 -- Set default timezone
 SET timezone = 'UTC';
