@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node index.js",
     "db:init": "node index.js db:init",
+    "db:status": "node index.js db:status",
     "seed": "node index.js seed",
     "test": "node --test",
     "lint": "eslint ."

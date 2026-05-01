@@ -9,8 +9,9 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "db:init": "pnpm --filter cli-tool run db:init",
-    "seed": "pnpm --filter cli-tool run seed",
+    "db:init": "node apps/cli-tool/index.js db:init",
+    "db:status": "node apps/cli-tool/index.js db:status",
+    "seed": "node apps/cli-tool/index.js seed --files-dir ./data",
     "queue:stats": "node apps/cli-tool/index.js queue:stats",
     "ingestor:start": "pnpm --filter ingestor run start",
     "ingestor:dev": "pnpm --filter ingestor run dev",

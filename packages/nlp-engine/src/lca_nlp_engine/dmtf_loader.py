@@ -38,6 +38,8 @@ BLS_DMTF_URL = "https://www.bls.gov/soc/2018/soc_2018_direct_match_title_file.xl
 # Column name layouts for different BLS DMTF releases
 _COLUMN_MAPS: list[dict[str, str]] = [
     # 2018 SOC (primary target)
+    {"code": "2018 SOC Code", "soc_title": "2018 SOC Title", "match": "2018 SOC Direct Match Title"},
+    # 2018 SOC (alternate column naming)
     {"code": "2018 SOC Code", "soc_title": "2018 SOC Title", "match": "2018 Direct Match Title"},
     # 2010 SOC (fallback)
     {"code": "SOC Code", "soc_title": "SOC Title", "match": "Direct Match Title"},
@@ -55,6 +57,21 @@ def _detect_columns(df: pd.DataFrame) -> dict[str, str]:
     )
 
 
+def _find_header_row(source: str | Path | BinaryIO) -> int:
+    """
+    Scan the first 20 rows to find which row contains the actual column headers.
+    BLS files often have several metadata/title rows before the real header.
+    Uses substring matching so "2018 SOC Code" matches the keyword "soc code".
+    """
+    preview = pd.read_excel(source, sheet_name=0, header=None, nrows=20, dtype=str)
+    keywords = ["soc code", "direct match title", "soc title"]
+    for i, row in preview.iterrows():
+        cells = [str(c).strip().lower() for c in row if pd.notna(c)]
+        if any(kw in cell for kw in keywords for cell in cells):
+            return int(i)
+    return 0
+
+
 def parse_dmtf(source: str | Path | BinaryIO) -> pd.DataFrame:
     """
     Parse a BLS DMTF Excel file and return a normalised DataFrame with
@@ -62,7 +79,10 @@ def parse_dmtf(source: str | Path | BinaryIO) -> pd.DataFrame:
 
     Drops rows with nulls and deduplicates on job_title (case-insensitive).
     """
-    df = pd.read_excel(source, sheet_name=0, dtype=str)
+    header_row = _find_header_row(source)
+    log.info("dmtf_loader.header_row_detected", row=header_row)
+
+    df = pd.read_excel(source, sheet_name=0, header=header_row, dtype=str)
     df.columns = [str(c).strip() for c in df.columns]
 
     mapping = _detect_columns(df)
@@ -145,7 +165,11 @@ def cli_main() -> None:
     else:
         url = args.url or BLS_DMTF_URL
         log.info("dmtf_loader.downloading", url=url)
-        with urllib.request.urlopen(url) as resp:  # noqa: S310
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; lca-normalization-engine/0.1)"},
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
             source = io.BytesIO(resp.read())
         log.info("dmtf_loader.downloaded")
 

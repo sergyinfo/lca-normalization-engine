@@ -22,7 +22,7 @@ import { glob } from 'glob';
 import path from 'node:path';
 import IORedis from 'ioredis';
 import pino from 'pino';
-import { ensureSchema, closePool } from '@lca/db-lib';
+import { ensureSchema, closePool, getPool } from '@lca/db-lib';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -61,7 +61,9 @@ async function cmdSeed(opts) {
   log.info({ filesDir, concurrency, dryRun }, 'cli.seed.start');
 
   const resolvedDir = path.resolve(filesDir);
-  const xlsxFiles = await glob('**/*.xlsx', {
+  // Match only DOL LCA disclosure files (LCA_*.xlsx) to avoid picking up
+  // other xlsx files in the same directory (e.g. dmtf.xlsx, notes.xlsx).
+  const xlsxFiles = await glob('**/LCA_*.xlsx', {
     cwd: resolvedDir,
     nocase: true,
   });
@@ -134,6 +136,56 @@ async function cmdQueueStats() {
 }
 
 /**
+ * db:status — Print a live summary of DB state: extensions, table row counts.
+ */
+async function cmdDbStatus() {
+  const pool = getPool();
+
+  // Extensions
+  const extRes = await pool.query(`
+    SELECT name, installed_version AS version
+    FROM   pg_available_extensions
+    WHERE  installed_version IS NOT NULL
+    AND    name IN ('pg_trgm', 'vector', 'btree_gin', 'uuid-ossp')
+    ORDER  BY name;
+  `);
+  console.log('\n── Extensions ─────────────────────────────');
+  console.table(extRes.rows);
+
+  // lca_records partitions
+  const recRes = await pool.query(`
+    SELECT filing_year, COUNT(*)::int AS records
+    FROM   lca_records
+    GROUP  BY filing_year
+    ORDER  BY filing_year;
+  `);
+  console.log('\n── lca_records (by year) ───────────────────');
+  if (recRes.rows.length === 0) {
+    console.log('  (empty — no records ingested yet)');
+  } else {
+    console.table(recRes.rows);
+    const total = recRes.rows.reduce((s, r) => s + r.records, 0);
+    console.log(`  Total: ${total.toLocaleString()} records`);
+  }
+
+  // NLP enrichment tables
+  const [socRes, empRes, embRes, qRes] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS rows FROM soc_aliases;'),
+    pool.query('SELECT COUNT(*)::int AS rows FROM canonical_employers;'),
+    pool.query('SELECT COUNT(*)::int AS rows FROM employer_embeddings;'),
+    pool.query('SELECT COUNT(*)::int AS rows FROM staging.quarantine_records;'),
+  ]);
+
+  console.log('\n── NLP tables ──────────────────────────────');
+  console.table([
+    { table: 'soc_aliases',            rows: socRes.rows[0].rows },
+    { table: 'canonical_employers',    rows: empRes.rows[0].rows },
+    { table: 'employer_embeddings',    rows: embRes.rows[0].rows },
+    { table: 'staging.quarantine_records', rows: qRes.rows[0].rows },
+  ]);
+}
+
+/**
  * queue:drain — Remove all waiting jobs (destructive).
  */
 async function cmdQueueDrain() {
@@ -192,6 +244,14 @@ program
       concurrency: Number(opts.concurrency),
       dryRun: opts.dryRun,
     });
+    await closePool();
+  });
+
+program
+  .command('db:status')
+  .description('Print installed extensions and row counts for all tables')
+  .action(async () => {
+    await cmdDbStatus();
     await closePool();
   });
 

@@ -301,17 +301,27 @@ DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
 #    Note: load-dmtf is a Python CLI — activate the nlp-engine venv first:
 #      source packages/nlp-engine/.venv/bin/activate
 
-# 6. Dry-run to verify file discovery (no jobs enqueued)
+# 6. Verify schema and table counts
+pnpm db:status
+
+# 7. Dry-run to verify file discovery (only LCA_*.xlsx files are picked up)
+#    Default data directory (./data):
+pnpm seed -- --dry-run
+#    Custom directory:
 node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive --dry-run
 
-# 6. Seed the BullMQ task tree (one job per XLSX file, grouped by year)
-node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive
+# 8. Seed the BullMQ task tree (one job per XLSX file, grouped by year)
+pnpm seed                                                # uses ./data
+node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive  # custom path
 
-# 7. Monitor queue depth
-node apps/cli-tool/index.js queue:stats
+# 9. Monitor queue depth
+pnpm queue:stats
 
-# 8. Tail worker logs
+# 10. Tail worker logs
 pnpm docker:logs
+
+# 11. Verify ingestion completed
+pnpm db:status
 ```
 
 ## Mode 2: Production Run (Ongoing Quarterly Updates)
@@ -376,6 +386,7 @@ All commands are run from the **monorepo root** via `pnpm`.
 | Command | Description |
 |---|---|
 | `pnpm db:init` | Initialise PostgreSQL schema — creates extensions (`pg_trgm`, `pgvector`, `btree_gin`), partitioned tables, indexes, and the quarantine schema |
+| `pnpm db:status` | Print installed extensions and live row counts for all tables (`lca_records` by year, `soc_aliases`, `canonical_employers`, `staging.quarantine_records`) |
 
 ### Data Pipeline
 
