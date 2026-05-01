@@ -291,7 +291,17 @@ pnpm docker:up
 # 4. Initialise PostgreSQL schema (extensions, partitions, indexes)
 pnpm db:init
 
-# 5. Dry-run to verify file discovery (no jobs enqueued)
+# 5. Seed the SOC alias table for Stage 1 NLP classification (~56K BLS title mappings)
+#    Option A — download automatically from BLS (requires outbound internet):
+DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
+  load-dmtf --url
+#    Option B — download manually first, then load from file:
+#      curl -o dmtf.xlsx "https://www.bls.gov/soc/2018/soc_2018_direct_match_title_file.xlsx"
+#      DATABASE_URL=... load-dmtf --file ./dmtf.xlsx
+#    Note: load-dmtf is a Python CLI — activate the nlp-engine venv first:
+#      source packages/nlp-engine/.venv/bin/activate
+
+# 6. Dry-run to verify file discovery (no jobs enqueued)
 node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive --dry-run
 
 # 6. Seed the BullMQ task tree (one job per XLSX file, grouped by year)

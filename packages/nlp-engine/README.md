@@ -57,18 +57,28 @@ job_title (raw string)
 ### Seeding Stage 1
 
 `soc_aliases` must be populated before the NLP worker starts. Run once after
-`pnpm db:init`:
+`pnpm db:init`.
+
+**Source files** (public BLS datasets):
+
+| Edition | URL |
+|---|---|
+| 2018 SOC *(recommended — current DOL standard)* | `https://www.bls.gov/soc/2018/soc_2018_direct_match_title_file.xlsx` |
+| 2010 SOC *(for pre-2020 historical records)* | `https://www.bls.gov/soc/soc_2010_direct_match_title_file.xls` |
 
 ```bash
-# Download the 2018 BLS DMTF automatically
-load-dmtf --url
+# Option A — download automatically from BLS (requires outbound internet)
+DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
+  load-dmtf --url
 
-# Or from a local file
-load-dmtf --file /data/soc_2018_direct_match_title_file.xlsx
+# Option B — download manually, then load from file
+curl -o dmtf.xlsx "https://www.bls.gov/soc/2018/soc_2018_direct_match_title_file.xlsx"
+DATABASE_URL=postgresql://... load-dmtf --file ./dmtf.xlsx
 ```
 
-The command is idempotent — re-running it after a new DMTF release safely
-upserts updated mappings without duplicates.
+The loader auto-detects 2018 vs 2010 column layouts. The command is
+idempotent — re-running after a new DMTF release safely upserts updated
+mappings without creating duplicates.
 
 ### Confidence Gating & Human-in-the-Loop
 
