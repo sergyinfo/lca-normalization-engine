@@ -13,7 +13,7 @@ lca-normalization-engine/
 │
 ├── packages/
 │   ├── db-lib/          # Shared PG client: pg-copy-streams, schema DDL, Zod validation helpers
-│   └── nlp-engine/      # Python: SOC/BERT classification + 3-layer employer deduplication
+│   └── nlp-engine/      # Python: 2-stage SOC classifier + 3-layer employer deduplication
 │
 ├── apps/
 │   ├── ingestor/        # BullMQ worker: xlstream → validate → COPY to JSONB partitions
@@ -48,7 +48,7 @@ lca-normalization-engine/
 │                          ▼                                               │
 │                  BullMQ (nlp-tasks) ──▶ nlp-worker (Python)              │
 │                                              │                           │
-│                                    SOC classification (BERT)             │
+│                                    SOC classification (DMTF + ST)        │
 │                                    Employer dedup (3-layer)              │
 │                                              │                           │
 │                                              ▼                           │
@@ -85,7 +85,7 @@ lca-normalization-engine/
 | XLSX streaming | `xlstream` | Row-level async iterator, bounded memory (≤250MB) |
 | Validation (JS) | `zod` | Schema enforcement before every COPY batch |
 | Validation (Python) | `pydantic` v2 | NLP job input/output contracts |
-| NLP / Classification | `transformers`, `torch` | Fine-tuned BERT for SOC code prediction |
+| NLP / Classification | `sentence-transformers`, `torch` | Semantic-retrieval SOC classifier over the BLS DMTF alias corpus |
 | Semantic embeddings | `sentence-transformers` | Employer name vector embeddings for pgvector |
 | Entity Resolution | `dedupe` | Probabilistic record linkage training |
 | Package manager | pnpm 9 (workspaces) | `workspace:*` protocol for cross-package linking |
@@ -158,7 +158,9 @@ CREATE TABLE soc_aliases (
 
 `soc_aliases` is populated by the `load-dmtf` CLI command before the NLP
 worker starts. Human-reviewed corrections from `staging.quarantine_records`
-can also be merged here to progressively reduce BERT invocations over time.
+can also be merged here — every new alias is automatically picked up at the
+next NLP-worker restart, both growing the Stage 1 hit rate and improving
+Stage 2 retrieval recall (since the encoded alias matrix grows with it).
 
 ### Quarantine Schema
 
@@ -414,7 +416,7 @@ Run from `packages/nlp-engine/` after installing with `pip install -e ".[dev]"`:
 | Command | Description |
 |---|---|
 | `nlp-worker` | Start the Python NLP worker — listens for BullMQ jobs from Redis |
-| `classify-soc` | CLI entry point for SOC code classification using the fine-tuned BERT model |
+| `classify-soc` | CLI entry point for SOC code classification (DMTF + sentence-transformer retrieval) |
 | `dedup-companies` | CLI entry point for the 3-layer employer deduplication pipeline |
 | `load-dmtf --file <path>` | Load BLS Direct Match Title File into `soc_aliases` for Stage 1 exact-match (pass `--url` to download automatically from BLS) |
 | `ruff check .` | Lint Python source code |
@@ -448,5 +450,6 @@ See `.env.example` for the full list. Key variables:
 | `INGESTOR_CONCURRENCY` | `4` | Parallel XLSX files per worker |
 | `INGESTOR_BATCH_SIZE` | `5000` | Rows per `COPY` call |
 | `NLP_WORKER_CONCURRENCY` | `2` | Parallel NLP jobs per Python worker |
-| `NLP_MODEL_PATH` | `/app/models/soc-bert` | Fine-tuned BERT checkpoint path |
+| `NLP_STAGE2_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Encoder used for Stage 2 semantic SOC retrieval |
+| `NLP_STAGE2_THRESHOLD` | `0.7` | Cosine-similarity cutoff; below it records go to quarantine |
 | `NLP_DEVICE` | `cpu` | `cpu` or `cuda` |

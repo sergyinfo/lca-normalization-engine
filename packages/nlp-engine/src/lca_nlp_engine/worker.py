@@ -35,7 +35,12 @@ import structlog
 from pydantic import ValidationError
 
 from lca_nlp_engine.models import NlpJobPayload, RecordItem, SocResult
-from lca_nlp_engine.soc_classifier import SocClassifier, SocPrediction
+from lca_nlp_engine.soc_classifier import (
+    DEFAULT_STAGE2_MODEL,
+    DEFAULT_STAGE2_THRESHOLD,
+    SocClassifier,
+    SocPrediction,
+)
 from lca_nlp_engine.entity_resolution import CompanyDeduplicator
 
 log = structlog.get_logger(__name__)
@@ -48,14 +53,20 @@ class NlpWorker:
     def __init__(
         self,
         redis_url: str,
-        model_path: str,
         db_url: str,
         concurrency: int = 2,
+        stage2_model: str = DEFAULT_STAGE2_MODEL,
+        stage2_threshold: float = DEFAULT_STAGE2_THRESHOLD,
     ) -> None:
         self.redis_url = redis_url
         self._db_url = db_url
         self.concurrency = concurrency
-        self.classifier = SocClassifier.from_pretrained(model_path, db_url=db_url)
+        self._stage2_threshold = stage2_threshold
+        self.classifier = SocClassifier.from_pretrained(
+            db_url=db_url,
+            stage2_model=stage2_model,
+            stage2_threshold=stage2_threshold,
+        )
         self.deduplicator = CompanyDeduplicator(db_url=db_url)
         self.deduplicator.connect()
         self._db_conn: Optional[psycopg.Connection] = None  # type: ignore[type-arg]
@@ -128,7 +139,7 @@ class NlpWorker:
                 soc_code=prediction.code,
                 soc_title=prediction.title,
                 soc_confidence=prediction.confidence,
-                requires_review=prediction.confidence < 0.7,
+                requires_review=prediction.confidence < self._stage2_threshold,
                 canonical_employer_id=canonical_id,
                 employer_name=record.employer_name,
                 employer_state=record.employer_state,
@@ -222,15 +233,17 @@ class NlpWorker:
 
 def main() -> None:
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    model_path = os.environ.get("NLP_MODEL_PATH", "/app/models/soc-bert")
     db_url = os.environ.get("DATABASE_URL", "")
     concurrency = int(os.environ.get("NLP_WORKER_CONCURRENCY", "2"))
+    stage2_model = os.environ.get("NLP_STAGE2_MODEL", DEFAULT_STAGE2_MODEL)
+    stage2_threshold = float(os.environ.get("NLP_STAGE2_THRESHOLD", DEFAULT_STAGE2_THRESHOLD))
 
     worker = NlpWorker(
         redis_url=redis_url,
-        model_path=model_path,
         db_url=db_url,
         concurrency=concurrency,
+        stage2_model=stage2_model,
+        stage2_threshold=stage2_threshold,
     )
 
     loop = asyncio.get_event_loop()

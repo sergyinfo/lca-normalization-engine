@@ -1,8 +1,8 @@
 # lca-nlp-engine (Python)
 
 Shared Python NLP library for the LCA Normalization Engine. Implements a two-stage
-SOC code classifier backed by a PostgreSQL `soc_aliases` table and a fine-tuned BERT
-model, a three-layer employer Entity Resolution pipeline, Pydantic-validated BullMQ
+SOC code classifier (DMTF exact match → sentence-transformer semantic retrieval),
+a three-layer employer Entity Resolution pipeline, Pydantic-validated BullMQ
 job payloads, and a `load-dmtf` CLI for seeding the SOC alias table from the BLS
 Direct Match Title File.
 
@@ -14,7 +14,7 @@ Direct Match Title File.
 |---|---|---|
 | `models.py` | Pydantic v2 schemas: `RecordItem`, `NlpJobPayload`, `SocResult` | ✅ Complete |
 | `dmtf_loader.py` | Downloads/parses BLS DMTF Excel file and bulk-upserts into `soc_aliases` | ✅ Complete |
-| `soc_classifier.py` | Two-stage SOC classifier: DMTF exact match → BERT fallback | Stage 1 ✅ / Stage 2 stub |
+| `soc_classifier.py` | Two-stage SOC classifier: DMTF exact match → sentence-transformer semantic retrieval | ✅ Complete |
 | `entity_resolution.py` | 3-layer employer deduplication (FEIN → pg_trgm → pgvector) | Layer 1 ✅ / Layers 2-3 stub |
 | `worker.py` | Async Redis/BullMQ consumer; Pydantic validation, classification, entity resolution, batch UPDATE write-back to `lca_records`, quarantine routing | ✅ Complete |
 
@@ -42,13 +42,20 @@ job_title (raw string)
                           │ no match
                           ▼
 ┌─────────────────────────────────────────────────┐
-│ Stage 2 — Fine-tuned BERT (text-classification) │
+│ Stage 2 — Semantic retrieval (sentence-transf.) │
 │                                                 │
-│  model: bert-base-uncased fine-tuned on         │
-│         (job_title, soc_code) pairs             │
+│  encoder: all-MiniLM-L6-v2 (default)            │
 │                                                 │
-│  confidence ≥ 0.7 → SocPrediction              │
-│  confidence < 0.7 → SocPrediction              │
+│  At startup: encode every soc_aliases.job_title │
+│  into a (N × 384) tensor, kept in memory.       │
+│                                                 │
+│  Per record:                                    │
+│    - encode input job_title → (1 × 384)         │
+│    - cosine similarity vs. alias matrix         │
+│    - argmax → soc_code, soc_title               │
+│                                                 │
+│  similarity ≥ 0.7 → SocPrediction               │
+│  similarity < 0.7 → SocPrediction               │
 │                      (requires_review=True)     │
 │                      → staging.quarantine_records│
 └─────────────────────────────────────────────────┘
@@ -82,11 +89,23 @@ mappings without creating duplicates.
 
 ### Confidence Gating & Human-in-the-Loop
 
-Records where BERT confidence falls below **0.7** are never silently assigned a
-low-quality SOC code. Instead, `requires_review = True` is set on `SocResult`
-and the record is routed to `staging.quarantine_records`. Human reviewers can
-correct the SOC code and insert verified `(job_title, soc_code)` pairs into
-`soc_aliases`, progressively shrinking the set of titles that need BERT.
+Records where Stage 2 cosine similarity falls below **0.7** (configurable via
+`NLP_STAGE2_THRESHOLD`) are never silently assigned a low-quality SOC code.
+Instead, `requires_review = True` is set on `SocResult` and the record is
+routed to `staging.quarantine_records`. Human reviewers can correct the SOC
+code and insert verified `(job_title, soc_code)` pairs into `soc_aliases` —
+which both grows the Stage 1 hit rate and improves Stage 2 recall on the next
+restart (because the new pairs become part of the encoded alias matrix).
+
+### Why semantic retrieval rather than zero-shot NLI
+
+A literal zero-shot classifier (e.g. `facebook/bart-large-mnli` with all SOC
+titles as candidate labels) would require ~840 NLI passes per input title.
+For a 100K-record file on CPU that translates to thousands of hours of
+inference. Semantic retrieval against the alias corpus produces equivalent
+zero-shot behaviour (no labelled training data required) at ~1000× the
+throughput, because each input is one short forward pass through a small
+encoder followed by a single matrix multiply.
 
 ---
 
@@ -212,7 +231,6 @@ DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
 load-dmtf --url
 
 # 5. Run the NLP worker
-NLP_MODEL_PATH=/app/models/soc-bert \
 REDIS_URL=redis://localhost:6379 \
 DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
 nlp-worker
@@ -238,33 +256,23 @@ nlp-worker
 |---|---|---|
 | `REDIS_URL` | `redis://localhost:6379` | Redis / BullMQ connection |
 | `DATABASE_URL` | — | PostgreSQL DSN — required for Stage 1 DMTF lookup and entity resolution |
-| `NLP_MODEL_PATH` | `/app/models/soc-bert` | Path to fine-tuned BERT checkpoint directory |
+| `NLP_STAGE2_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Sentence-transformer model id used for Stage 2 semantic retrieval |
+| `NLP_STAGE2_THRESHOLD` | `0.7` | Cosine-similarity cutoff. Records below this go to `staging.quarantine_records` |
 | `NLP_WORKER_CONCURRENCY` | `2` | Parallel async job slots |
 | `NLP_DEVICE` | `cpu` | `cpu` or `cuda` |
 
 ---
 
-## Model Training
+## Optional: Fine-tuned BERT classifier
 
-### SOC Classifier
+Stage 2 already works zero-shot via semantic retrieval, so a fine-tuned BERT
+model is not required. If a higher-accuracy classifier is desired, replace the
+`_predict_stage2_batch` implementation with a `transformers` pipeline loaded
+from a local checkpoint. Training data sources to consider:
 
-The BERT checkpoint is fine-tuned on `(job_title, soc_code)` pairs as a
-`text-classification` task (one label per 6-digit SOC code).
-
-**Training data sources:**
-
-1. **BLS DMTF** — 56K pre-labelled `(title, SOC code)` pairs; the foundation of the training set.
+1. **BLS DMTF** — ~6.5K pre-labelled `(title, SOC code)` pairs from `soc_aliases`.
 2. **Historical LCA records** — `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` where `SOC_CODE` is non-null; provides domain-specific title variants absent from the DMTF.
 3. **Quarantine corrections** — human-verified pairs from `staging.quarantine_records`, merged on each retraining cycle.
-
-```bash
-python -m lca_nlp_engine.train_soc \
-  --base-model bert-base-uncased \
-  --train-file data/soc_train.jsonl \
-  --output-dir /app/models/soc-bert \
-  --epochs 5 \
-  --batch-size 32
-```
 
 ### Entity Resolution
 

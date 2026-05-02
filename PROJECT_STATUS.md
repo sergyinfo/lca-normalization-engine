@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-02
+**Date:** 2026-05-03
 
 ---
 
@@ -61,9 +61,19 @@ A fully-loaded FY2025 Q1 file (~107K records) currently produces:
 
 | Table | Rows | Notes |
 |---|---|---|
-| `lca_records` | 107,414 | All ingested, ~54K classified with `soc_code` set |
-| `canonical_employers` | 13,882 | Unique employers resolved by FEIN (Layer 1) |
-| `staging.quarantine_records` | 52,998 | Low-confidence titles awaiting BERT (Stage 2 stub) |
+| `lca_records` | 107,414 | All ingested; **62,207 classified** with confidence ≥ 0.7 |
+| `canonical_employers` | 19,970 | Unique employers resolved by FEIN (Layer 1) |
+| `staging.quarantine_records` | 45,207 | Below-threshold titles awaiting human review |
+
+SOC classification breakdown:
+
+| Source | Count | Confidence |
+|---|---|---|
+| Stage 1 — DMTF exact match | 8,489 | 1.0 |
+| Stage 2 — Semantic retrieval (≥ 0.9) | 3,890 | very high |
+| Stage 2 — Semantic retrieval (0.8–0.89) | 21,480 | high |
+| Stage 2 — Semantic retrieval (0.7–0.79) | 28,348 | acceptable |
+| Quarantined (< 0.7) | 45,207 | requires review |
 
 ### Query the database
 
@@ -90,16 +100,13 @@ LIMIT  5;
 
 | Feature | What works | What's still missing |
 |---|---|---|
-| **SOC classification** | Stage 1 exact-match against `soc_aliases` (~1.0 confidence DMTF hits) | Stage 2 BERT/zero-shot for titles not in the DMTF — currently returns `00-0000 / UNCLASSIFIED` (confidence 0.0) and routes to quarantine |
+| **SOC classification** | Stage 1 (DMTF exact match) + Stage 2 (sentence-transformer semantic retrieval over `soc_aliases`). Confidence-gated at 0.7 → quarantine | A fine-tuned BERT classifier would beat semantic retrieval on edge cases. Optional and not on the critical path |
 | **Entity resolution** | Layer 1 FEIN matching is fully working — `canonical_employers` populated, `canonical_employer_id` written back to `lca_records` | Layer 2 (`pg_trgm` similarity) and Layer 3 (`pgvector` HNSW) — records without a valid FEIN are not matched |
 
 ---
 
 ## What's Not Working Yet
 
-- **Stage 2 SOC classification** — job titles outside the BLS DMTF (~50% of records)
-  get the `UNCLASSIFIED` placeholder. A zero-shot HuggingFace classifier or a
-  fine-tuned BERT model would close this gap.
 - **Layers 2 & 3 entity resolution** — records without a valid FEIN don't get a
   `canonical_employer_id`. Trigram and vector similarity matching are stubbed.
 - **Quarantine reprocessing** — records flagged for review accumulate in
@@ -113,17 +120,7 @@ LIMIT  5;
 
 These are ordered by impact — each one unlocks something visible in the pipeline.
 
-### Step 1 — BERT / zero-shot fallback for Stage 2 *(next up)*
-
-About half the FY2025 Q1 records (~53K) currently land in quarantine because
-their job titles aren't in the DMTF. The fastest path without training data is a
-zero-shot classifier from HuggingFace (e.g. `facebook/bart-large-mnli`) using
-SOC titles as candidate labels — no fine-tuning required.
-
-**Outcome:** Every record gets a SOC code. Confident predictions update
-`lca_records`; low-confidence ones still route to quarantine for human review.
-
-### Step 2 — Trigram and vector employer matching (Layers 2 & 3)
+### Step 1 — Trigram and vector employer matching (Layers 2 & 3) *(next up)*
 
 For the ~30% of records without a valid FEIN, employers are matched by name
 similarity. Layer 2 uses `pg_trgm` Jaccard similarity (>0.85 threshold). Layer 3
@@ -133,7 +130,7 @@ Both database indexes are already created; only the Python query logic remains.
 **Outcome:** Employers like `"Google Inc."`, `"Google LLC"`, and `"GOOGLE"`
 collapse into a single canonical entity even when a FEIN isn't present.
 
-### Step 3 — Quarantine reprocessing CLI
+### Step 2 — Quarantine reprocessing CLI
 
 Add `reprocess:quarantine` to the CLI tool. Reads rows from
 `staging.quarantine_records`, allows the operator to correct or augment them,
@@ -141,7 +138,7 @@ and re-enqueues them through the normal NLP pipeline. Idempotent on rerun.
 
 **Outcome:** Operators can fix data quality issues without manual SQL.
 
-### Step 4 — Tests + CI/CD
+### Step 3 — Tests + CI/CD
 
 Add unit tests for the classifier, entity resolver, Pydantic models, and
 ingestor; integration tests that exercise the full Docker stack; GitHub Actions
@@ -156,7 +153,7 @@ to run lint + test + Docker build on every PR.
 | Layer | Completeness | Notes |
 |---|---|---|
 | **Node.js ingestion pipeline** | **100%** | 107,414 records from FY2025 Q1 ingested cleanly |
-| **Python NLP enrichment** | **~70%** | Stage 1 SOC, Layer 1 entity resolution, Pydantic validation, and PostgreSQL write-back all working; Stage 2 (BERT) and Layers 2/3 (trgm, vector) still pending |
+| **Python NLP enrichment** | **~85%** | Stage 1 + Stage 2 SOC, Layer 1 entity resolution, Pydantic validation, and PostgreSQL write-back all working; Layers 2/3 (trgm, vector) still pending |
 | **Infrastructure & DevOps** | **95%** | Docker stack with pgvector fully working; missing CI/CD and tests |
 | **Documentation** | **98%** | Reflects current implementation accurately |
 
@@ -176,6 +173,7 @@ to run lint + test + Docker build on every PR.
 | **Pydantic Models** | `.../models.py` | `RecordItem` (with `nlp_id`), `NlpJobPayload` (duplicate-ID guard), `SocResult` (with `filing_year`) |
 | **DMTF Loader** | `.../dmtf_loader.py` | Downloads / parses BLS Direct Match Title File, auto-detects column layouts, bulk-upserts into `soc_aliases` |
 | **SOC Classifier — Stage 1** | `.../soc_classifier.py` | DMTF exact-match via `soc_aliases`, psycopg3 with reconnect; ~1.0 confidence on hit |
+| **SOC Classifier — Stage 2** | `.../soc_classifier.py` | Sentence-transformer (`all-MiniLM-L6-v2`) semantic retrieval over the alias corpus; cosine similarity argmax with 0.7 confidence gate |
 | **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match with SELECT-then-INSERT pattern; populates `canonical_employers` |
 | **NLP Worker** | `.../worker.py` | Async Redis consumer, Pydantic validation, batch UPDATE write-back to `lca_records`, INSERT to `staging.quarantine_records` for low-confidence records |
 | **Documentation** | `README.md`, `PROJECT_STATUS.md` | Architecture diagrams, data flow, database design, commands reference |
@@ -184,15 +182,13 @@ to run lint + test + Docker build on every PR.
 
 | Component | What Works | What's Missing |
 |---|---|---|
-| **SOC Classifier — Stage 2** | Code path is wired, returns `00-0000 / UNCLASSIFIED` placeholder | BERT model checkpoint or zero-shot HuggingFace pipeline |
 | **Entity Resolution — Layers 2 & 3** | Method stubs (`resolve_trgm`, `resolve_vector`), DB indexes ready (`gin_trgm_ops`, HNSW) | Actual SQL queries against `canonical_employers` and `employer_embeddings` |
 
 ### Not Yet Implemented
 
 | Item | Notes |
 |---|---|
-| **BERT model checkpoint** | No fine-tuned model at `models/soc-bert`; zero-shot HuggingFace fallback is the fastest path |
+| **BERT fine-tuning pipeline** | Optional — semantic retrieval (Stage 2) covers the use case; a fine-tuned model would only improve edge cases |
 | **Quarantine reprocessing** | `reprocess:quarantine` CLI command not implemented |
-| **Training pipeline** | `lca_nlp_engine.train_soc` script does not exist |
 | **Tests** | No test files in any package (JS or Python) |
 | **CI/CD** | No GitHub Actions workflows |

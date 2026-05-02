@@ -87,12 +87,15 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-lca_user}:${POSTGRES_PASSWORD:-lca_pass}@db:5432/${POSTGRES_DB:-lca_db}
-      NLP_MODEL_PATH: /app/models/soc-bert
       NLP_WORKER_CONCURRENCY: ${NLP_WORKER_CONCURRENCY:-2}
       NLP_DEVICE: ${NLP_DEVICE:-cpu}
+      NLP_STAGE2_MODEL: ${NLP_STAGE2_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      NLP_STAGE2_THRESHOLD: ${NLP_STAGE2_THRESHOLD:-0.7}
+      # Persist HuggingFace model downloads across container rebuilds
+      HF_HOME: /root/.cache/huggingface
     volumes:
-      # Mount local model weights so they are not baked into the image
-      - ./models:/app/models:ro
+      # Persist sentence-transformer / transformers model cache
+      - hf-cache:/root/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
@@ -135,4 +138,6 @@ volumes:
   postgres-data:
     driver: local
   redis-data:
+    driver: local
+  hf-cache:
     driver: local

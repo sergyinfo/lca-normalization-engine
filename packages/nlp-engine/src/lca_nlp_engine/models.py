@@ -29,6 +29,15 @@ class RecordItem(BaseModel):
     employer_name: str = Field(..., min_length=0, max_length=500)
     employer_state: Optional[str] = Field(None, min_length=2, max_length=2)
     employer_city: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("employer_city", "employer_name", "job_title", mode="before")
+    @classmethod
+    def coerce_to_str(cls, v: object) -> Optional[str]:
+        # XLSX cells occasionally come through as int/float (e.g. ZIPs in city
+        # column). Coerce to string so validation doesn't reject the whole batch.
+        if v is None:
+            return None
+        return v if isinstance(v, str) else str(v)
     fein: Optional[str] = Field(None)
     soc_code: Optional[str] = Field(None)
 
