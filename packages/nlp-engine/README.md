@@ -15,8 +15,8 @@ Direct Match Title File.
 | `models.py` | Pydantic v2 schemas: `RecordItem`, `NlpJobPayload`, `SocResult` | ✅ Complete |
 | `dmtf_loader.py` | Downloads/parses BLS DMTF Excel file and bulk-upserts into `soc_aliases` | ✅ Complete |
 | `soc_classifier.py` | Two-stage SOC classifier: DMTF exact match → BERT fallback | Stage 1 ✅ / Stage 2 stub |
-| `entity_resolution.py` | 3-layer employer deduplication (FEIN → pg_trgm → pgvector) | Stub |
-| `worker.py` | Async Redis/BullMQ consumer with Pydantic validation | ✅ Complete |
+| `entity_resolution.py` | 3-layer employer deduplication (FEIN → pg_trgm → pgvector) | Layer 1 ✅ / Layers 2-3 stub |
+| `worker.py` | Async Redis/BullMQ consumer; Pydantic validation, classification, entity resolution, batch UPDATE write-back to `lca_records`, quarantine routing | ✅ Complete |
 
 ---
 
@@ -96,11 +96,24 @@ Employer name deduplication is a three-layer pipeline applied in precedence orde
 The first layer to match wins and writes `canonical_employer_id` back to
 `lca_records`.
 
-### Layer 1 — Deterministic (FEIN) — *stub, next to implement*
+### Layer 1 — Deterministic (FEIN) ✅
 
 Federal Employer Identification Number match using the canonical regex
 `^\d{2}-\d{7}$`. Records with a valid FEIN are matched deterministically —
-no similarity computation required.
+no similarity computation required. Implemented as a SELECT-then-INSERT
+pattern (more reliable than `ON CONFLICT` with partial indexes):
+
+```sql
+-- Upsert by FEIN, return canonical UUID
+SELECT id FROM canonical_employers WHERE fein = $1;
+-- if not found:
+INSERT INTO canonical_employers (canonical_name, fein, employer_city, employer_state)
+VALUES ($1, $2, $3, $4) RETURNING id;
+-- if found, increment record_count and return existing id
+```
+
+The unique index on `fein WHERE fein IS NOT NULL` prevents duplicates while
+allowing multiple NULL-FEIN entries (Layers 2/3 will handle those).
 
 ### Layer 2 — Probabilistic (`pg_trgm`) — *stub*
 
@@ -146,7 +159,8 @@ begins. Malformed payloads are logged and rejected without touching `lca_records
 
 ```python
 class RecordItem(BaseModel):
-    id:             int              # lca_records primary key
+    id:             int              # batch-local index
+    nlp_id:         str              # UUID stamped by the ingestor; correlation key for write-back
     filing_year:    int
     job_title:      str
     employer_name:  str
@@ -157,16 +171,25 @@ class RecordItem(BaseModel):
 
 class NlpJobPayload(BaseModel):
     batch_id: str
-    records:  list[RecordItem]       # model_validator rejects duplicate ids
+    records:  list[RecordItem]       # model_validator rejects duplicate nlp_id values
 
 class SocResult(BaseModel):
-    id:                   int
+    nlp_id:                str       # matched against data->>'_nlp_id' in lca_records
+    filing_year:           int       # required for partition pruning on UPDATE
     soc_code:             str
     soc_title:            str
     soc_confidence:       float      # 0.0–1.0
-    requires_review:      bool       # True when confidence < 0.7
+    requires_review:      bool       # True when confidence < 0.7 → quarantine
     canonical_employer_id: UUID | None
+    employer_name:        str        # preserved for quarantine context
+    employer_state:       str | None
 ```
+
+**Write-back protocol:** the worker batches results by `requires_review`. Confident
+records get a single `executemany` UPDATE on `lca_records` (matching by `_nlp_id`
++ `filing_year` so the query hits the right partition). Low-confidence records get
+an `executemany` INSERT into `staging.quarantine_records` with the original
+prediction preserved as JSONB for downstream review.
 
 ---
 
