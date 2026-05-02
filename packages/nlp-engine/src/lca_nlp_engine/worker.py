@@ -1,12 +1,20 @@
 """
 NLP Worker — BullMQ-compatible Redis queue consumer
 =====================================================
-Polls a Redis list for NLP classification tasks enqueued by the ingestor,
-runs SOC classification + entity resolution, and writes results back to PostgreSQL.
+Polls Redis for NLP classification tasks enqueued by the ingestor, runs
+SOC classification + entity resolution, and writes results back to PostgreSQL.
 
-Queue protocol (compatible with BullMQ v4 job data format):
-  Job name  : "nlp:classify"
-  Job data  : { "batch_id": str, "records": [{ "id": int, "job_title": str, ... }] }
+Pipeline per batch:
+  1. Validate payload (Pydantic)
+  2. Stage 1 SOC classification (DMTF exact match)
+  3. Stage 2 SOC classification (BERT fallback — stub)
+  4. Layer 1 entity resolution (FEIN)
+  5. Write classified records back to lca_records
+  6. Route low-confidence records to staging.quarantine_records
+
+Queue protocol (BullMQ v4):
+  Job name : "nlp:classify"
+  Job data : { "batch_id": str, "records": [RecordItem, ...] }
 
 Entry point: `nlp-worker` (see pyproject.toml [project.scripts])
 """
@@ -18,12 +26,15 @@ import json
 import os
 import signal
 import sys
+from datetime import datetime, timezone
+from typing import Optional
 
+import psycopg
 import redis.asyncio as aioredis
 import structlog
 from pydantic import ValidationError
 
-from lca_nlp_engine.models import NlpJobPayload, SocResult
+from lca_nlp_engine.models import NlpJobPayload, RecordItem, SocResult
 from lca_nlp_engine.soc_classifier import SocClassifier, SocPrediction
 from lca_nlp_engine.entity_resolution import CompanyDeduplicator
 
@@ -42,12 +53,23 @@ class NlpWorker:
         concurrency: int = 2,
     ) -> None:
         self.redis_url = redis_url
+        self._db_url = db_url
         self.concurrency = concurrency
         self.classifier = SocClassifier.from_pretrained(model_path, db_url=db_url)
-        self.deduplicator = CompanyDeduplicator()
+        self.deduplicator = CompanyDeduplicator(db_url=db_url)
+        self.deduplicator.connect()
+        self._db_conn: Optional[psycopg.Connection] = None  # type: ignore[type-arg]
         self._running = True
 
+    def _connect_db(self) -> None:
+        try:
+            self._db_conn = psycopg.connect(self._db_url)
+            log.info("nlp_worker.db_connected")
+        except Exception:
+            log.exception("nlp_worker.db_connect_failed")
+
     async def run(self) -> None:
+        self._connect_db()
         redis = await aioredis.from_url(self.redis_url, decode_responses=True)
         log.info("nlp_worker.started", concurrency=self.concurrency, queue=QUEUE_KEY)
 
@@ -55,7 +77,6 @@ class NlpWorker:
 
         async def process_one() -> None:
             async with sem:
-                # BullMQ stores job IDs in the wait list; data is in a hash
                 job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
                 if not job_id:
                     return
@@ -65,7 +86,7 @@ class NlpWorker:
                         log.warning("nlp_worker.missing_job_data", job_id=job_id)
                         return
                     job = json.loads(job_data_str)
-                    await self._handle_job(redis, job)
+                    await self._handle_job(job)
                 except Exception:
                     log.exception("nlp_worker.job_failed", job_id=job_id)
                 finally:
@@ -75,8 +96,10 @@ class NlpWorker:
             await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
 
         await redis.aclose()
+        if self._db_conn:
+            self._db_conn.close()
 
-    async def _handle_job(self, redis: aioredis.Redis, job: dict) -> None:
+    async def _handle_job(self, job: dict) -> None:
         try:
             payload = NlpJobPayload.model_validate(job)
         except ValidationError as exc:
@@ -86,29 +109,112 @@ class NlpWorker:
         batch_id = payload.batch_id
         log.info("nlp_worker.processing", batch_id=batch_id, n=len(payload.records))
 
+        # SOC classification
         job_titles = [r.job_title for r in payload.records]
         predictions: list[SocPrediction] = self.classifier.predict_batch(job_titles)
 
-        results: list[SocResult] = [
-            SocResult(
-                id=r.id,
-                soc_code=p.code,
-                soc_title=p.title,
-                soc_confidence=p.confidence,
-                requires_review=p.confidence < 0.7,
+        # Entity resolution + build results
+        results: list[SocResult] = []
+        for record, prediction in zip(payload.records, predictions):
+            canonical_id = self.deduplicator.resolve(
+                employer_name=record.employer_name,
+                fein=record.fein,
+                employer_city=record.employer_city,
+                employer_state=record.employer_state,
             )
-            for r, p in zip(payload.records, predictions)
-        ]
+            results.append(SocResult(
+                nlp_id=record.nlp_id,
+                filing_year=record.filing_year,
+                soc_code=prediction.code,
+                soc_title=prediction.title,
+                soc_confidence=prediction.confidence,
+                requires_review=prediction.confidence < 0.7,
+                canonical_employer_id=canonical_id,
+                employer_name=record.employer_name,
+                employer_state=record.employer_state,
+            ))
 
-        # Publish results back to a results stream for the ingestor to consume
-        await redis.xadd(
-            "lca:nlp-results",
-            {
-                "batch_id": batch_id,
-                "results": json.dumps([r.model_dump(mode="json") for r in results]),
-            },
+        self._write_results(results)
+
+        classified = sum(1 for r in results if not r.requires_review)
+        quarantined = sum(1 for r in results if r.requires_review)
+        log.info(
+            "nlp_worker.batch_done",
+            batch_id=batch_id,
+            classified=classified,
+            quarantined=quarantined,
         )
-        log.info("nlp_worker.batch_done", batch_id=batch_id)
+
+    def _write_results(self, results: list[SocResult]) -> None:
+        if self._db_conn is None:
+            log.error("nlp_worker.write_skipped", reason="no db connection")
+            return
+
+        classified = [r for r in results if not r.requires_review]
+        quarantined = [r for r in results if r.requires_review]
+
+        try:
+            with self._db_conn.cursor() as cur:
+                if classified:
+                    now = datetime.now(timezone.utc).isoformat()
+                    cur.executemany(
+                        """
+                        UPDATE lca_records
+                        SET data = data || %s::jsonb
+                        WHERE data->>'_nlp_id' = %s
+                          AND filing_year = %s
+                        """,
+                        [
+                            (
+                                json.dumps({
+                                    "soc_code": r.soc_code,
+                                    "soc_title": r.soc_title,
+                                    "soc_confidence": r.soc_confidence,
+                                    "canonical_employer_id": str(r.canonical_employer_id) if r.canonical_employer_id else None,
+                                    "nlp_processed_at": now,
+                                }),
+                                r.nlp_id,
+                                r.filing_year,
+                            )
+                            for r in classified
+                        ],
+                    )
+
+                if quarantined:
+                    cur.executemany(
+                        """
+                        INSERT INTO staging.quarantine_records
+                            (filing_year, raw_data, errors)
+                        VALUES (%s, %s::jsonb, %s::jsonb)
+                        """,
+                        [
+                            (
+                                r.filing_year,
+                                json.dumps({
+                                    "_nlp_id": r.nlp_id,
+                                    "employer_name": r.employer_name,
+                                    "employer_state": r.employer_state,
+                                    "soc_code": r.soc_code,
+                                }),
+                                json.dumps({
+                                    "type": "low_soc_confidence",
+                                    "soc_code": r.soc_code,
+                                    "soc_confidence": r.soc_confidence,
+                                }),
+                            )
+                            for r in quarantined
+                        ],
+                    )
+
+            self._db_conn.commit()
+
+        except psycopg.OperationalError:
+            log.warning("nlp_worker.db_reconnect")
+            self._db_conn.rollback()
+            self._connect_db()
+        except Exception:
+            log.exception("nlp_worker.write_failed")
+            self._db_conn.rollback()
 
     def stop(self) -> None:
         self._running = False
@@ -120,7 +226,12 @@ def main() -> None:
     db_url = os.environ.get("DATABASE_URL", "")
     concurrency = int(os.environ.get("NLP_WORKER_CONCURRENCY", "2"))
 
-    worker = NlpWorker(redis_url=redis_url, model_path=model_path, db_url=db_url, concurrency=concurrency)
+    worker = NlpWorker(
+        redis_url=redis_url,
+        model_path=model_path,
+        db_url=db_url,
+        concurrency=concurrency,
+    )
 
     loop = asyncio.get_event_loop()
 

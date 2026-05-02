@@ -145,6 +145,9 @@ class SocClassifier:
 
     def predict(self, job_title: str) -> SocPrediction:
         """Classify a single job title. Stage 1 first, BERT fallback."""
+        if not job_title.strip():
+            return SocPrediction(code="00-0000", title="UNCLASSIFIED", confidence=0.0)
+
         dmtf_hit = self._lookup_dmtf(job_title)
         if dmtf_hit is not None:
             log.debug("soc_classifier.dmtf_hit", job_title=job_title, code=dmtf_hit.code)

@@ -16,6 +16,7 @@ import { Worker, Queue } from 'bullmq';
 import { getXlsxStream } from 'xlstream';
 import IORedis from 'ioredis';
 import pino from 'pino';
+import { randomUUID } from 'node:crypto';
 import { bulkCopyJsonb, ensureSchema, closePool } from '@lca/db-lib';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
@@ -58,8 +59,8 @@ async function processIngestJob(data) {
 
   // Collect header row then stream data rows
   for await (const row of xlsxStream) {
-    // xlstream emits { header: [...], obj: {...} } per row when withHeader=true
-    const record = row.obj ?? row;
+    // xlstream emits { formatted: { obj: {...} }, raw: { arr: [...] } } per row
+    const record = row.formatted?.obj ?? row.obj ?? row;
     record._source_file = sourceFile;
     record._filing_year = filingYear;
 
@@ -88,22 +89,30 @@ async function processIngestJob(data) {
 async function flushBatch(rows, batchIndex, sourceFile, filingYear) {
   const batchId = `${sourceFile}:${batchIndex}`;
 
+  // Assign a stable UUID to each record before COPY so the NLP worker can
+  // write results back without needing the BIGSERIAL id.
+  const tagged = rows.map((r) => ({ ...r, _nlp_id: randomUUID() }));
+
   await bulkCopyJsonb({
     table: 'lca_records',
     columns: ['filing_year', 'source_file', 'data'],
-    rows: rows.map((r) => [filingYear, sourceFile, r]),
+    rows: tagged.map((r) => [filingYear, sourceFile, r]),
   });
 
-  log.info({ batchId, rows: rows.length }, 'ingestor.batch.flushed');
+  log.info({ batchId, rows: tagged.length }, 'ingestor.batch.flushed');
 
   // Enqueue NLP classification for this batch
   await nlpQueue.add('nlp:classify', {
     batch_id: batchId,
-    filing_year: filingYear,
-    records: rows.map((r, i) => ({
-      id: i,   // temp ID; real ID is assigned by PostgreSQL BIGSERIAL
+    records: tagged.map((r, i) => ({
+      id: i,
+      nlp_id: r._nlp_id,
+      filing_year: filingYear,
       job_title: r['JOB_TITLE'] ?? r['job_title'] ?? '',
       employer_name: r['EMPLOYER_NAME'] ?? r['employer_name'] ?? '',
+      employer_state: r['EMPLOYER_STATE'] ?? r['employer_state'] ?? null,
+      employer_city: r['EMPLOYER_CITY'] ?? r['employer_city'] ?? null,
+      fein: r['EMPLOYER_FEIN'] ?? r['employer_fein'] ?? null,
     })),
   }, {
     attempts: 3,

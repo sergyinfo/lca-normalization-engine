@@ -10,6 +10,7 @@
   },
   "scripts": {
     "db:init": "node apps/cli-tool/index.js db:init",
+    "db:reset": "node apps/cli-tool/index.js db:reset",
     "db:status": "node apps/cli-tool/index.js db:status",
     "seed": "node apps/cli-tool/index.js seed --files-dir ./data",
     "queue:stats": "node apps/cli-tool/index.js queue:stats",

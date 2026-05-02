@@ -136,6 +136,20 @@ async function cmdQueueStats() {
 }
 
 /**
+ * db:reset — Truncate lca_records, canonical_employers, employer_embeddings,
+ * and quarantine_records while preserving soc_aliases (DMTF data).
+ * Use before re-ingesting when the ingestor schema has changed.
+ */
+async function cmdDbReset() {
+  const pool = getPool();
+  await pool.query('TRUNCATE TABLE lca_records RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE TABLE canonical_employers RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE TABLE employer_embeddings RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE TABLE staging.quarantine_records RESTART IDENTITY CASCADE');
+  console.log('Reset complete. soc_aliases preserved.');
+}
+
+/**
  * db:status — Print a live summary of DB state: extensions, table row counts.
  */
 async function cmdDbStatus() {
@@ -244,6 +258,14 @@ program
       concurrency: Number(opts.concurrency),
       dryRun: opts.dryRun,
     });
+    await closePool();
+  });
+
+program
+  .command('db:reset')
+  .description('Truncate lca_records, canonical_employers and quarantine_records (preserves soc_aliases)')
+  .action(async () => {
+    await cmdDbReset();
     await closePool();
   });
 

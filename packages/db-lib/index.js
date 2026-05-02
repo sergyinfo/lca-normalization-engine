@@ -163,6 +163,13 @@ export async function ensureSchema(conn = pool) {
       WHERE data->>'soc_code' IS NOT NULL;
   `);
 
+  // Expression index for NLP write-back lookups by correlation UUID
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_lca_records_nlp_id
+      ON lca_records ((data->>'_nlp_id'))
+      WHERE data->>'_nlp_id' IS NOT NULL;
+  `);
+
   // ---------------------------------------------------------------------------
   // NLP enrichment tables
   // ---------------------------------------------------------------------------

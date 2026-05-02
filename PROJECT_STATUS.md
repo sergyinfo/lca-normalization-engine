@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-01
+**Date:** 2026-05-02
 
 ---
 
@@ -31,68 +31,58 @@ wage trend research, and employer benchmarking.
 
 ## What You Can Do Right Now
 
-### Ingest LCA data
+The full pipeline is now closed-loop end-to-end: ingest → classify → resolve
+employer → write back to PostgreSQL.
 
-The ingestion pipeline is fully working. You can load any DOL LCA Excel file —
-historical or current — into PostgreSQL with a single command:
-
-```bash
-pnpm docker:up        # start PostgreSQL + Redis
-pnpm db:init          # create all tables and indexes
-pnpm db:status        # verify extensions and confirm all tables are empty
-pnpm seed -- --files-dir /path/to/lca-archive
-pnpm db:status        # verify row counts after ingestion completes
-```
-
-The ingestor streams each file row-by-row (memory stays ≤ 250 MB regardless of
-file size), validates every record, bulk-copies valid rows into `lca_records`, and
-routes invalid rows to `staging.quarantine_records` with the full error list.
-107,414 records from FY2025 Q1 have already been loaded this way.
-
-### Watch for new DOL releases automatically
-
-The harvester service polls the DOL website on a configurable interval, detects
-newly published quarterly files, downloads them, and enqueues ingestion jobs
-automatically — no manual intervention required:
+### One-shot setup
 
 ```bash
-docker compose up -d harvester
+pnpm docker:up        # PostgreSQL (with pgvector) + Redis + workers
+pnpm db:init          # create all tables, indexes, extensions
+
+# Seed the SOC alias table (~6.5K BLS title mappings) — only once
+DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
+  load-dmtf --file ./data/dmtf.xlsx
+
+pnpm db:status        # verify everything is healthy and empty
 ```
+
+### Ingest and enrich
+
+```bash
+pnpm seed             # ingest XLSX files from ./data
+pnpm queue:stats      # watch the queue drain
+pnpm db:status        # see records, classifications, canonical employers
+```
+
+### What gets produced
+
+A fully-loaded FY2025 Q1 file (~107K records) currently produces:
+
+| Table | Rows | Notes |
+|---|---|---|
+| `lca_records` | 107,414 | All ingested, ~54K classified with `soc_code` set |
+| `canonical_employers` | 13,882 | Unique employers resolved by FEIN (Layer 1) |
+| `staging.quarantine_records` | 52,998 | Low-confidence titles awaiting BERT (Stage 2 stub) |
 
 ### Query the database
 
-Once records are ingested, you can query `lca_records` directly in PostgreSQL.
-The JSONB `data` column holds the full record; GIN indexes make field-level
-queries fast:
-
 ```sql
--- All H-1B filings for software roles in California in 2024
-SELECT data->>'EMPLOYER_NAME', data->>'JOB_TITLE', data->>'WAGE_RATE_OF_PAY_FROM'
+-- Top 10 employers by LCA filing volume
+SELECT canonical_name, fein, employer_state, record_count
+FROM   canonical_employers
+ORDER  BY record_count DESC
+LIMIT  10;
+
+-- Classified Software Engineer filings with their canonical employer
+SELECT data->>'JOB_TITLE'              AS job_title,
+       data->>'soc_code'               AS soc,
+       data->>'canonical_employer_id'  AS canonical_id,
+       data->>'EMPLOYER_NAME'          AS raw_employer
 FROM   lca_records
-WHERE  filing_year = 2024
-AND    data @> '{"EMPLOYER_STATE": "CA", "VISA_CLASS": "H-1B"}';
+WHERE  data->>'soc_code' = '15-1252'
+LIMIT  5;
 ```
-
-### Run Stage 1 SOC classification
-
-If you seed the SOC alias table from the BLS Direct Match Title File (~56K
-official title mappings), the NLP worker can already classify job titles that
-appear verbatim in that file with 100% confidence — no ML model required:
-
-```bash
-# Seed once after db:init
-DATABASE_URL=postgresql://... load-dmtf --url
-
-# Confirm soc_aliases is populated (~56K rows expected)
-pnpm db:status
-
-# Then start the NLP worker
-docker compose up -d nlp-worker
-```
-
-Any title that matches a DMTF entry is classified immediately. Titles that don't
-match fall through to Stage 2 (BERT), which currently returns a placeholder — see
-"What's Not Working Yet" below.
 
 ---
 
@@ -100,27 +90,22 @@ match fall through to Stage 2 (BERT), which currently returns a placeholder — 
 
 | Feature | What works | What's still missing |
 |---|---|---|
-| **SOC classification** | Stage 1 exact-match against `soc_aliases` (DMTF titles → SOC code, confidence = 1.0) | Stage 2 BERT model — titles not in the DMTF get `"00-0000 / UNCLASSIFIED"` |
-| **NLP worker** | Receives BullMQ jobs from Redis, validates payloads with Pydantic, calls the classifier, marks low-confidence records as `requires_review` | Results are published to a Redis stream but never written back to `lca_records` in PostgreSQL |
-| **Employer deduplication** | Database tables and indexes for all three layers are ready (`canonical_employers`, `employer_embeddings`) | All matching logic is stubbed — every employer is currently treated as unique |
+| **SOC classification** | Stage 1 exact-match against `soc_aliases` (~1.0 confidence DMTF hits) | Stage 2 BERT/zero-shot for titles not in the DMTF — currently returns `00-0000 / UNCLASSIFIED` (confidence 0.0) and routes to quarantine |
+| **Entity resolution** | Layer 1 FEIN matching is fully working — `canonical_employers` populated, `canonical_employer_id` written back to `lca_records` | Layer 2 (`pg_trgm` similarity) and Layer 3 (`pgvector` HNSW) — records without a valid FEIN are not matched |
 
 ---
 
 ## What's Not Working Yet
 
-- **BERT fallback (Stage 2 SOC)** — job titles not found in the DMTF are returned
-  as `UNCLASSIFIED`. A fine-tuned BERT model (or a zero-shot HuggingFace model)
-  is needed to handle these.
-- **Employer deduplication** — none of the three matching layers (FEIN lookup,
-  trigram similarity, vector embeddings) are implemented yet. All employers remain
-  distinct entries.
-- **NLP write-back** — after classification the results sit in a Redis stream but
-  `lca_records.data` is never updated with `soc_code` or `canonical_employer_id`.
-  The pipeline loop is not yet closed.
-- **Quarantine reprocessing** — records that fail validation or get flagged for
-  review accumulate in `staging.quarantine_records` with no tooling to bulk-correct
-  and re-ingest them yet.
-- **Tests and CI/CD** — no automated tests exist in any package.
+- **Stage 2 SOC classification** — job titles outside the BLS DMTF (~50% of records)
+  get the `UNCLASSIFIED` placeholder. A zero-shot HuggingFace classifier or a
+  fine-tuned BERT model would close this gap.
+- **Layers 2 & 3 entity resolution** — records without a valid FEIN don't get a
+  `canonical_employer_id`. Trigram and vector similarity matching are stubbed.
+- **Quarantine reprocessing** — records flagged for review accumulate in
+  `staging.quarantine_records`; there's no CLI tool yet to bulk-correct and
+  re-ingest them.
+- **Tests and CI/CD** — no automated test suite or GitHub Actions workflows.
 
 ---
 
@@ -128,48 +113,39 @@ match fall through to Stage 2 (BERT), which currently returns a placeholder — 
 
 These are ordered by impact — each one unlocks something visible in the pipeline.
 
-### Step 1 — FEIN-based employer deduplication *(next up)*
+### Step 1 — BERT / zero-shot fallback for Stage 2 *(next up)*
 
-Most LCA records include a Federal Employer Identification Number (FEIN). Two
-records with the same FEIN are definitively the same company. This is pure SQL —
-no ML involved — and resolves the majority of duplicates instantly.
+About half the FY2025 Q1 records (~53K) currently land in quarantine because
+their job titles aren't in the DMTF. The fastest path without training data is a
+zero-shot classifier from HuggingFace (e.g. `facebook/bart-large-mnli`) using
+SOC titles as candidate labels — no fine-tuning required.
 
-**Outcome:** Employers with a valid FEIN get a `canonical_employer_id` in
-`canonical_employers`. The `lca_records` table can be updated accordingly.
+**Outcome:** Every record gets a SOC code. Confident predictions update
+`lca_records`; low-confidence ones still route to quarantine for human review.
 
-### Step 2 — Write NLP results back to PostgreSQL
+### Step 2 — Trigram and vector employer matching (Layers 2 & 3)
 
-Right now processed records disappear into a Redis stream that nothing reads.
-This step adds an `UPDATE lca_records SET data = data || $result WHERE id = $id`
-call to the NLP worker so that `soc_code` and `canonical_employer_id` are
-persisted. This closes the pipeline loop.
+For the ~30% of records without a valid FEIN, employers are matched by name
+similarity. Layer 2 uses `pg_trgm` Jaccard similarity (>0.85 threshold). Layer 3
+uses `sentence-transformers` embeddings stored in `pgvector` with HNSW indexes.
+Both database indexes are already created; only the Python query logic remains.
 
-**Outcome:** After NLP processing you can query classified and deduplicated records
-directly from PostgreSQL.
+**Outcome:** Employers like `"Google Inc."`, `"Google LLC"`, and `"GOOGLE"`
+collapse into a single canonical entity even when a FEIN isn't present.
 
-### Step 3 — BERT / zero-shot fallback for Stage 2
+### Step 3 — Quarantine reprocessing CLI
 
-For job titles not covered by the DMTF (unusual or abbreviated titles), a language
-model is needed. The fastest path without training data is a zero-shot classifier
-from HuggingFace using SOC titles as candidate labels — no fine-tuning required.
+Add `reprocess:quarantine` to the CLI tool. Reads rows from
+`staging.quarantine_records`, allows the operator to correct or augment them,
+and re-enqueues them through the normal NLP pipeline. Idempotent on rerun.
 
-**Outcome:** All records get a SOC code. Low-confidence predictions are flagged
-`requires_review` and routed to the quarantine table for human review.
+**Outcome:** Operators can fix data quality issues without manual SQL.
 
-### Step 4 — Trigram and vector employer matching (Layers 2 & 3)
+### Step 4 — Tests + CI/CD
 
-After FEIN matching, remaining employers are matched by name similarity using
-PostgreSQL's `pg_trgm` extension, then by semantic vector distance using
-`pgvector`. Both indexes are already created; only the Python query logic needs
-to be written.
-
-**Outcome:** Employers without a FEIN (or with formatting variants) are still
-deduplicated, dramatically reducing the number of distinct canonical employers.
-
-### Step 5 — Quarantine reprocessing CLI + tests
-
-Add `reprocess:quarantine` to the CLI tool and write unit/integration tests for
-the classifier, entity resolver, and worker.
+Add unit tests for the classifier, entity resolver, Pydantic models, and
+ingestor; integration tests that exercise the full Docker stack; GitHub Actions
+to run lint + test + Docker build on every PR.
 
 **Outcome:** Production-grade reliability and a safety net for future changes.
 
@@ -179,8 +155,8 @@ the classifier, entity resolver, and worker.
 
 | Layer | Completeness | Notes |
 |---|---|---|
-| **Node.js ingestion pipeline** | **100%** | Fully functional — 107,414 records from FY2025 Q1 loaded successfully |
-| **Python NLP enrichment** | **~40%** | Worker orchestration, Pydantic validation, and Stage 1 SOC classification complete; BERT, entity resolution, and write-back still pending |
+| **Node.js ingestion pipeline** | **100%** | 107,414 records from FY2025 Q1 ingested cleanly |
+| **Python NLP enrichment** | **~70%** | Stage 1 SOC, Layer 1 entity resolution, Pydantic validation, and PostgreSQL write-back all working; Stage 2 (BERT) and Layers 2/3 (trgm, vector) still pending |
 | **Infrastructure & DevOps** | **95%** | Docker stack with pgvector fully working; missing CI/CD and tests |
 | **Documentation** | **98%** | Reflects current implementation accurately |
 
@@ -192,31 +168,30 @@ the classifier, entity resolver, and worker.
 
 | Component | Path | Description |
 |---|---|---|
-| **Database Library** | `packages/db-lib` | Singleton PG pool, `pg-copy-streams` bulk COPY, idempotent `ensureSchema()`, partitioned tables, GIN indexes, all NLP tables (`canonical_employers`, `employer_embeddings`, `soc_aliases`, `staging.quarantine_records`) |
-| **Ingestor** | `apps/ingestor` | BullMQ worker: XLSX streaming via `xlstream`, batch flushing (5K rows), NLP job enqueueing, bounded memory ≤250 MB, graceful shutdown |
-| **Harvester** | `apps/harvester` | Scrapes DOL site for new XLSX files, dedup via `harvested_files` table, auto-enqueues ingest jobs, configurable poll interval |
-| **CLI Tool** | `apps/cli-tool` | `db:init`, `seed` (with dry-run), `queue:stats`, `queue:drain` |
-| **Infrastructure** | `docker-compose.yml` | `pgvector/pgvector:pg16`, Redis 7, nlp-worker, ingestion-worker — all healthy with proper healthchecks |
-| **Pydantic Models** | `packages/nlp-engine/.../models.py` | `RecordItem`, `NlpJobPayload` (duplicate-ID guard), `SocResult` — full v2 validation |
-| **DMTF Loader** | `packages/nlp-engine/.../dmtf_loader.py` | Downloads / parses BLS Direct Match Title File, bulk-upserts into `soc_aliases`; idempotent |
-| **Documentation** | `README.md` | Architecture diagrams, data flow, database design, commands reference |
+| **Database Library** | `packages/db-lib` | Singleton PG pool, `pg-copy-streams` bulk COPY, idempotent `ensureSchema()`, partitioned tables, GIN + expression indexes (incl. `_nlp_id` write-back index), all NLP tables |
+| **Ingestor** | `apps/ingestor` | BullMQ worker: XLSX streaming via `xlstream`, UUID-tagged records (`_nlp_id`), enriched NLP payload (FEIN, state, city), batch flushing, ≤250 MB memory cap |
+| **Harvester** | `apps/harvester` | Scrapes DOL site for new XLSX files, dedup via `harvested_files` table |
+| **CLI Tool** | `apps/cli-tool` | `db:init`, `db:reset`, `db:status`, `seed` (with dry-run), `queue:stats`, `queue:drain` |
+| **Infrastructure** | `docker-compose.yml` | `pgvector/pgvector:pg16`, Redis 7, nlp-worker, ingestion-worker — all healthy |
+| **Pydantic Models** | `.../models.py` | `RecordItem` (with `nlp_id`), `NlpJobPayload` (duplicate-ID guard), `SocResult` (with `filing_year`) |
+| **DMTF Loader** | `.../dmtf_loader.py` | Downloads / parses BLS Direct Match Title File, auto-detects column layouts, bulk-upserts into `soc_aliases` |
+| **SOC Classifier — Stage 1** | `.../soc_classifier.py` | DMTF exact-match via `soc_aliases`, psycopg3 with reconnect; ~1.0 confidence on hit |
+| **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match with SELECT-then-INSERT pattern; populates `canonical_employers` |
+| **NLP Worker** | `.../worker.py` | Async Redis consumer, Pydantic validation, batch UPDATE write-back to `lca_records`, INSERT to `staging.quarantine_records` for low-confidence records |
+| **Documentation** | `README.md`, `PROJECT_STATUS.md` | Architecture diagrams, data flow, database design, commands reference |
 
 ### Partially Complete
 
-| Component | Path | What Works | What's Missing |
-|---|---|---|---|
-| **SOC Classifier** | `.../soc_classifier.py` | Stage 1 DMTF exact-match via `soc_aliases`, psycopg3 connection with reconnect, CLI entry point | Stage 2 BERT model loading (checkpoint not yet available) |
-| **NLP Worker** | `.../worker.py` | Async Redis consumer, Pydantic validation, semaphore concurrency, graceful shutdown, `requires_review` flag | PostgreSQL write-back; depends on stubbed entity resolver |
-| **Entity Resolution** | `.../entity_resolution.py` | Class structure, CLI entry point | All matching layers stubbed — returns identity mapping |
+| Component | What Works | What's Missing |
+|---|---|---|
+| **SOC Classifier — Stage 2** | Code path is wired, returns `00-0000 / UNCLASSIFIED` placeholder | BERT model checkpoint or zero-shot HuggingFace pipeline |
+| **Entity Resolution — Layers 2 & 3** | Method stubs (`resolve_trgm`, `resolve_vector`), DB indexes ready (`gin_trgm_ops`, HNSW) | Actual SQL queries against `canonical_employers` and `employer_embeddings` |
 
 ### Not Yet Implemented
 
 | Item | Notes |
 |---|---|
 | **BERT model checkpoint** | No fine-tuned model at `models/soc-bert`; zero-shot HuggingFace fallback is the fastest path |
-| **PostgreSQL write-back** | NLP worker publishes to Redis stream but never UPDATEs `lca_records` |
-| **Layer 1 entity resolution** | FEIN deterministic matching not yet written |
-| **Layers 2 & 3 entity resolution** | pg_trgm and pgvector matching not yet written |
 | **Quarantine reprocessing** | `reprocess:quarantine` CLI command not implemented |
 | **Training pipeline** | `lca_nlp_engine.train_soc` script does not exist |
 | **Tests** | No test files in any package (JS or Python) |
