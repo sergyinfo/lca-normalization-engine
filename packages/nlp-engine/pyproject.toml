@@ -28,6 +28,9 @@ dependencies = [
     "pydantic>=2.7.0",
     "structlog>=24.0.0",
     "tqdm>=4.66.0",
+    # LLM-on-residual (Stage 3)
+    "httpx>=0.27.0",
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +51,8 @@ classify-soc = "lca_nlp_engine.soc_classifier:cli_main"
 dedup-companies = "lca_nlp_engine.entity_resolution:cli_main"
 load-dmtf = "lca_nlp_engine.dmtf_loader:cli_main"
 bootstrap-aliases = "lca_nlp_engine.alias_bootstrap:cli_main"
+reclassify-quarantine = "lca_nlp_engine.reclassify_quarantine:main"
+refresh-employer-consensus = "lca_nlp_engine.employer_consensus:cli_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

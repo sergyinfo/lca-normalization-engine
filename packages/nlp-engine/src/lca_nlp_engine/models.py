@@ -88,7 +88,9 @@ class SocResult(BaseModel):
     soc_code: str
     soc_title: str
     soc_confidence: float = Field(..., ge=0.0, le=1.0)
+    soc_source: str = "stage2"  # 'employer_consensus' | 'dmtf' | 'stage2' | 'unclassified'
     requires_review: bool = False
+    review_reason: Optional[str] = None
     canonical_employer_id: Optional[UUID] = None
     # Preserved for quarantine routing
     employer_name: str = ""

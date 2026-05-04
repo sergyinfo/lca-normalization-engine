@@ -120,12 +120,13 @@ class NlpWorker:
         batch_id = payload.batch_id
         log.info("nlp_worker.processing", batch_id=batch_id, n=len(payload.records))
 
-        # SOC classification
+        # SOC classification (Stage 0 employer consensus → Stage 1 DMTF → Stage 2 retrieval)
         job_titles = [r.job_title for r in payload.records]
-        predictions: list[SocPrediction] = self.classifier.predict_batch(job_titles)
+        feins = [r.fein for r in payload.records]
+        predictions: list[SocPrediction] = self.classifier.predict_batch(job_titles, feins=feins)
 
         # Entity resolution + build results
-        results: list[SocResult] = []
+        results: list[tuple[SocResult, str]] = []  # (result, job_title) — job_title kept for quarantine context
         for record, prediction in zip(payload.records, predictions):
             canonical_id = self.deduplicator.resolve(
                 employer_name=record.employer_name,
@@ -133,22 +134,26 @@ class NlpWorker:
                 employer_city=record.employer_city,
                 employer_state=record.employer_state,
             )
-            results.append(SocResult(
+            requires_review = prediction.confidence < self._stage2_threshold
+            review_reason = "low_soc_confidence" if requires_review else None
+            results.append((SocResult(
                 nlp_id=record.nlp_id,
                 filing_year=record.filing_year,
                 soc_code=prediction.code,
                 soc_title=prediction.title,
                 soc_confidence=prediction.confidence,
-                requires_review=prediction.confidence < self._stage2_threshold,
+                soc_source=prediction.source,
+                requires_review=requires_review,
+                review_reason=review_reason,
                 canonical_employer_id=canonical_id,
                 employer_name=record.employer_name,
                 employer_state=record.employer_state,
-            ))
+            ), record.job_title))
 
         self._write_results(results)
 
-        classified = sum(1 for r in results if not r.requires_review)
-        quarantined = sum(1 for r in results if r.requires_review)
+        classified = sum(1 for r, _ in results if not r.requires_review)
+        quarantined = sum(1 for r, _ in results if r.requires_review)
         log.info(
             "nlp_worker.batch_done",
             batch_id=batch_id,
@@ -156,13 +161,13 @@ class NlpWorker:
             quarantined=quarantined,
         )
 
-    def _write_results(self, results: list[SocResult]) -> None:
+    def _write_results(self, results: list[tuple[SocResult, str]]) -> None:
         if self._db_conn is None:
             log.error("nlp_worker.write_skipped", reason="no db connection")
             return
 
-        classified = [r for r in results if not r.requires_review]
-        quarantined = [r for r in results if r.requires_review]
+        classified = [(r, t) for r, t in results if not r.requires_review]
+        quarantined = [(r, t) for r, t in results if r.requires_review]
 
         try:
             with self._db_conn.cursor() as cur:
@@ -181,13 +186,14 @@ class NlpWorker:
                                     "soc_code": r.soc_code,
                                     "soc_title": r.soc_title,
                                     "soc_confidence": r.soc_confidence,
+                                    "soc_source": r.soc_source,
                                     "canonical_employer_id": str(r.canonical_employer_id) if r.canonical_employer_id else None,
                                     "nlp_processed_at": now,
                                 }),
                                 r.nlp_id,
                                 r.filing_year,
                             )
-                            for r in classified
+                            for r, _ in classified
                         ],
                     )
 
@@ -203,6 +209,7 @@ class NlpWorker:
                                 r.filing_year,
                                 json.dumps({
                                     "_nlp_id": r.nlp_id,
+                                    "job_title": title,
                                     "employer_name": r.employer_name,
                                     "employer_state": r.employer_state,
                                     "soc_code": r.soc_code,
@@ -213,7 +220,7 @@ class NlpWorker:
                                     "soc_confidence": r.soc_confidence,
                                 }),
                             )
-                            for r in quarantined
+                            for r, title in quarantined
                         ],
                     )
 

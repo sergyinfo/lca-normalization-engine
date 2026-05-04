@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-04
+**Date:** 2026-05-04 (updated: Stage 0 employer-consensus + LLM-on-residual + short-title gate)
 
 ---
 
@@ -61,20 +61,22 @@ A fully-loaded FY2025 Q1 file (~107K records) currently produces:
 
 | Table | Rows | Notes |
 |---|---|---|
-| `lca_records` | 107,414 | All ingested; **103,367 classified** (96.2%) with confidence ≥ 0.7 |
-| `soc_aliases` | 13,003 | 6,520 BLS DMTF + 6,483 self-bootstrapped from `lca_records` consensus |
+| `lca_records` | 107,414 | **107,409 classified** (99.99%); 103 flagged for review (short-title LLM picks) |
+| `soc_aliases` | 13,003 | 6,520 BLS DMTF + 6,483 self-bootstrapped from cross-employer consensus |
+| `employer_soc_consensus` | 1,597 | New: per-employer (FEIN, title) → SOC lookup, refreshed from `lca_records` |
 | `canonical_employers` | 19,970 | Unique employers resolved by FEIN (Layer 1) |
-| `staging.quarantine_records` | 4,047 | Below-threshold titles awaiting human review (3.8%) |
+| `staging.quarantine_records` | 5 | Residual HITL queue (LLM-refused titles) — 0.005% of input |
 
-SOC classification breakdown:
+SOC classification breakdown after the full pipeline (Stage 0 → 1 → 2 → 3 LLM):
 
-| Source | Count | Confidence |
-|---|---|---|
-| Stage 1 — alias exact match | 64,849 | 1.0 |
-| Stage 2 — Semantic retrieval (≥ 0.9) | 15,759 | very high |
-| Stage 2 — Semantic retrieval (0.8–0.89) | 15,781 | high |
-| Stage 2 — Semantic retrieval (0.7–0.79) | 6,978 | acceptable |
-| Quarantined (< 0.7) | 4,047 | requires review |
+| Source | Count | Confidence | Notes |
+|---|---|---|---|
+| Stage 0 — Employer consensus | 8 (backfill) | ≥0.80 (capped 0.99) | Per-FEIN authoritative; Stage 0 fires inline for new ingestions |
+| Stage 1 — DMTF / bootstrap exact match | 64,849 | 1.0 | BLS Direct Match Title File + cross-employer aliases |
+| Stage 2 — Semantic retrieval (≥ 0.7) | 38,518 | 0.7 – 0.99 | sentence-transformer cosine similarity |
+| Stage 3 — LLM-on-residual | 4,034 | LLM-picked from top-10 candidates | Llama 3.1 8B local via Ollama |
+| Flagged short-title HITL | 103 | (subset of above) | `requires_review=true, review_reason='short_title_llm_pick'` |
+| Quarantined (LLM declined) | 5 | < 0.7 + LLM refused | True residue |
 
 ### Query the database
 
@@ -101,7 +103,7 @@ LIMIT  5;
 
 | Feature | What works | What's still missing |
 |---|---|---|
-| **SOC classification** | Stage 1 (alias exact match) + Stage 2 (sentence-transformer semantic retrieval over `soc_aliases`) + self-bootstrap from cross-employer consensus in `lca_records`. 96.2% coverage at confidence ≥ 0.7 | A fine-tuned BERT classifier would beat semantic retrieval on edge cases. Optional and not on the critical path |
+| **SOC classification** | Stage 0 (employer consensus) + Stage 1 (DMTF/bootstrap) + Stage 2 (semantic retrieval) + Stage 3 (LLM-on-residual). 99.99% coverage; 5-record HITL residue | None on the critical path. BERT fine-tuning was empirically tested and rejected (lost to retrieval by 11pp on this corpus — see `project_notes/`) |
 | **Entity resolution** | Layer 1 FEIN matching is fully working — `canonical_employers` populated, `canonical_employer_id` written back to `lca_records` | Layer 2 (`pg_trgm` similarity) and Layer 3 (`pgvector` HNSW) — records without a valid FEIN are not matched |
 
 ---
@@ -110,9 +112,9 @@ LIMIT  5;
 
 - **Layers 2 & 3 entity resolution** — records without a valid FEIN don't get a
   `canonical_employer_id`. Trigram and vector similarity matching are stubbed.
-- **Quarantine reprocessing** — records flagged for review accumulate in
-  `staging.quarantine_records`; there's no CLI tool yet to bulk-correct and
-  re-ingest them.
+- **HITL review UI** — the 103 short-title flagged records and 5 quarantine
+  residue records carry `requires_review=true`/quarantine status, but there's
+  no operator interface to walk through them. SQL only for now.
 - **Tests and CI/CD** — no automated test suite or GitHub Actions workflows.
 
 ---
@@ -166,19 +168,22 @@ to run lint + test + Docker build on every PR.
 
 | Component | Path | Description |
 |---|---|---|
-| **Database Library** | `packages/db-lib` | Singleton PG pool, `pg-copy-streams` bulk COPY, idempotent `ensureSchema()`, partitioned tables, GIN + expression indexes (incl. `_nlp_id` write-back index), all NLP tables |
+| **Database Library** | `packages/db-lib` | Singleton PG pool, `pg-copy-streams` bulk COPY, idempotent `ensureSchema()`, partitioned tables, GIN + expression indexes, all NLP tables incl. new `employer_soc_consensus` |
 | **Ingestor** | `apps/ingestor` | BullMQ worker: XLSX streaming via `xlstream`, UUID-tagged records (`_nlp_id`), enriched NLP payload (FEIN, state, city), batch flushing, ≤250 MB memory cap |
 | **Harvester** | `apps/harvester` | Scrapes DOL site for new XLSX files, dedup via `harvested_files` table |
-| **CLI Tool** | `apps/cli-tool` | `db:init`, `db:reset`, `db:status`, `seed` (with dry-run), `queue:stats`, `queue:drain` |
+| **CLI Tool** | `apps/cli-tool` | `db:init`, `db:reset`, `db:status`, `seed`, `queue:stats`, `queue:drain` |
 | **Infrastructure** | `docker-compose.yml` | `pgvector/pgvector:pg16`, Redis 7, nlp-worker, ingestion-worker — all healthy |
-| **Pydantic Models** | `.../models.py` | `RecordItem` (with `nlp_id`), `NlpJobPayload` (duplicate-ID guard), `SocResult` (with `filing_year`) |
+| **Pydantic Models** | `.../models.py` | `RecordItem`, `NlpJobPayload`, `SocResult` (now with `soc_source`, `review_reason`) |
 | **DMTF Loader** | `.../dmtf_loader.py` | Downloads / parses BLS Direct Match Title File, auto-detects column layouts, bulk-upserts into `soc_aliases` |
-| **SOC Classifier — Stage 1** | `.../soc_classifier.py` | DMTF exact-match via `soc_aliases`, psycopg3 with reconnect; ~1.0 confidence on hit |
-| **SOC Classifier — Stage 2** | `.../soc_classifier.py` | Sentence-transformer (`all-MiniLM-L6-v2`) semantic retrieval over the alias corpus; cosine similarity argmax with 0.7 confidence gate |
-| **Self-bootstrapped aliases** | `.../alias_bootstrap.py` | Mines high-agreement `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` (cross-employer consensus) and inserts them into `soc_aliases` with `source='lca_bootstrap'`. Cuts quarantine ~91% on the FY2025 Q1 sample |
-| **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match with SELECT-then-INSERT pattern; populates `canonical_employers` |
-| **NLP Worker** | `.../worker.py` | Async Redis consumer, Pydantic validation, batch UPDATE write-back to `lca_records`, INSERT to `staging.quarantine_records` for low-confidence records |
-| **Documentation** | `README.md`, `PROJECT_STATUS.md` | Architecture diagrams, data flow, database design, commands reference |
+| **SOC Classifier — Stage 0** | `.../soc_classifier.py` | New: per-employer consensus lookup via `employer_soc_consensus` (FEIN + normalized title). Runs **before** Stage 1. |
+| **SOC Classifier — Stage 1** | `.../soc_classifier.py` | DMTF / bootstrap exact-match via `soc_aliases`; ~1.0 confidence on hit |
+| **SOC Classifier — Stage 2** | `.../soc_classifier.py` | Sentence-transformer (`all-MiniLM-L6-v2`) semantic retrieval; cosine argmax with 0.7 confidence gate |
+| **SOC Classifier — Stage 3 (LLM)** | `.../llm_classifier.py`, `.../reclassify_quarantine.py` | LLM picks from top-K Stage 2 candidates. Backends: Ollama (local Llama 3.1 8B) or Anthropic API. Includes built-in short-title gate that re-routes literal-string risks to HITL. |
+| **Cross-employer alias bootstrap** | `.../alias_bootstrap.py` | Mines consensus `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` into `soc_aliases` |
+| **Per-employer consensus refresh** | `.../employer_consensus.py` | New: rebuilds `employer_soc_consensus` from `lca_records` aggregations |
+| **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match; populates `canonical_employers` |
+| **NLP Worker** | `.../worker.py` | Async Redis consumer; passes FEIN through Stage 0; writes back `soc_source`, `requires_review`, `review_reason` |
+| **Documentation** | `README.md`, `PROJECT_STATUS.md`, `project_notes/` | Architecture, status, plus a full evolution narrative of the classifier design (`project_notes/soc_classifier_evolution.md`) |
 
 ### Partially Complete
 
@@ -190,7 +195,7 @@ to run lint + test + Docker build on every PR.
 
 | Item | Notes |
 |---|---|
-| **BERT fine-tuning pipeline** | Optional — semantic retrieval (Stage 2) covers the use case; a fine-tuned model would only improve edge cases |
-| **Quarantine reprocessing** | `reprocess:quarantine` CLI command not implemented |
+| **BERT fine-tuning pipeline** | **Tested and rejected** — see `project_notes/soc_classifier_evolution.md`. Fine-tuned `bert-base-uncased` on 49K bootstrap labels lost to Stage 2 retrieval by 11pp exact / 3pp major. Documented as a thesis finding. |
+| **HITL review CLI / UI** | 103 short-title flagged + 5 quarantine residue records carry the right metadata; no operator interface yet |
 | **Tests** | No test files in any package (JS or Python) |
 | **CI/CD** | No GitHub Actions workflows |

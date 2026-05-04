@@ -52,6 +52,7 @@ class SocPrediction:
     code: str
     title: str
     confidence: float
+    source: str = "stage2"  # 'employer_consensus' | 'dmtf' | 'stage2' | 'unclassified'
 
 
 class SocClassifier:
@@ -166,6 +167,41 @@ class SocClassifier:
             self._encoder = None
 
     # ------------------------------------------------------------------
+    # Stage 0 — Per-employer SOC consensus (refreshed by employer_consensus.py)
+    # ------------------------------------------------------------------
+
+    def _lookup_employer_consensus(
+        self, job_title: str, fein: Optional[str]
+    ) -> Optional[SocPrediction]:
+        """If this employer has a strong consensus on (this title → SOC), trust it."""
+        if self._db_conn is None or not fein:
+            return None
+        try:
+            with self._db_conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT soc_code, soc_title, agreement
+                    FROM employer_soc_consensus
+                    WHERE fein = %s AND job_title_norm = lower(trim(%s))
+                    LIMIT 1
+                    """,
+                    (fein, job_title),
+                )
+                row = cur.fetchone()
+            if row:
+                # Confidence = agreement, capped at 0.99 so DMTF stays the only 1.0
+                return SocPrediction(
+                    code=row[0],
+                    title=row[1],
+                    confidence=min(0.99, float(row[2])),
+                    source="employer_consensus",
+                )
+        except psycopg.OperationalError:
+            log.warning("soc_classifier.db_reconnect")
+            self._connect_db()
+        return None
+
+    # ------------------------------------------------------------------
     # Stage 1 — DMTF exact match
     # ------------------------------------------------------------------
 
@@ -181,7 +217,7 @@ class SocClassifier:
                 )
                 row = cur.fetchone()
             if row:
-                return SocPrediction(code=row[0], title=row[1], confidence=1.0)
+                return SocPrediction(code=row[0], title=row[1], confidence=1.0, source="dmtf")
         except psycopg.OperationalError:
             log.warning("soc_classifier.db_reconnect")
             self._connect_db()
@@ -196,7 +232,7 @@ class SocClassifier:
         if not job_titles:
             return []
         if self._encoder is None or self._alias_embeddings is None:
-            return [SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0) for _ in job_titles]
+            return [SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0, "unclassified") for _ in job_titles]
 
         try:
             embs = self._encoder.encode(
@@ -213,22 +249,67 @@ class SocClassifier:
             best_score = scores.tolist()
         except Exception:
             log.exception("soc_classifier.stage2_inference_failed", n=len(job_titles))
-            return [SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0) for _ in job_titles]
+            return [SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0, "unclassified") for _ in job_titles]
 
         out: list[SocPrediction] = []
         for idx, score in zip(best_idx, best_score):
             code, title = self._alias_codes[idx]
-            out.append(SocPrediction(code=code, title=title, confidence=round(float(score), 4)))
+            out.append(SocPrediction(
+                code=code, title=title, confidence=round(float(score), 4), source="stage2",
+            ))
+        return out
+
+    def topk_candidates(self, job_title: str, k: int = 10) -> list[SocPrediction]:
+        """Return the top-k Stage 2 candidates for a title (deduped by SOC code).
+
+        Used by the LLM-on-residual reclassifier — we let the LLM pick from
+        these candidates rather than hallucinate raw codes.
+        """
+        if not job_title or not job_title.strip():
+            return []
+        if self._encoder is None or self._alias_embeddings is None:
+            return []
+
+        try:
+            emb = self._encoder.encode(
+                [job_title],
+                convert_to_tensor=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            sims = (emb @ self._alias_embeddings.T).squeeze(0)  # (N,)
+            # Pull more than k so we can dedupe by soc_code and still return k
+            order = sims.argsort(descending=True).tolist()
+        except Exception:
+            log.exception("soc_classifier.topk_inference_failed")
+            return []
+
+        seen: set[str] = set()
+        out: list[SocPrediction] = []
+        scores = sims.tolist()
+        for idx in order:
+            code, title = self._alias_codes[idx]
+            if code in seen:
+                continue
+            seen.add(code)
+            out.append(SocPrediction(code=code, title=title, confidence=round(float(scores[idx]), 4)))
+            if len(out) >= k:
+                break
         return out
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def predict(self, job_title: str) -> SocPrediction:
-        """Classify a single job title. Stage 1 first, semantic retrieval fallback."""
+    def predict(self, job_title: str, fein: Optional[str] = None) -> SocPrediction:
+        """Classify a single job title. Stage 0 (employer) → Stage 1 (DMTF) → Stage 2 (retrieval)."""
         if not job_title or not job_title.strip():
-            return SocPrediction(code=UNCLASSIFIED, title="UNCLASSIFIED", confidence=0.0)
+            return SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0, "unclassified")
+
+        emp_hit = self._lookup_employer_consensus(job_title, fein)
+        if emp_hit is not None:
+            log.debug("soc_classifier.employer_consensus_hit", job_title=job_title, code=emp_hit.code)
+            return emp_hit
 
         dmtf_hit = self._lookup_dmtf(job_title)
         if dmtf_hit is not None:
@@ -238,25 +319,39 @@ class SocClassifier:
         log.debug("soc_classifier.dmtf_miss", job_title=job_title)
         return self._predict_stage2_batch([job_title])[0]
 
-    def predict_batch(self, job_titles: Sequence[str]) -> list[SocPrediction]:
-        """Classify a batch of job titles.
+    def predict_batch(
+        self,
+        job_titles: Sequence[str],
+        feins: Optional[Sequence[Optional[str]]] = None,
+    ) -> list[SocPrediction]:
+        """Classify a batch. Per-record Stage 0 + Stage 1, batched Stage 2 for misses.
 
-        Stage 1 runs as a per-record DB lookup (fast). All Stage 1 misses are
-        then encoded together in a single Stage 2 batch — this is what makes
-        the worker viable on CPU.
+        If `feins` is provided, Stage 0 (employer consensus) is consulted first.
+        Otherwise the pipeline is identical to the previous Stage 1 + Stage 2.
         """
         n = len(job_titles)
         out: list[Optional[SocPrediction]] = [None] * n
         miss_indices: list[int] = []
         miss_titles: list[str] = []
+        stage0_hits = 0
+        stage1_hits = 0
 
         for i, title in enumerate(job_titles):
             if not title or not title.strip():
-                out[i] = SocPrediction(code=UNCLASSIFIED, title="UNCLASSIFIED", confidence=0.0)
+                out[i] = SocPrediction(UNCLASSIFIED, "UNCLASSIFIED", 0.0, "unclassified")
                 continue
+
+            fein = feins[i] if feins is not None else None
+            emp_hit = self._lookup_employer_consensus(title, fein)
+            if emp_hit is not None:
+                out[i] = emp_hit
+                stage0_hits += 1
+                continue
+
             hit = self._lookup_dmtf(title)
             if hit is not None:
                 out[i] = hit
+                stage1_hits += 1
             else:
                 miss_indices.append(i)
                 miss_titles.append(title)
@@ -269,7 +364,8 @@ class SocClassifier:
         log.debug(
             "soc_classifier.batch_done",
             total=n,
-            stage1_hits=n - len(miss_titles),
+            stage0_hits=stage0_hits,
+            stage1_hits=stage1_hits,
             stage2_hits=len(miss_titles),
         )
         return out  # type: ignore[return-value]

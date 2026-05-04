@@ -230,6 +230,27 @@ export async function ensureSchema(conn = pool) {
       ON soc_aliases (soc_code);
   `);
 
+  // Stage 0 — per-employer SOC consensus, refreshed periodically from lca_records.
+  // When an employer has filed the same JOB_TITLE many times with the same SOC,
+  // we trust their own self-consistent labelling over generic NLP.
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS employer_soc_consensus (
+      fein            TEXT      NOT NULL,
+      job_title_norm  TEXT      NOT NULL,
+      soc_code        CHAR(7)   NOT NULL,
+      soc_title       TEXT      NOT NULL,
+      hits            INTEGER   NOT NULL,
+      agreement       REAL      NOT NULL,
+      refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (fein, job_title_norm)
+    );
+  `);
+
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_employer_soc_consensus_lookup
+      ON employer_soc_consensus (fein, job_title_norm);
+  `);
+
   // Quarantine schema for invalid / low-confidence records
   await conn.query(`CREATE SCHEMA IF NOT EXISTS staging;`);
 
