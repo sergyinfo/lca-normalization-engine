@@ -14,6 +14,7 @@
     "db:status": "node apps/cli-tool/index.js db:status",
     "seed": "node apps/cli-tool/index.js seed --files-dir ./data",
     "queue:stats": "node apps/cli-tool/index.js queue:stats",
+    "aliases:bootstrap": "docker compose exec -T nlp-worker bootstrap-aliases",
     "ingestor:start": "pnpm --filter ingestor run start",
     "ingestor:dev": "pnpm --filter ingestor run dev",
     "harvester:start": "pnpm --filter harvester run start",

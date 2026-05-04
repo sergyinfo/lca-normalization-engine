@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-03
+**Date:** 2026-05-04
 
 ---
 
@@ -61,19 +61,20 @@ A fully-loaded FY2025 Q1 file (~107K records) currently produces:
 
 | Table | Rows | Notes |
 |---|---|---|
-| `lca_records` | 107,414 | All ingested; **62,207 classified** with confidence ≥ 0.7 |
+| `lca_records` | 107,414 | All ingested; **103,367 classified** (96.2%) with confidence ≥ 0.7 |
+| `soc_aliases` | 13,003 | 6,520 BLS DMTF + 6,483 self-bootstrapped from `lca_records` consensus |
 | `canonical_employers` | 19,970 | Unique employers resolved by FEIN (Layer 1) |
-| `staging.quarantine_records` | 45,207 | Below-threshold titles awaiting human review |
+| `staging.quarantine_records` | 4,047 | Below-threshold titles awaiting human review (3.8%) |
 
 SOC classification breakdown:
 
 | Source | Count | Confidence |
 |---|---|---|
-| Stage 1 — DMTF exact match | 8,489 | 1.0 |
-| Stage 2 — Semantic retrieval (≥ 0.9) | 3,890 | very high |
-| Stage 2 — Semantic retrieval (0.8–0.89) | 21,480 | high |
-| Stage 2 — Semantic retrieval (0.7–0.79) | 28,348 | acceptable |
-| Quarantined (< 0.7) | 45,207 | requires review |
+| Stage 1 — alias exact match | 64,849 | 1.0 |
+| Stage 2 — Semantic retrieval (≥ 0.9) | 15,759 | very high |
+| Stage 2 — Semantic retrieval (0.8–0.89) | 15,781 | high |
+| Stage 2 — Semantic retrieval (0.7–0.79) | 6,978 | acceptable |
+| Quarantined (< 0.7) | 4,047 | requires review |
 
 ### Query the database
 
@@ -100,7 +101,7 @@ LIMIT  5;
 
 | Feature | What works | What's still missing |
 |---|---|---|
-| **SOC classification** | Stage 1 (DMTF exact match) + Stage 2 (sentence-transformer semantic retrieval over `soc_aliases`). Confidence-gated at 0.7 → quarantine | A fine-tuned BERT classifier would beat semantic retrieval on edge cases. Optional and not on the critical path |
+| **SOC classification** | Stage 1 (alias exact match) + Stage 2 (sentence-transformer semantic retrieval over `soc_aliases`) + self-bootstrap from cross-employer consensus in `lca_records`. 96.2% coverage at confidence ≥ 0.7 | A fine-tuned BERT classifier would beat semantic retrieval on edge cases. Optional and not on the critical path |
 | **Entity resolution** | Layer 1 FEIN matching is fully working — `canonical_employers` populated, `canonical_employer_id` written back to `lca_records` | Layer 2 (`pg_trgm` similarity) and Layer 3 (`pgvector` HNSW) — records without a valid FEIN are not matched |
 
 ---
@@ -174,6 +175,7 @@ to run lint + test + Docker build on every PR.
 | **DMTF Loader** | `.../dmtf_loader.py` | Downloads / parses BLS Direct Match Title File, auto-detects column layouts, bulk-upserts into `soc_aliases` |
 | **SOC Classifier — Stage 1** | `.../soc_classifier.py` | DMTF exact-match via `soc_aliases`, psycopg3 with reconnect; ~1.0 confidence on hit |
 | **SOC Classifier — Stage 2** | `.../soc_classifier.py` | Sentence-transformer (`all-MiniLM-L6-v2`) semantic retrieval over the alias corpus; cosine similarity argmax with 0.7 confidence gate |
+| **Self-bootstrapped aliases** | `.../alias_bootstrap.py` | Mines high-agreement `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` (cross-employer consensus) and inserts them into `soc_aliases` with `source='lca_bootstrap'`. Cuts quarantine ~91% on the FY2025 Q1 sample |
 | **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match with SELECT-then-INSERT pattern; populates `canonical_employers` |
 | **NLP Worker** | `.../worker.py` | Async Redis consumer, Pydantic validation, batch UPDATE write-back to `lca_records`, INSERT to `staging.quarantine_records` for low-confidence records |
 | **Documentation** | `README.md`, `PROJECT_STATUS.md` | Architecture diagrams, data flow, database design, commands reference |

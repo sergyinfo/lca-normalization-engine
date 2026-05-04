@@ -14,6 +14,7 @@ Direct Match Title File.
 |---|---|---|
 | `models.py` | Pydantic v2 schemas: `RecordItem`, `NlpJobPayload`, `SocResult` | ✅ Complete |
 | `dmtf_loader.py` | Downloads/parses BLS DMTF Excel file and bulk-upserts into `soc_aliases` | ✅ Complete |
+| `alias_bootstrap.py` | Mines consensus `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` and inserts them into `soc_aliases` (self-supervised) | ✅ Complete |
 | `soc_classifier.py` | Two-stage SOC classifier: DMTF exact match → sentence-transformer semantic retrieval | ✅ Complete |
 | `entity_resolution.py` | 3-layer employer deduplication (FEIN → pg_trgm → pgvector) | Layer 1 ✅ / Layers 2-3 stub |
 | `worker.py` | Async Redis/BullMQ consumer; Pydantic validation, classification, entity resolution, batch UPDATE write-back to `lca_records`, quarantine routing | ✅ Complete |
@@ -86,6 +87,38 @@ DATABASE_URL=postgresql://... load-dmtf --file ./dmtf.xlsx
 The loader auto-detects 2018 vs 2010 column layouts. The command is
 idempotent — re-running after a new DMTF release safely upserts updated
 mappings without creating duplicates.
+
+### Self-Supervised Alias Bootstrapping
+
+The DMTF gives ~6.5K labelled `(title, SOC)` pairs out of the box. That covers
+only a small slice of the long tail of free-text job titles in real LCA data.
+However, every LCA filing already carries an employer-supplied `SOC_CODE` —
+which means the dataset itself is a labelled training source, provided we
+filter for inter-employer consensus.
+
+`bootstrap-aliases` mines such consensus pairs:
+
+```bash
+DATABASE_URL=postgresql://... bootstrap-aliases \
+  --min-hits 5         # pair must occur ≥5 times overall
+  --min-employers 2    # across ≥2 distinct FEINs (avoid one employer dominating)
+  --min-agreement 0.8  # ≥80 % of the title's records must use this same SOC
+```
+
+Pairs that pass all three filters are inserted into `soc_aliases` with
+`source='lca_bootstrap'`. The unique index on `lower(job_title)` guarantees
+DMTF entries (the authoritative ones) are never overwritten — only *new*
+titles are added. After bootstrapping, restart `nlp-worker` so the larger
+alias corpus is re-encoded by the Stage 2 sentence-transformer.
+
+**Empirical impact (FY2025 Q1, ~107K records):**
+
+| Pipeline state | Stage 1 hits | Stage 2 hits ≥ 0.7 | Quarantined |
+|---|---:|---:|---:|
+| DMTF only (6,520 aliases) | 8,489 | 53,718 | 45,207 |
+| DMTF + bootstrap (13,003 aliases) | **64,849** | 38,518 | **4,047** |
+
+Quarantine dropped 91% with no labelled training data and no model fine-tuning.
 
 ### Confidence Gating & Human-in-the-Loop
 
@@ -245,8 +278,9 @@ nlp-worker
 | `nlp-worker` | Start the async BullMQ worker |
 | `load-dmtf --url` | Download BLS 2018 DMTF and populate `soc_aliases` |
 | `load-dmtf --file <path>` | Load DMTF from a local `.xlsx` file |
-| `classify-soc --model <path>` | Classify job titles from a JSONL stream |
-| `dedup-companies --db <dsn>` | Run employer entity resolution (stub) |
+| `bootstrap-aliases` | Mine consensus `(title, SOC)` pairs from `lca_records` and add to `soc_aliases` |
+| `classify-soc` | Classify job titles from a JSONL stream |
+| `dedup-companies --db <dsn>` | Run employer entity resolution (Layer 1; Layers 2/3 stub) |
 
 ---
 

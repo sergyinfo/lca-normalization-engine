@@ -47,6 +47,7 @@ nlp-worker = "lca_nlp_engine.worker:main"
 classify-soc = "lca_nlp_engine.soc_classifier:cli_main"
 dedup-companies = "lca_nlp_engine.entity_resolution:cli_main"
 load-dmtf = "lca_nlp_engine.dmtf_loader:cli_main"
+bootstrap-aliases = "lca_nlp_engine.alias_bootstrap:cli_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -316,6 +316,13 @@ node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive --dry-run
 pnpm seed                                                # uses ./data
 node apps/cli-tool/index.js seed --files-dir /path/to/lca-archive  # custom path
 
+# 9. (Recommended after first ingestion) Self-bootstrap the alias corpus
+#    Mines high-agreement (JOB_TITLE, SOC_CODE) pairs from already-ingested
+#    lca_records and adds them to soc_aliases. Restart nlp-worker afterwards
+#    so the larger alias matrix is re-encoded for Stage 2.
+pnpm aliases:bootstrap                                   # default thresholds
+docker compose restart nlp-worker
+
 # 9. Monitor queue depth
 pnpm queue:stats
 
@@ -419,6 +426,7 @@ Run from `packages/nlp-engine/` after installing with `pip install -e ".[dev]"`:
 | `classify-soc` | CLI entry point for SOC code classification (DMTF + sentence-transformer retrieval) |
 | `dedup-companies` | CLI entry point for the 3-layer employer deduplication pipeline |
 | `load-dmtf --file <path>` | Load BLS Direct Match Title File into `soc_aliases` for Stage 1 exact-match (pass `--url` to download automatically from BLS) |
+| `bootstrap-aliases --min-hits 5 --min-employers 2 --min-agreement 0.8` | Mine consensus `(title, SOC)` pairs from `lca_records` and add them to `soc_aliases` (self-supervised) |
 | `ruff check .` | Lint Python source code |
 | `mypy .` | Run static type checking on Python source |
 | `pytest` | Run Python test suite |
