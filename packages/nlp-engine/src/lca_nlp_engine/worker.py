@@ -132,6 +132,7 @@ class NlpWorker:
 
         # Entity resolution + build results
         results: list[tuple[SocResult, str]] = []  # (result, job_title) — job_title kept for quarantine context
+        unresolved: list[RecordItem] = []
         for record, prediction in zip(payload.records, predictions):
             canonical_id = self.deduplicator.resolve(
                 employer_name=record.employer_name,
@@ -139,6 +140,8 @@ class NlpWorker:
                 employer_city=record.employer_city,
                 employer_state=record.employer_state,
             )
+            if canonical_id is None and record.employer_name:
+                unresolved.append(record)
             requires_review = prediction.confidence < self._stage2_threshold
             review_reason = "low_soc_confidence" if requires_review else None
             results.append((SocResult(
@@ -156,6 +159,8 @@ class NlpWorker:
             ), record.job_title))
 
         self._write_results(results)
+        if unresolved:
+            self._write_unresolved(unresolved)
 
         classified = sum(1 for r, _ in results if not r.requires_review)
         quarantined = sum(1 for r, _ in results if r.requires_review)
@@ -164,6 +169,7 @@ class NlpWorker:
             batch_id=batch_id,
             classified=classified,
             quarantined=quarantined,
+            unresolved=len(unresolved),
         )
 
     def _write_results(self, results: list[tuple[SocResult, str]]) -> None:
@@ -237,6 +243,50 @@ class NlpWorker:
             self._connect_db()
         except Exception:
             log.exception("nlp_worker.write_failed")
+            self._db_conn.rollback()
+
+    def _write_unresolved(self, records: list[RecordItem]) -> None:
+        """UPSERT records with no canonical_employer_id into the operator queue.
+
+        Aggregates by (lower(name), state) so the table stays a small review
+        list rather than a per-record log.
+        """
+        if self._db_conn is None:
+            return
+        try:
+            with self._db_conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO staging.unresolved_employers
+                        (employer_name, employer_state, employer_fein,
+                         employer_city, first_nlp_id, first_filing_year)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (lower(employer_name), COALESCE(employer_state, ''))
+                    DO UPDATE SET
+                        hits          = staging.unresolved_employers.hits + 1,
+                        updated_at    = NOW(),
+                        employer_fein = COALESCE(staging.unresolved_employers.employer_fein,
+                                                 EXCLUDED.employer_fein)
+                    """,
+                    [
+                        (
+                            r.employer_name,
+                            r.employer_state,
+                            r.fein,
+                            r.employer_city,
+                            r.nlp_id,
+                            r.filing_year,
+                        )
+                        for r in records
+                    ],
+                )
+            self._db_conn.commit()
+        except psycopg.OperationalError:
+            log.warning("nlp_worker.db_reconnect", path="unresolved")
+            self._db_conn.rollback()
+            self._connect_db()
+        except Exception:
+            log.exception("nlp_worker.unresolved_write_failed")
             self._db_conn.rollback()
 
     def stop(self) -> None:

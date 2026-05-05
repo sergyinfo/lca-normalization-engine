@@ -273,4 +273,29 @@ export async function ensureSchema(conn = pool) {
       reprocessed_at  TIMESTAMPTZ
     );
   `);
+
+  // Operator queue for records whose employer couldn't be resolved by any
+  // entity-resolution layer. Aggregated by (name, state) with a hits counter
+  // so this stays a small review list rather than a per-record log.
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS staging.unresolved_employers (
+      id                 BIGSERIAL PRIMARY KEY,
+      employer_name      TEXT      NOT NULL,
+      employer_state     CHAR(2),
+      employer_fein      TEXT,
+      employer_city      TEXT,
+      hits               INTEGER   NOT NULL DEFAULT 1,
+      first_nlp_id       TEXT,
+      first_filing_year  SMALLINT,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_at        TIMESTAMPTZ,
+      resolved_to_id     UUID REFERENCES canonical_employers(id) ON DELETE SET NULL
+    );
+  `);
+
+  await conn.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_unresolved_employers_name_state
+      ON staging.unresolved_employers (lower(employer_name), COALESCE(employer_state, ''));
+  `);
 }
