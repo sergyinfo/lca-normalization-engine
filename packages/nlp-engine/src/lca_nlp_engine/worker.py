@@ -67,7 +67,12 @@ class NlpWorker:
             stage2_model=stage2_model,
             stage2_threshold=stage2_threshold,
         )
-        self.deduplicator = CompanyDeduplicator(db_url=db_url)
+        # Share the SocClassifier's encoder with Layer 3 so we don't load the
+        # sentence-transformer twice.
+        self.deduplicator = CompanyDeduplicator(
+            db_url=db_url,
+            encoder=self.classifier._encoder,
+        )
         self.deduplicator.connect()
         self._db_conn: Optional[psycopg.Connection] = None  # type: ignore[type-arg]
         self._running = True

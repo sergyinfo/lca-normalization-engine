@@ -200,13 +200,21 @@ export async function ensureSchema(conn = pool) {
 
   await conn.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
 
+  // Embedding dim must match the Stage 2 sentence-transformer.
+  // all-MiniLM-L6-v2 → 384.
   await conn.query(`
     CREATE TABLE IF NOT EXISTS employer_embeddings (
       employer_id   UUID PRIMARY KEY REFERENCES canonical_employers(id) ON DELETE CASCADE,
-      embedding     vector(768),
+      embedding     vector(384),
       model_version TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
       created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_employer_embeddings_hnsw
+      ON employer_embeddings
+      USING hnsw (embedding vector_cosine_ops);
   `);
 
   await conn.query(`

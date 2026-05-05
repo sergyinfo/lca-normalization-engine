@@ -54,6 +54,7 @@ bootstrap-aliases = "lca_nlp_engine.alias_bootstrap:cli_main"
 reclassify-quarantine = "lca_nlp_engine.reclassify_quarantine:main"
 refresh-employer-consensus = "lca_nlp_engine.employer_consensus:cli_main"
 backfill-canonical-ids = "lca_nlp_engine.backfill_canonical_ids:main"
+embed-employers = "lca_nlp_engine.employer_embedder:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
