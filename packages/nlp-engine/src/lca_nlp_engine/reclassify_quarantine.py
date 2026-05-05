@@ -35,6 +35,7 @@ from typing import Optional
 import psycopg
 import structlog
 
+from lca_nlp_engine.entity_resolution import CompanyDeduplicator
 from lca_nlp_engine.llm_classifier import (
     AnthropicBackend,
     LlmClassifier,
@@ -54,6 +55,8 @@ SELECT
     lr.data->>'JOB_TITLE'            AS job_title,
     q.raw_data->>'employer_name'     AS employer_name,
     q.raw_data->>'employer_state'    AS employer_state,
+    lr.data->>'EMPLOYER_FEIN'        AS employer_fein,
+    lr.data->>'EMPLOYER_CITY'        AS employer_city,
     (q.errors->>'soc_confidence')::float AS prior_confidence
 FROM staging.quarantine_records q
 LEFT JOIN lca_records lr
@@ -124,6 +127,12 @@ def main() -> None:
 
     llm = LlmClassifier(backend=backend)
 
+    # Layer 1 entity resolution runs alongside the LLM SOC pick so quarantine
+    # drains never leave canonical_employer_id unset (the original gap that
+    # required `backfill-canonical-ids`).
+    dedup = CompanyDeduplicator(db_url=args.db)
+    dedup.connect()
+
     n_seen = 0
     n_confident = 0
     n_unconfident = 0
@@ -149,7 +158,17 @@ def main() -> None:
             last_id = rows[-1][0]
 
             for row in rows:
-                qid, filing_year, nlp_id, title, employer, state, prior = row
+                (
+                    qid,
+                    filing_year,
+                    nlp_id,
+                    title,
+                    employer,
+                    state,
+                    fein,
+                    city,
+                    prior,
+                ) = row
                 n_seen += 1
                 if args.limit and n_seen > args.limit:
                     break
@@ -220,6 +239,15 @@ def main() -> None:
                 if gate_flagged:
                     patch["requires_review"] = True
                     patch["review_reason"] = decision.review_reason
+
+                canonical_id = dedup.resolve_fein(
+                    employer_name=employer or "",
+                    fein=fein,
+                    employer_city=city,
+                    employer_state=state,
+                )
+                if canonical_id is not None:
+                    patch["canonical_employer_id"] = str(canonical_id)
                 try:
                     with conn.cursor() as cur:
                         cur.execute(_UPDATE_SQL, (json.dumps(patch), nlp_id, filing_year))
@@ -243,6 +271,7 @@ def main() -> None:
             if args.limit and n_seen >= args.limit:
                 break
 
+    dedup.close()
     elapsed = int(time.time() - started)
     print()
     print("=== Reclassification Summary ===")

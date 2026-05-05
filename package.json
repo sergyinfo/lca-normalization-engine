@@ -17,6 +17,7 @@
     "aliases:bootstrap": "docker compose exec -T nlp-worker bootstrap-aliases",
     "consensus:refresh": "packages/nlp-engine/.venv/bin/refresh-employer-consensus",
     "quarantine:reclassify": "packages/nlp-engine/.venv/bin/reclassify-quarantine",
+    "canonical:backfill": "packages/nlp-engine/.venv/bin/backfill-canonical-ids",
     "ingestor:start": "pnpm --filter ingestor run start",
     "ingestor:dev": "pnpm --filter ingestor run dev",
     "harvester:start": "pnpm --filter harvester run start",
