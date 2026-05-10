@@ -23,6 +23,8 @@
     "ingestor:dev": "pnpm --filter ingestor run dev",
     "harvester:start": "pnpm --filter harvester run start",
     "harvester:dev": "pnpm --filter harvester run dev",
+    "operator:start": "pnpm --filter operator-ui run start",
+    "operator:dev": "pnpm --filter operator-ui run dev",
     "lint": "pnpm -r run lint",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",

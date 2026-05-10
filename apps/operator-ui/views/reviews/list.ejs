@@ -1,0 +1,52 @@
+<%- include('../partials/header', { title: 'Reviews' }) %>
+
+<h1>Reviews <span class="muted">(<%= rows.length %>)</span></h1>
+<p class="muted">Records flagged <code>requires_review = true</code>.</p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<% if (rows.length === 0) { %>
+  <p class="empty">Queue is empty. Nothing to review.</p>
+<% } else { %>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Year</th>
+        <th>Job title</th>
+        <th>Employer</th>
+        <th>State</th>
+        <th>SOC</th>
+        <th>Conf.</th>
+        <th>Source</th>
+        <th>Reason</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% rows.forEach((r) => { %>
+        <tr>
+          <td><%= r.filing_year %></td>
+          <td class="ellipsis" title="<%= r.job_title || '' %>"><%= r.job_title || '—' %></td>
+          <td class="ellipsis" title="<%= r.employer_name || '' %>"><%= r.employer_name || '—' %></td>
+          <td><%= r.employer_state || '—' %></td>
+          <td><%= r.soc_code || '—' %></td>
+          <td><%= r.soc_confidence ? Number(r.soc_confidence).toFixed(2) : '—' %></td>
+          <td><%= r.soc_source || '—' %></td>
+          <td><%= r.review_reason || '—' %></td>
+          <td><a href="/reviews/<%= r.filing_year %>/<%= r.id %>">Inspect →</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <div class="pager">
+    <% if (offset > 0) { %>
+      <a href="/reviews?limit=<%= limit %>&offset=<%= Math.max(0, offset - limit) %>">← Prev</a>
+    <% } %>
+    <% if (rows.length === limit) { %>
+      <a href="/reviews?limit=<%= limit %>&offset=<%= offset + limit %>">Next →</a>
+    <% } %>
+  </div>
+<% } %>
+
+<%- include('../partials/footer') %>

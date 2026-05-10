@@ -107,6 +107,31 @@ services:
           memory: 4G
 
   # --------------------------------------------------------------------------
+  # Operator HITL UI (Node.js)
+  # Runs apps/operator-ui — Fastify web app for walking the three review queues
+  # (requires_review records, staging.quarantine_records, staging.unresolved_employers).
+  # Auth: single shared password from OPERATOR_PASSWORD, signed cookie session.
+  # --------------------------------------------------------------------------
+  operator-ui:
+    build:
+      context: .
+      dockerfile: apps/operator-ui/Dockerfile
+    container_name: lca_operator_ui
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lca_user}:${POSTGRES_PASSWORD:-lca_pass}@db:5432/${POSTGRES_DB:-lca_db}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      OPERATOR_UI_PORT: 8080
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    ports:
+      - "${OPERATOR_UI_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
   # Ingestion Worker (Node.js)
   # Runs apps/ingestor — XLSX streaming → pg-copy-streams → PostgreSQL
   # --------------------------------------------------------------------------

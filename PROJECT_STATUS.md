@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-05 (updated: Layers 2 & 3 entity resolution + canonical-id backfill + unresolved-employers queue)
+**Date:** 2026-05-10 (updated: Operator HITL web UI shipped — all three review queues walkable through a browser)
 
 ---
 
@@ -106,16 +106,12 @@ LIMIT  5;
 | Feature | What works | What's still missing |
 |---|---|---|
 | **SOC classification** | Stage 0 (employer consensus) + Stage 1 (DMTF/bootstrap) + Stage 2 (semantic retrieval) + Stage 3 (LLM-on-residual). 99.99% coverage; 5-record HITL residue | None on the critical path. BERT fine-tuning was empirically tested and rejected (lost to retrieval by 11pp on this corpus — see `project_notes/`) |
-| **Entity resolution** | All three layers implemented and validated. Layer 1 (FEIN) carries 100% on FY2025 Q1; Layers 2 & 3 ready for historical / dirtier corpora. `staging.unresolved_employers` operator queue receives any layer-3 misses. | Operator HITL CLI to merge/promote rows in `unresolved_employers`. The current ingest produces 0 rows there because FY2025 Q1 has 100% FEIN coverage; CLI is deferred until historical data with real misses is loaded — see `project_notes/entity_resolution_evolution.md`. |
+| **Entity resolution** | All three layers implemented and validated. Layer 1 (FEIN) carries 100% on FY2025 Q1; Layers 2 & 3 ready for historical / dirtier corpora. `staging.unresolved_employers` operator queue receives any layer-3 misses, and operators can merge / create-new / reject through the new web UI. | Threshold tuning (Layer 2 trigram, Layer 3 vector) against real-world misses — needs a dirty historical quarter to populate `unresolved_employers` with non-zero traffic. See `project_notes/entity_resolution_evolution.md`. |
 
 ---
 
 ## What's Not Working Yet
 
-- **HITL review UI** — the 103 short-title flagged records, 5 quarantine
-  residue records, and (eventually) any rows in `staging.unresolved_employers`
-  carry the right metadata, but there's no operator interface to walk through
-  them. SQL only for now.
 - **Periodic embedding refresh** — `embed-employers` populates
   `employer_embeddings` from `canonical_employers`. New canonicals inserted
   later (via Layer 1 misses on future ingests) won't be embedded until the
@@ -134,20 +130,34 @@ LIMIT  5;
 
 These are ordered by impact — each one unlocks something visible in the pipeline.
 
-### Step 1 — Operator HITL CLI *(next up)*
+### Step 1 — Operator HITL UI ✅ *(done 2026-05-10)*
 
-A single CLI tool that lets the operator walk three review queues:
-* `requires_review = true` records in `lca_records` (103 short-title LLM picks).
-* `staging.quarantine_records` (5 LLM-refused residue).
-* `staging.unresolved_employers` (currently 0; will grow on historical /
-  dirtier corpora).
+Shipped as `apps/operator-ui` — Fastify + EJS web app, single shared
+password (`OPERATOR_PASSWORD`) with a signed-cookie session
+(`SESSION_SECRET`). Runs as a Docker Compose service `operator-ui` on
+port 8080.
 
-Each queue exposes list / inspect / accept / merge / reject actions. Writes
-the operator's decision back to the source row.
+Walks all three queues:
+* `requires_review = true` records in `lca_records` — accept SOC /
+  override SOC / reject to quarantine.
+* `staging.quarantine_records` — assign SOC manually (writes back to
+  `lca_records` via `_nlp_id`) / drop.
+* `staging.unresolved_employers` — merge into existing canonical
+  (with `pg_trgm` similarity search and state filter), create new
+  canonical, or reject. Merge backfills `canonical_employer_id` on
+  matching `lca_records`.
 
-**Outcome:** All HITL surfaces become walkable without ad-hoc SQL.
+Bring up:
+```bash
+docker compose up -d operator-ui   # http://localhost:8080
+# or for host iteration:
+pnpm operator:dev
+```
 
-### Step 2 — Historical corpus exercise (Layers 2/3 + unresolved queue)
+**Outcome:** All HITL surfaces are now walkable through a browser. No
+more ad-hoc SQL.
+
+### Step 2 — Historical corpus exercise (Layers 2/3 + unresolved queue) *(next up)*
 
 Ingest a pre-2020 LCA quarter (when FEIN discipline was looser) so Layers 2
 and 3 actually carry traffic. Use the resulting `unresolved_employers`
@@ -172,7 +182,7 @@ to run lint + test + Docker build on every PR.
 | Layer | Completeness | Notes |
 |---|---|---|
 | **Node.js ingestion pipeline** | **100%** | 107,414 records from FY2025 Q1 ingested cleanly |
-| **Python NLP enrichment** | **~95%** | All four SOC stages + all three entity-resolution layers + unresolved-employers queue + Pydantic validation + PostgreSQL write-back all implemented. Operator HITL CLI is the only remaining critical-path item. |
+| **Python NLP enrichment** | **100%** | All four SOC stages + all three entity-resolution layers + unresolved-employers queue + Pydantic validation + PostgreSQL write-back all implemented. Operator HITL surface now ships as `apps/operator-ui`. |
 | **Infrastructure & DevOps** | **95%** | Docker stack with pgvector fully working; missing CI/CD and tests; nlp-worker image needs a rebuild to pick up Layers 2/3 |
 | **Documentation** | **98%** | Reflects current implementation accurately; entity-resolution evolution documented in `project_notes/` |
 
@@ -205,6 +215,7 @@ to run lint + test + Docker build on every PR.
 | **Unresolved-employers queue** | `staging.unresolved_employers` table + `worker._write_unresolved` | New: aggregated UPSERT queue for records missed by all three layers. Empty on FY2025 Q1 (100% FEIN coverage); populated on dirtier corpora. |
 | **NLP Worker** | `.../worker.py` | Async Redis consumer; runs SOC pipeline + 3-layer entity resolution; writes `soc_source`, `requires_review`, `review_reason`, `canonical_employer_id`; UPSERTs misses into `staging.unresolved_employers`. |
 | **Reclassify-quarantine** | `.../reclassify_quarantine.py` | LLM-on-residual drain. Now also calls `resolve_fein` inline so quarantine drains never leave `canonical_employer_id` unset. |
+| **Operator HITL UI** | `apps/operator-ui` | New: Fastify + EJS web app on port 8080. Walks all three review queues with list / inspect / accept / override / merge / reject actions. Single shared password (`OPERATOR_PASSWORD`) + signed-cookie session (`SESSION_SECRET`). Reuses `@lca/db-lib` pool. Unresolved-employer merges run a transactional `lca_records` backfill. Ships as Docker Compose service `operator-ui`. |
 | **Documentation** | `README.md`, `PROJECT_STATUS.md`, `project_notes/` | Architecture, status, plus full evolution narratives for the SOC classifier (`soc_classifier_evolution.md`) and the entity-resolution cascade (`entity_resolution_evolution.md`). |
 
 ### Not Yet Implemented
@@ -212,7 +223,6 @@ to run lint + test + Docker build on every PR.
 | Item | Notes |
 |---|---|
 | **BERT fine-tuning pipeline** | **Tested and rejected** — see `project_notes/soc_classifier_evolution.md`. Fine-tuned `bert-base-uncased` on 49K bootstrap labels lost to Stage 2 retrieval by 11pp exact / 3pp major. Documented as a thesis finding. |
-| **HITL review CLI / UI** | 103 short-title flagged + 5 quarantine residue records + (eventually) `staging.unresolved_employers` rows carry the right metadata; no operator interface yet |
 | **Periodic embedding refresh** | `embed-employers` is one-shot; needs to be wired into the post-ingest flow so Layer 3 sees freshly-inserted canonicals |
 | **Tests** | No test files in any package (JS or Python) |
 | **CI/CD** | No GitHub Actions workflows |

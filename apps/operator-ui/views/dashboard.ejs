@@ -1,0 +1,24 @@
+<%- include('partials/header', { title: 'Dashboard' }) %>
+
+<h1>Review queues</h1>
+<p class="muted">Pick a queue to walk pending items.</p>
+
+<div class="queue-grid">
+  <a class="queue-card" href="/reviews">
+    <h2>Reviews</h2>
+    <div class="big-number"><%= counts.reviews.toLocaleString() %></div>
+    <p>lca_records flagged <code>requires_review = true</code> (short-title LLM picks, low-confidence Stage 2).</p>
+  </a>
+  <a class="queue-card" href="/quarantine">
+    <h2>Quarantine</h2>
+    <div class="big-number"><%= counts.quarantine.toLocaleString() %></div>
+    <p>staging.quarantine_records — LLM-refused residue. Manual SOC assignment or drop.</p>
+  </a>
+  <a class="queue-card" href="/unresolved">
+    <h2>Unresolved employers</h2>
+    <div class="big-number"><%= counts.unresolved.toLocaleString() %></div>
+    <p>staging.unresolved_employers — entity-resolution misses. Merge into existing canonical or create new.</p>
+  </a>
+</div>
+
+<%- include('partials/footer') %>

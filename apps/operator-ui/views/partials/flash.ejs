@@ -1,0 +1,5 @@
+<% if (flash) { %>
+  <div class="flash flash-<%= flash.startsWith('missing') || flash === 'not_found' || flash === 'canonical_not_found' ? 'error' : 'ok' %>">
+    <%= flash.replace(/_/g, ' ') %>
+  </div>
+<% } %>

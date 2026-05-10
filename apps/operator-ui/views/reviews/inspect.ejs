@@ -1,0 +1,53 @@
+<%- include('../partials/header', { title: 'Review record' }) %>
+
+<p><a href="/reviews">← Back to reviews</a></p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<h1>Review #<%= record.id %> · <%= record.filing_year %></h1>
+
+<dl class="kv">
+  <dt>Job title</dt><dd><%= record.data.JOB_TITLE || '—' %></dd>
+  <dt>Employer</dt><dd><%= record.data.EMPLOYER_NAME || '—' %></dd>
+  <dt>State</dt><dd><%= record.data.EMPLOYER_STATE || '—' %></dd>
+  <dt>FEIN</dt><dd><%= record.data.FEIN || record.data.EMPLOYER_FEIN || '—' %></dd>
+  <dt>Current SOC</dt><dd><%= record.data.soc_code || '—' %> <span class="muted"><%= record.data.soc_title || '' %></span></dd>
+  <dt>Confidence</dt><dd><%= record.data.soc_confidence != null ? Number(record.data.soc_confidence).toFixed(3) : '—' %></dd>
+  <dt>SOC source</dt><dd><%= record.data.soc_source || '—' %></dd>
+  <dt>Review reason</dt><dd><%= record.data.review_reason || '—' %></dd>
+</dl>
+
+<div class="actions">
+  <section class="action-card">
+    <h3>Accept current SOC</h3>
+    <p class="muted">Keep <code><%= record.data.soc_code || '—' %></code>; clear the review flag.</p>
+    <form method="post" action="/reviews/<%= record.filing_year %>/<%= record.id %>/accept">
+      <button type="submit" class="primary" <%= record.data.soc_code ? '' : 'disabled' %>>Accept</button>
+    </form>
+  </section>
+
+  <section class="action-card">
+    <h3>Override SOC</h3>
+    <form method="post" action="/reviews/<%= record.filing_year %>/<%= record.id %>/override">
+      <label>SOC code <input name="soc_code" placeholder="15-1252" required /></label>
+      <label>SOC title <input name="soc_title" placeholder="Software Developers" /></label>
+      <button type="submit">Override</button>
+    </form>
+  </section>
+
+  <section class="action-card danger">
+    <h3>Reject to quarantine</h3>
+    <p class="muted">Clears SOC fields and inserts a copy into <code>staging.quarantine_records</code>.</p>
+    <form method="post" action="/reviews/<%= record.filing_year %>/<%= record.id %>/reject">
+      <label>Reason (optional) <input name="reason" /></label>
+      <button type="submit" class="danger" onclick="return confirm('Reject this record to quarantine?')">Reject</button>
+    </form>
+  </section>
+</div>
+
+<details class="raw">
+  <summary>Full record (JSONB)</summary>
+  <pre><%= JSON.stringify(record.data, null, 2) %></pre>
+</details>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= typeof title !== 'undefined' ? title : 'Operator HITL' %> · LCA Operator</title>
+  <link rel="stylesheet" href="/public/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a href="/">LCA Operator HITL</a></div>
+  <nav>
+    <a href="/reviews">Reviews</a>
+    <a href="/quarantine">Quarantine</a>
+    <a href="/unresolved">Unresolved</a>
+  </nav>
+  <form method="post" action="/logout" class="logout-form">
+    <button type="submit" class="btn-link">Log out</button>
+  </form>
+</header>
+<main class="container">

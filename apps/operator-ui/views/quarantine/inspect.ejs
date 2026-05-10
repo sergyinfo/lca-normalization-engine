@@ -1,0 +1,56 @@
+<%- include('../partials/header', { title: 'Quarantine record' }) %>
+
+<p><a href="/quarantine">← Back to quarantine</a></p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<h1>Quarantine #<%= record.id %> · <%= record.filing_year %></h1>
+
+<% if (record.reprocessed_at) { %>
+  <div class="flash flash-ok">Already processed at <%= new Date(record.reprocessed_at).toISOString() %>.</div>
+<% } %>
+
+<dl class="kv">
+  <dt>NLP id</dt><dd><code><%= (record.raw_data && record.raw_data._nlp_id) || '—' %></code></dd>
+  <dt>Job title</dt><dd><%= (record.raw_data && record.raw_data.job_title) || '—' %></dd>
+  <dt>Employer</dt><dd><%= (record.raw_data && record.raw_data.employer_name) || '—' %></dd>
+  <dt>State</dt><dd><%= (record.raw_data && record.raw_data.employer_state) || '—' %></dd>
+  <dt>Existing SOC</dt><dd><%= (record.raw_data && record.raw_data.soc_code) || '—' %></dd>
+  <dt>Error type</dt><dd><%= (record.errors && record.errors.type) || '—' %></dd>
+  <dt>Created</dt><dd class="muted"><%= new Date(record.created_at).toISOString() %></dd>
+</dl>
+
+<% if (!record.reprocessed_at) { %>
+  <div class="actions">
+    <section class="action-card">
+      <h3>Assign SOC manually</h3>
+      <p class="muted">Updates the originating <code>lca_records</code> row (matched by <code>_nlp_id</code>) and marks this entry processed.</p>
+      <form method="post" action="/quarantine/<%= record.id %>/assign">
+        <label>SOC code <input name="soc_code" placeholder="15-1252" required /></label>
+        <label>SOC title <input name="soc_title" placeholder="Software Developers" /></label>
+        <label>Note <input name="note" /></label>
+        <button type="submit" class="primary">Assign</button>
+      </form>
+    </section>
+
+    <section class="action-card danger">
+      <h3>Drop</h3>
+      <p class="muted">Marks the entry as processed without writing back. Use when the record is not recoverable.</p>
+      <form method="post" action="/quarantine/<%= record.id %>/drop">
+        <label>Note <input name="note" /></label>
+        <button type="submit" class="danger" onclick="return confirm('Drop this quarantine record without assigning a SOC?')">Drop</button>
+      </form>
+    </section>
+  </div>
+<% } %>
+
+<details class="raw">
+  <summary>Raw data</summary>
+  <pre><%= JSON.stringify(record.raw_data, null, 2) %></pre>
+</details>
+<details class="raw">
+  <summary>Errors</summary>
+  <pre><%= JSON.stringify(record.errors, null, 2) %></pre>
+</details>
+
+<%- include('../partials/footer') %>

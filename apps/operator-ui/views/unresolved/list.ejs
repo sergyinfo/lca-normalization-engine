@@ -1,0 +1,50 @@
+<%- include('../partials/header', { title: 'Unresolved employers' }) %>
+
+<h1>Unresolved employers <span class="muted">(<%= rows.length %>)</span></h1>
+<p class="muted">Employers no entity-resolution layer matched. Merge into existing canonical or create a new one.</p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<% if (rows.length === 0) { %>
+  <p class="empty">Queue is empty. (Expected on FY2025 Q1 — populated by historical / dirtier corpora.)</p>
+<% } else { %>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Employer name</th>
+        <th>State</th>
+        <th>FEIN</th>
+        <th>City</th>
+        <th>Hits</th>
+        <th>Last seen</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% rows.forEach((r) => { %>
+        <tr>
+          <td><%= r.id %></td>
+          <td class="ellipsis" title="<%= r.employer_name %>"><%= r.employer_name %></td>
+          <td><%= r.employer_state || '—' %></td>
+          <td><%= r.employer_fein || '—' %></td>
+          <td><%= r.employer_city || '—' %></td>
+          <td><%= r.hits %></td>
+          <td class="muted"><%= new Date(r.updated_at).toISOString().slice(0, 10) %></td>
+          <td><a href="/unresolved/<%= r.id %>">Inspect →</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <div class="pager">
+    <% if (offset > 0) { %>
+      <a href="/unresolved?limit=<%= limit %>&offset=<%= Math.max(0, offset - limit) %>">← Prev</a>
+    <% } %>
+    <% if (rows.length === limit) { %>
+      <a href="/unresolved?limit=<%= limit %>&offset=<%= offset + limit %>">Next →</a>
+    <% } %>
+  </div>
+<% } %>
+
+<%- include('../partials/footer') %>

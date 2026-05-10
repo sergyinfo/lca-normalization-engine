@@ -1,0 +1,81 @@
+<%- include('../partials/header', { title: 'Unresolved employer' }) %>
+
+<p><a href="/unresolved">← Back to unresolved</a></p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<h1>Unresolved #<%= record.id %></h1>
+
+<% if (record.resolved_at) { %>
+  <div class="flash flash-ok">Already resolved at <%= new Date(record.resolved_at).toISOString() %>.</div>
+<% } %>
+
+<dl class="kv">
+  <dt>Employer name</dt><dd><strong><%= record.employer_name %></strong></dd>
+  <dt>State</dt><dd><%= record.employer_state || '—' %></dd>
+  <dt>FEIN</dt><dd><%= record.employer_fein || '—' %></dd>
+  <dt>City</dt><dd><%= record.employer_city || '—' %></dd>
+  <dt>Hits</dt><dd><%= record.hits %></dd>
+  <dt>First seen (year)</dt><dd><%= record.first_filing_year || '—' %></dd>
+</dl>
+
+<% if (!record.resolved_at) { %>
+  <h2>Similar canonical employers <span class="muted">(<%= candidates.length %>)</span></h2>
+  <% if (candidates.length === 0) { %>
+    <p class="empty">No close matches found via trigram similarity.</p>
+  <% } else { %>
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Score</th>
+          <th>Canonical name</th>
+          <th>State</th>
+          <th>FEIN</th>
+          <th>Records</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% candidates.forEach((c) => { %>
+          <tr>
+            <td><%= Number(c.score).toFixed(3) %></td>
+            <td><%= c.canonical_name %></td>
+            <td><%= c.employer_state || '—' %></td>
+            <td><%= c.fein || '—' %></td>
+            <td><%= c.record_count %></td>
+            <td>
+              <form method="post" action="/unresolved/<%= record.id %>/merge" style="display:inline">
+                <input type="hidden" name="canonical_id" value="<%= c.id %>" />
+                <button type="submit" class="primary"
+                  onclick="return confirm('Merge into <%= c.canonical_name.replace(/'/g, '&#39;') %>? This will backfill canonical_employer_id on all matching lca_records.')">
+                  Merge here
+                </button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+
+  <div class="actions">
+    <section class="action-card">
+      <h3>Create new canonical</h3>
+      <p class="muted">No existing canonical fits. Create a new <code>canonical_employers</code> row, then backfill matching lca_records.</p>
+      <form method="post" action="/unresolved/<%= record.id %>/create">
+        <label>Canonical name <input name="canonical_name" value="<%= record.employer_name %>" required /></label>
+        <button type="submit" class="primary">Create &amp; merge</button>
+      </form>
+    </section>
+
+    <section class="action-card danger">
+      <h3>Reject</h3>
+      <p class="muted">Marks the row resolved with no canonical link. Use for junk / unparseable names.</p>
+      <form method="post" action="/unresolved/<%= record.id %>/reject">
+        <button type="submit" class="danger" onclick="return confirm('Reject this entry?')">Reject</button>
+      </form>
+    </section>
+  </div>
+<% } %>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,54 @@
+<%- include('../partials/header', { title: 'Quarantine' }) %>
+
+<h1>Quarantine <span class="muted">(<%= rows.length %>)</span></h1>
+<p class="muted">Records the LLM declined to classify. Assign a SOC manually or drop.</p>
+
+<%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
+
+<% if (rows.length === 0) { %>
+  <p class="empty">Queue is empty.</p>
+<% } else { %>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Year</th>
+        <th>Job title</th>
+        <th>Employer</th>
+        <th>State</th>
+        <th>Error</th>
+        <th>Created</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% rows.forEach((r) => { %>
+        <tr>
+          <td><%= r.id %></td>
+          <td><%= r.filing_year %></td>
+          <td class="ellipsis" title="<%= (r.raw_data && r.raw_data.job_title) || '' %>">
+            <%= (r.raw_data && r.raw_data.job_title) || '—' %>
+          </td>
+          <td class="ellipsis" title="<%= (r.raw_data && r.raw_data.employer_name) || '' %>">
+            <%= (r.raw_data && r.raw_data.employer_name) || '—' %>
+          </td>
+          <td><%= (r.raw_data && r.raw_data.employer_state) || '—' %></td>
+          <td><%= (r.errors && r.errors.type) || '—' %></td>
+          <td class="muted"><%= new Date(r.created_at).toISOString().slice(0, 10) %></td>
+          <td><a href="/quarantine/<%= r.id %>">Inspect →</a></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <div class="pager">
+    <% if (offset > 0) { %>
+      <a href="/quarantine?limit=<%= limit %>&offset=<%= Math.max(0, offset - limit) %>">← Prev</a>
+    <% } %>
+    <% if (rows.length === limit) { %>
+      <a href="/quarantine?limit=<%= limit %>&offset=<%= offset + limit %>">Next →</a>
+    <% } %>
+  </div>
+<% } %>
+
+<%- include('../partials/footer') %>
