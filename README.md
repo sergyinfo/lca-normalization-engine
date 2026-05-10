@@ -19,12 +19,15 @@ lca-normalization-engine/
 │   ├── ingestor/        # BullMQ worker: xlstream → validate → COPY to JSONB partitions
 │   │                    #   FLAG mode: JOINs LCA_Disclosure + LCA_Worksites + LCA_Appendix_A
 │   ├── harvester/       # Cron service: scrapes DOL quarterly releases → Shared Volume → BullMQ
-│   └── cli-tool/        # CLI: DB init, schema migrations, task-tree seeding for backfill
+│   ├── cli-tool/        # CLI: DB init, schema migrations, task-tree seeding for backfill
+│   └── operator-ui/     # Fastify + EJS web app (port 8080): walks the three HITL queues
+│                        #   (requires_review records, staging.quarantine_records,
+│                        #    staging.unresolved_employers) — accept/override/merge/reject
 │
 ├── infra/
 │   └── postgres/        # init.sql (extensions: pg_trgm, pgvector, btree_gin)
 │
-└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestion-worker
+└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestion-worker, operator-ui
 ```
 
 ### Data Flow
@@ -54,6 +57,18 @@ lca-normalization-engine/
 │                                              ▼                           │
 │                                    lca_records UPDATE (soc_code,         │
 │                                               canonical_employer_id)     │
+│                                              │                           │
+│                          ┌───────────────────┴────────────────────┐      │
+│                          ▼                                        ▼      │
+│                  requires_review = true                  staging.        │
+│                  staging.unresolved_employers            quarantine_     │
+│                          │                               records         │
+│                          └────────────┬──────────────────┘               │
+│                                       ▼                                  │
+│                              operator-ui (HITL)                          │
+│                              http://localhost:8080                       │
+│                              accept / override / merge / reject          │
+│                              writes back to lca_records                  │
 └──────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -267,6 +282,30 @@ as `canonical_employer_id` back to `lca_records`.
 
 ---
 
+## Human-in-the-Loop (Operator UI)
+
+Records the automated pipeline cannot resolve on its own surface in three
+queues, all walkable through a browser at `http://localhost:8080` once
+`operator-ui` is up:
+
+| Queue | Source | Why records land here |
+|---|---|---|
+| **Reviews** | `lca_records.data->>'requires_review' = 'true'` | Low Stage 2 confidence; Stage 3 LLM picked a SOC against a literal-string risk (short-title gate) |
+| **Quarantine** | `staging.quarantine_records` (`reprocessed_at IS NULL`) | LLM declined to classify; Zod validation failed at ingest |
+| **Unresolved** | `staging.unresolved_employers` (`resolved_at IS NULL`) | All three entity-resolution layers (FEIN / `pg_trgm` / `pgvector`) missed |
+
+For each record, the operator can accept the automated pick, override it,
+merge an unresolved employer into an existing canonical (with `pg_trgm`
+similarity search and a state filter to surface candidates), create a new
+canonical, or reject. Merge / create-new transactionally backfills
+`canonical_employer_id` on every matching `lca_records` row. The UI is
+guarded by a single shared password (`OPERATOR_PASSWORD`) and a signed
+session cookie (`SESSION_SECRET`, ≥ 32 chars). See
+[`apps/operator-ui/README.md`](apps/operator-ui/README.md) for routes and
+write-back semantics.
+
+---
+
 ## Prerequisites
 
 - Node.js >= 20
@@ -331,6 +370,11 @@ pnpm docker:logs
 
 # 11. Verify ingestion completed
 pnpm db:status
+
+# 12. Walk any HITL queues left by the pipeline (low-confidence SOCs,
+#     LLM-refused records, unresolved employers).
+#     Set OPERATOR_PASSWORD and SESSION_SECRET in .env first.
+docker compose up -d operator-ui   # then open http://localhost:8080
 ```
 
 ## Mode 2: Production Run (Ongoing Quarterly Updates)
@@ -362,16 +406,25 @@ table check).
 ## Workspace Dependency Graph
 
 ```
-cli-tool ──┐
-ingestor ──┤──▶ @lca/db-lib ──▶ PostgreSQL 16
-harvester ─┘         │                │
-                     │           (pg_trgm, pgvector,
-                     │            jsonb_path_ops)
-                     │
-               zod (validation)
+cli-tool ────┐
+ingestor ────┤
+harvester ───┤──▶ @lca/db-lib ──▶ PostgreSQL 16
+operator-ui ─┘         │                │
+                       │           (pg_trgm, pgvector,
+                       │            jsonb_path_ops)
+                       │
+                 zod (validation)
 
 nlp-engine (Python) ──▶ PostgreSQL 16 (soc_code, canonical_employer_id writes)
                     └──▶ Redis (results stream: lca:nlp-results)
+
+                       Browser ──▶ operator-ui (Fastify, port 8080)
+                                       │
+                                       ▼
+                                  Postgres write-back
+                                  (clears requires_review,
+                                   resolves quarantine,
+                                   merges unresolved employers)
 ```
 
 ---
@@ -407,6 +460,8 @@ All commands are run from the **monorepo root** via `pnpm`.
 | `pnpm ingestor:dev` | Start the ingestor in watch mode — auto-restarts on file changes |
 | `pnpm harvester:start` | Start the harvester cron service (polls DOL for new quarterly releases) |
 | `pnpm harvester:dev` | Start the harvester in watch mode — auto-restarts on file changes |
+| `pnpm operator:start` | Start the operator HITL web UI (Fastify, default port 8080). Requires `OPERATOR_PASSWORD` and `SESSION_SECRET` (≥32 chars) in `.env`. |
+| `pnpm operator:dev` | Start the operator UI in watch mode — auto-restarts on file changes |
 
 ### Code Quality
 
@@ -441,6 +496,7 @@ Each workspace exposes its own scripts, runnable via `pnpm --filter <name> run <
 | `ingestor` | `start`, `dev`, `test`, `lint` |
 | `harvester` | `start`, `dev`, `test`, `lint` |
 | `cli-tool` | `start`, `db:init`, `seed`, `test`, `lint` |
+| `operator-ui` | `start`, `dev`, `lint` |
 
 ---
 
@@ -461,3 +517,6 @@ See `.env.example` for the full list. Key variables:
 | `NLP_STAGE2_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Encoder used for Stage 2 semantic SOC retrieval |
 | `NLP_STAGE2_THRESHOLD` | `0.7` | Cosine-similarity cutoff; below it records go to quarantine |
 | `NLP_DEVICE` | `cpu` | `cpu` or `cuda` |
+| `OPERATOR_PASSWORD` | — | Shared password for the operator HITL UI. Required to start `operator-ui`. |
+| `SESSION_SECRET` | — | HMAC key for signing the operator session cookie. **Must be ≥ 32 characters** — generate with `openssl rand -hex 32`. |
+| `OPERATOR_UI_PORT` | `8080` | Host port the operator UI binds to |
