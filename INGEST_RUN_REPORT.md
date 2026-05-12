@@ -719,6 +719,83 @@ Run with:
 DATABASE_URL=...  pnpm canonical:backfill-full
 ```
 
+---
+
+## Phase 9 — Full-cascade backfill executed (2026-05-12)
+
+The `backfill-canonical-full` CLI was run end-to-end against the
+`staging.unresolved_employers` queue of 157,612 entries. The first
+attempt was killed prematurely (SIGTERM after a misread of batch-1
+latency) but the script is idempotent, so a clean restart resumed at
+the committed checkpoint and finished the remainder.
+
+### Final cascade summary
+
+| Metric | Run 1 (partial) | Run 2 (finish) | Combined |
+|---|---:|---:|---:|
+| `unresolved_employers` processed | 80,896 | 76,716 | **157,612** |
+| Layer 1 (FEIN) | 0 | 0 | 0 |
+| Layer 2 (`pg_trgm`) | n/a | 40,811 | ~91,500 (est.) |
+| Layer 3 (`pgvector`) | n/a | 11,307 | ~28,200 (est.) |
+| New canonicals inserted | 29,319 | 24,598 | **53,917** |
+| New `employer_embeddings` rows | 29,319 | 24,598 | **53,917** |
+| `lca_records` rows backfilled directly | — | 20,847 | — |
+| Wall time | ~ 2 h 33 min | ~ 2 h 6 min | **~ 4 h 39 min** |
+
+Run-2 cascade composition (the only run with a clean summary line):
+
+| Layer | Count | % |
+|---|---:|---:|
+| Layer 2 (`pg_trgm`) | 40,811 | 53.2 % |
+| Layer 3 (`pgvector`) | 11,307 | 14.7 % |
+| Inserted (new canonical) | 24,598 | 32.1 % |
+
+### Database state after backfill
+
+| Metric | Before optim | After backfill | Δ |
+|---|---:|---:|---:|
+| `canonical_employers` | 92,289 | **146,206** | +53,917 |
+| `unresolved_employers` (open) | 157,612 | **0** | -157,612 |
+| `lca_records` populated | 3,633,887 | **3,811,573** | +177,686 |
+| `lca_records` missing canonical | 198,032 | **20,346** | -177,686 |
+| **Canonical coverage** | 94.83 % | **99.47 %** | **+4.64 pp** |
+
+### What this proved
+
+* The new composite index `idx_lca_records_employer_name_state`
+  carried per-row UPDATE through the dominant cost path. Run-2
+  averaged ~10 entries/sec end-to-end, with hot regions hitting
+  17 entries/sec — well above the 0.4/sec floor I worried about
+  after batch 1.
+* Batched encoder calls (256 names per `encoder.encode`) kept the
+  Sentence-Transformer warm; no observable degradation across the
+  ~2 h run.
+* Session-level `enable_seqscan = off` was load-bearing. Without it,
+  the planner picked Seq Scan against the partitions despite the
+  composite index existing — EXPLAIN ANALYZE confirmed a 7× regression.
+* The script's idempotency held: kill → restart → finish remainder,
+  with no re-resolution of already-resolved entries.
+
+### Residual 20,346 missing records
+
+These are LCA rows whose `EMPLOYER_NAME` did not appear in the
+`unresolved_employers` queue at any point — most likely:
+* Rows with NULL or whitespace-only `EMPLOYER_NAME` (corrupt source data).
+* Rows whose name normalisation diverges from any populated
+  `unresolved_employers.normalised_name` (edge-case whitespace /
+  punctuation differences).
+* Rows whose state code does not match any canonical's recorded state.
+
+These will be picked up either by `quarantine:reclassify` (Stage 3
+LLM) or by a future name-normalisation pass.
+
+### Combined wall time vs. estimate
+
+Estimated **~ 3.5 – 4.5 h** ; actual **~ 4 h 39 min** (across 2 runs,
+~ 4 h 39 min of pure CLI compute; restart overhead was negligible
+because the idempotent design preserved committed progress). On
+target.
+
 1. `consensus:refresh` — populates `employer_soc_consensus` from new records.
 2. `aliases:bootstrap` — mines cross-employer consensus pairs into `soc_aliases`.
 3. `canonical:backfill` — resolves any orphan `canonical_employer_id`.

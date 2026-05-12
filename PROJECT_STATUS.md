@@ -62,12 +62,12 @@ State of the database after a full 6-year re-ingest run (FY2020 → FY2025,
 
 | Table | Rows | Notes |
 |---|---:|---|
-| `lca_records` | 3,831,919 | All six years; partitioned by `filing_year`. **3,650,080 classified (95.3 %)**; 0 records with `requires_review=true` after the run. |
+| `lca_records` | 3,831,919 | All six years; partitioned by `filing_year`. **3,650,080 classified (95.3 %)**; **3,811,573 (99.47 %)** carry a `canonical_employer_id` after the full-cascade backfill. 0 records with `requires_review=true` after the run. |
 | `soc_aliases` | 16,079 | 13,003 BLS DMTF + 3,076 self-bootstrapped via `bootstrap-aliases` after ingestion |
 | `employer_soc_consensus` | 17,354 | Per-(FEIN, normalised title) → SOC mapping, rebuilt by `consensus:refresh` post-ingest |
-| `canonical_employers` | 92,289 | All from Layer 1 FEIN matches on FY2024 + FY2025 batches (pre-2024 disclosures have 0 % FEIN, so Layer 1 is data-dead on those years) |
-| `employer_embeddings` | 92,289 | 384-dim sentence-transformer vectors of `canonical_name`; HNSW cosine index ready for Layer 3 |
-| `staging.unresolved_employers` (open) | 157,612 | Aggregated unique `(employer_name, employer_state)` pairs that missed all three layers — almost entirely pre-2024 records where FEIN was absent |
+| `canonical_employers` | **146,206** | 92,289 from Layer 1 FEIN matches (FY2024+FY2025) + 53,917 inserted on miss by the full-cascade backfill against `unresolved_employers` |
+| `employer_embeddings` | **146,206** | 384-dim sentence-transformer vectors of `canonical_name`; HNSW cosine index. 1-to-1 with `canonical_employers`. |
+| `staging.unresolved_employers` (open) | **0** | All 157,612 entries resolved by the full-cascade backfill on 2026-05-12 (Layer 2: 53.2 %, Layer 3: 14.7 %, new canonicals: 32.1 % for the second batch — combined totals in `INGEST_RUN_REPORT.md` Phase 9). |
 | `staging.quarantine_records` (open) | 181,839 | Low Stage 2 confidence — deferred for Stage 3 LLM reclassify on GPU (250+ h on Mac CPU) |
 
 SOC classification breakdown across the full 3.83 M run:
@@ -107,7 +107,7 @@ LIMIT  5;
 | Feature | What works | What's still missing |
 |---|---|---|
 | **SOC classification** | Stages 0 → 1 → 2 all firing inline at scale — 95.3 % coverage across 3.83 M records, 0 errors. | Stage 3 LLM-on-residual is in code but **skipped** for this run: 181,839 quarantined records × 5–10 s Ollama call ≈ 250+ hours on Mac CPU. Needs batched-LLM mode and/or a GPU host before it can be run end-to-end. |
-| **Entity resolution** | Layer 1 (FEIN) populated 92,289 canonicals on FY2024+FY2025 data. Layer 2 (`pg_trgm`) and Layer 3 (`pgvector` HNSW with 92,289 embeddings) wired in. `staging.unresolved_employers` operator queue functioning. | Pre-2024 disclosures lack `EMPLOYER_FEIN` (**DOL data quirk**, not a bug). 1.4 M+ pre-2024 records get Layer-2-matched against whatever canonicals exist at write time, or fall into `unresolved_employers`. Layer-1-only `canonical:backfill` CLI can't UPSERT new canonicals for the 181 K orphans — needs a Layer-2/3 + UPSERT variant. |
+| **Entity resolution** | All three layers proven end-to-end on 3.83 M records. Layer 1 populated 92,289 canonicals on FY2024+FY2025; the full-cascade backfill (`canonical:backfill-full`) drove `unresolved_employers` to **0** and lifted `canonical_employers` to **146,206** (99.47 % LCA coverage). | 20,346 LCA records (0.53 %) still have no `canonical_employer_id` — these are rows whose `EMPLOYER_NAME` never appeared in the `unresolved_employers` queue (NULL / whitespace-only names, or normalisation edge-cases). Will fall through to `quarantine:reclassify` (Stage 3 LLM) or a future name-normalisation pass. |
 
 ---
 
@@ -185,7 +185,7 @@ Key takeaways from this exercise:
 * **Stage 3 reclassify** skipped because the 181 K residue is too large
   for Mac CPU latency.
 
-### Step 3 — Layer-2/3 + UPSERT canonical backfill ✅ *(shipped 2026-05-12, awaiting full run)*
+### Step 3 — Layer-2/3 + UPSERT canonical backfill ✅ *(shipped & executed 2026-05-12)*
 
 New CLI `backfill-canonical-full` resolves `staging.unresolved_employers`
 end-to-end via the full Layer 1 → 2 → 3 cascade and **inserts a fresh
@@ -216,20 +216,23 @@ What was built:
 * Operator-UI's `mergeUnresolved` / `createCanonicalAndMerge` SQL also
   benefits from the same composite index — same write path, now indexed.
 
-Smoke test (256 rows, dry-run, 22 s wall):
+Full run executed against all 157,612 open `unresolved_employers`
+(across two CLI sessions; the script's idempotency carried us through
+a misjudged kill of the first batch):
 
-| Layer | Hit rate | Note |
-|---|---:|---|
-| Layer 1 (FEIN) | 0 % | Expected — most unresolved are pre-2024, FEIN-less |
-| Layer 2 (`pg_trgm`) | 73.4 % | Against 92 K canonicals from FY2024/FY2025 |
-| Layer 3 (`pgvector`) | 12.5 % | Semantic matches trgm missed |
-| New canonical | 14.1 % | Truly novel employer names |
+| Pile | Run 1 | Run 2 | Combined |
+|---|---:|---:|---:|
+| Entries processed | 80,896 | 76,716 | **157,612** |
+| New canonicals inserted | 29,319 | 24,598 | **53,917** |
+| Wall time | ~ 2 h 33 min | ~ 2 h 6 min | **~ 4 h 39 min** |
 
-→ **85.9 % match rate** = the cascade is doing real work. Extrapolated
-full-run wall time: ~3-5 h (was estimated 7-10 h before indexes).
+Run-2 cascade composition: Layer 2 53.2 %, Layer 3 14.7 %, new
+canonical 32.1 %.
 
-**Outcome:** every record gets a real `canonical_employer_id`, not a
-collision-prone trgm match against whatever existed at processing time.
+**Outcome:** `unresolved_employers` is at zero, `canonical_employers`
+grew to 146,206, and `lca_records` canonical coverage is 99.47 %.
+Full timeline + numbers in [`INGEST_RUN_REPORT.md`](INGEST_RUN_REPORT.md)
+Phase 9.
 
 To execute:
 ```bash
@@ -259,7 +262,7 @@ to run lint + test + Docker build on every PR.
 | Layer | Completeness | Notes |
 |---|---|---|
 | **Node.js ingestion pipeline** | **100 %** | All six years (3.83 M records, 24 XLSX files) ingested cleanly via SAX streaming + `pg-copy-streams`, 0 failed jobs |
-| **Python NLP enrichment** | **95 %** | Stages 0/1/2 run inline and processed 3.65 M records (95.3 % coverage) with 0 errors. Stage 3 LLM is in code but unrun at scale (181 K residue × Mac CPU is uneconomical — needs GPU). All three entity-resolution layers wired in; `employer_embeddings` populated with 92,289 384-dim vectors. |
+| **Python NLP enrichment** | **97 %** | Stages 0/1/2 run inline and processed 3.65 M records (95.3 % coverage) with 0 errors. Stage 3 LLM is in code but unrun at scale (181 K residue × Mac CPU is uneconomical — needs GPU). All three entity-resolution layers wired in; the full-cascade backfill (Layer 1→2→3 + UPSERT) drained `unresolved_employers` to zero, ending at 146,206 canonicals and 99.47 % LCA canonical coverage. |
 | **Infrastructure & DevOps** | **95 %** | Docker stack with pgvector, Redis, ingestor, nlp-worker, operator-ui all healthy; nlp-worker image rebuilt 2026-05-11 with current Layer 2/3 code. Still missing CI/CD and tests. |
 | **Documentation** | **98 %** | README + this status file reflect current implementation. Full re-ingest run captured in `INGEST_RUN_REPORT.md`. Entity-resolution evolution in `project_notes/`. |
 
@@ -287,10 +290,10 @@ to run lint + test + Docker build on every PR.
 | **Entity Resolution — Layer 1** | `.../entity_resolution.py` | FEIN deterministic match; populates `canonical_employers`. Carries 100 % of FY2024+FY2025 traffic; dead on FY2020-FY2023 (DOL data quirk). |
 | **Entity Resolution — Layer 2** | `.../entity_resolution.py` | `pg_trgm` similarity, blocked by `employer_state`. GIN trigram filter for recall + Python precision gate. |
 | **Entity Resolution — Layer 3** | `.../entity_resolution.py` | `pgvector` HNSW cosine over 384-dim sentence-transformer embeddings of `canonical_name`. Encoder shared with `SocClassifier` (no duplicate model load). |
-| **Employer embedder** | `.../employer_embedder.py` | Encodes all `canonical_employers.canonical_name` into `employer_embeddings`. Idempotent. Last run: 92,289 vectors in 7m 27s. Run as `pnpm employers:embed`. |
+| **Employer embedder** | `.../employer_embedder.py` | Encodes all `canonical_employers.canonical_name` into `employer_embeddings`. Idempotent. Run as `pnpm employers:embed`. Bulk path used after the initial Layer-1 explosion (92,289 vectors in 7m 27s); the full-cascade backfill encodes new canonicals inline as they are inserted (added 53,917 vectors during its ~4 h 39 min run). |
 | **Canonical-id backfill (Layer 1 only)** | `.../backfill_canonical_ids.py` | Keyset-paginated CLI that resolves `canonical_employer_id` for orphan `lca_records` via FEIN-only lookup. Idempotent. Run as `pnpm canonical:backfill`. Best for the quick post-ingest sweep on FEIN-having records. |
-| **Canonical-id full-cascade backfill** | `.../backfill_canonical_full.py` | New (2026-05-12): full Layer 1/2/3 cascade against `staging.unresolved_employers`. Inserts new `canonical_employers` rows + embeddings on miss. Bulk-updates matching `lca_records` via the new composite expression index. Per-batch encoder calls + `enable_seqscan = off` for ~6× speedup over per-row writes. Smoke test: 73 % Layer 2 hits, 13 % Layer 3, 14 % new-canonical inserts. Run as `pnpm canonical:backfill-full`. |
-| **Unresolved-employers queue** | `staging.unresolved_employers` + `worker._write_unresolved` | Aggregated UPSERT queue for records missed by all three layers. 157,612 open after the full re-ingest run (almost entirely pre-2024 records, no FEIN). |
+| **Canonical-id full-cascade backfill** | `.../backfill_canonical_full.py` | New (2026-05-12, executed same day): full Layer 1/2/3 cascade against `staging.unresolved_employers`. Inserts new `canonical_employers` rows + embeddings on miss. Bulk-updates matching `lca_records` via the new composite expression index. Per-batch encoder calls + `enable_seqscan = off` for ~6× speedup over per-row writes. **Full run (157,612 entries, ~ 4 h 39 min): drained `unresolved_employers` to zero, inserted 53,917 new canonicals (and embeddings).** Run as `pnpm canonical:backfill-full`. |
+| **Unresolved-employers queue** | `staging.unresolved_employers` + `worker._write_unresolved` | Aggregated UPSERT queue for records missed by all three layers. Drained to **0** open on 2026-05-12 by the full-cascade backfill (all 157,612 entries resolved either to an existing canonical or to a freshly-inserted one). |
 | **NLP Worker** | `.../worker.py` | Async Redis consumer; runs SOC pipeline + 3-layer entity resolution; writes `soc_source`, `requires_review`, `review_reason`, `canonical_employer_id`; UPSERTs misses into `staging.unresolved_employers`. |
 | **Reclassify-quarantine** | `.../reclassify_quarantine.py` | LLM-on-residual drain. Now also calls `resolve_fein` inline so quarantine drains never leave `canonical_employer_id` unset. |
 | **Operator HITL UI** | `apps/operator-ui` | New: Fastify + EJS web app on port 8080. Walks all three review queues with list / inspect / accept / override / merge / reject actions. Single shared password (`OPERATOR_PASSWORD`) + signed-cookie session (`SESSION_SECRET`). Reuses `@lca/db-lib` pool. Unresolved-employer merges run a transactional `lca_records` backfill. Ships as Docker Compose service `operator-ui`. |

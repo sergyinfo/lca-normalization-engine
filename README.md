@@ -301,7 +301,10 @@ they do, Layer 2 (`pg_trgm`) and Layer 3 (`pgvector`) cover the older years by
 name. The full 6-year re-ingest recorded in
 [`INGEST_RUN_REPORT.md`](INGEST_RUN_REPORT.md) shows this play out exactly:
 `canonical_employers` jumped from 3 to 92,289 the moment FY2024/FY2025 batches
-were processed.
+were processed; the subsequent `backfill-canonical-full` cascade then drained
+all 157,612 entries from `unresolved_employers` and inserted 53,917 more
+canonicals on miss, finishing at **146,206 canonicals and 99.47 % LCA
+canonical-id coverage**.
 
 ---
 
