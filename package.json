@@ -18,6 +18,7 @@
     "consensus:refresh": "packages/nlp-engine/.venv/bin/refresh-employer-consensus",
     "quarantine:reclassify": "packages/nlp-engine/.venv/bin/reclassify-quarantine",
     "canonical:backfill": "packages/nlp-engine/.venv/bin/backfill-canonical-ids",
+    "canonical:backfill-full": "packages/nlp-engine/.venv/bin/backfill-canonical-full",
     "employers:embed": "packages/nlp-engine/.venv/bin/embed-employers",
     "ingestor:start": "pnpm --filter ingestor run start",
     "ingestor:dev": "pnpm --filter ingestor run dev",

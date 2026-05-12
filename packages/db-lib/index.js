@@ -170,6 +170,35 @@ export async function ensureSchema(conn = pool) {
       WHERE data->>'_nlp_id' IS NOT NULL;
   `);
 
+  // Composite expression index for bulk canonical-employer backfill joins.
+  // Hit by: `mergeUnresolved` / `createCanonicalAndMerge` in operator-ui and
+  // the `backfill-canonical-full` CLI. Without this, every unresolved-row
+  // merge does a sequential scan of lca_records to find matching rows.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_lca_records_employer_name_state
+      ON lca_records (lower(data->>'EMPLOYER_NAME'), (data->>'EMPLOYER_STATE'));
+  `);
+
+  // Partial index over rows still missing canonical_employer_id. Used by the
+  // backfill CLIs to find orphans without scanning the full 3.8M+ row table.
+  // Index size is bounded by the size of the quarantine + unresolved-mass pile
+  // (~5% of lca_records), so it stays cheap.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_lca_records_canonical_missing
+      ON lca_records (id, filing_year)
+      WHERE NOT (data ? 'canonical_employer_id');
+  `);
+
+  // Partial expression index on EMPLOYER_FEIN. Layer 1 lookups go against
+  // canonical_employers.fein (already indexed), but reverse lookups from
+  // lca_records → canonical (when bulk-bootstrapping consensus or analytics)
+  // benefit from a btree on the JSONB-extracted value.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_lca_records_employer_fein
+      ON lca_records ((data->>'EMPLOYER_FEIN'))
+      WHERE data->>'EMPLOYER_FEIN' IS NOT NULL;
+  `);
+
   // ---------------------------------------------------------------------------
   // NLP enrichment tables
   // ---------------------------------------------------------------------------

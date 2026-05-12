@@ -13,7 +13,8 @@ lca-normalization-engine/
 │
 ├── packages/
 │   ├── db-lib/          # Shared PG client: pg-copy-streams, schema DDL, Zod validation helpers
-│   └── nlp-engine/      # Python: 2-stage SOC classifier + 3-layer employer deduplication
+│   └── nlp-engine/      # Python: 4-stage SOC classifier (consensus / DMTF / semantic / LLM)
+│                        #         + 3-layer employer deduplication (FEIN / trgm / pgvector)
 │
 ├── apps/
 │   ├── ingestor/        # BullMQ worker: xlstream → validate → COPY to JSONB partitions
@@ -128,12 +129,16 @@ CREATE TABLE lca_records (
 
 ### JSONB Indexing Strategy
 
-| Index | Operator class | Purpose |
+| Index | Operator class / kind | Purpose |
 |---|---|---|
-| GIN on `data` | `jsonb_path_ops` | `@>` containment queries — ~60% smaller than default `jsonb_ops` |
-| GIN on `data->>'soc_code'` | btree_gin | Fast equality lookups on classified records |
-| GIN on `data->>'employer_name'` | `gin_trgm_ops` | Fuzzy trigram search via `pg_trgm` |
-| HNSW on `employer_embedding` | pgvector | Approximate nearest-neighbour for semantic dedup |
+| GIN on `data` | jsonb_ops (default) | `@>` containment queries. Note: this is the live shape — README originally specified `jsonb_path_ops` and that's the recommended rebuild target (~60 % smaller). |
+| btree partial on `data->>'soc_code'` | btree | Equality lookups on classified records (rows with `soc_code` only) |
+| btree partial on `data->>'_nlp_id'` | btree | NLP write-back correlation lookups |
+| btree partial on `(lower(data->>'EMPLOYER_NAME'), data->>'EMPLOYER_STATE')` | btree composite expression | Bulk canonical-merge JOINs (`backfill-canonical-full`, Operator UI merges). Drops per-merge UPDATE from ~14 s to ~2 s across all partitions. |
+| btree partial on `(id, filing_year) WHERE NOT (data ? 'canonical_employer_id')` | btree | Orphan-record scans during canonical backfill |
+| btree partial on `data->>'EMPLOYER_FEIN'` | btree | Reverse FEIN lookups for analytics + consensus refresh |
+| GIN trigram on `canonical_employers.canonical_name` | `gin_trgm_ops` | Layer 2 entity-resolution `%` operator + similarity ranking |
+| HNSW on `employer_embeddings.embedding` | `vector_cosine_ops` | Layer 3 approximate nearest-neighbour over 384-dim `all-MiniLM-L6-v2` vectors |
 
 ### NLP Enrichment Tables
 
@@ -152,10 +157,11 @@ CREATE TABLE canonical_employers (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 768-dim pgvector embeddings for Layer 3 semantic dedup (HNSW)
+-- 384-dim pgvector embeddings for Layer 3 semantic dedup (HNSW cosine)
+-- Dimension matches the all-MiniLM-L6-v2 sentence-transformer output.
 CREATE TABLE employer_embeddings (
   employer_id   UUID PRIMARY KEY REFERENCES canonical_employers(id) ON DELETE CASCADE,
-  embedding     vector(768),
+  embedding     vector(384),
   model_version TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -271,14 +277,31 @@ For records missing a FEIN or with formatting variants, trigram similarity
 duplicates. Powered by the `pg_trgm` extension.
 
 ### Layer 3 — Semantic (pgvector)
-Employer name sentences are encoded with `sentence-transformers` into 768-
-dimensional vectors and stored in a `pgvector` column. An HNSW approximate
-nearest-neighbour index (`m=16, ef_construction=64`) retrieves semantically
-similar names that trigram matching misses (e.g., abbreviations, legal-entity
-suffixes like "LLC" vs "Inc.").
+Employer name sentences are encoded with `sentence-transformers/all-MiniLM-L6-v2`
+into 384-dimensional vectors and stored in a `pgvector` column. An HNSW
+approximate nearest-neighbour index (`m=16, ef_construction=64`) retrieves
+semantically similar names that trigram matching misses (e.g., abbreviations,
+legal-entity suffixes like "LLC" vs "Inc.").
 
 The three layers are applied in order; the first match wins. Results are written
 as `canonical_employer_id` back to `lca_records`.
+
+### A note on FEIN coverage (DOL data quirk)
+
+The DOL changed disclosure-file schemas between FY2023 and FY2024:
+
+| Year | `EMPLOYER_FEIN` populated |
+|---|---|
+| FY2020 – FY2023 | **0 %** — field absent from the file |
+| FY2024 – FY2025 | **100 %** — field present and well-formed |
+
+Layer 1 is therefore data-dead on pre-2024 records: it has nothing to match
+against until FY2024 batches surface and populate `canonical_employers`. Once
+they do, Layer 2 (`pg_trgm`) and Layer 3 (`pgvector`) cover the older years by
+name. The full 6-year re-ingest recorded in
+[`INGEST_RUN_REPORT.md`](INGEST_RUN_REPORT.md) shows this play out exactly:
+`canonical_employers` jumped from 3 to 92,289 the moment FY2024/FY2025 batches
+were processed.
 
 ---
 
@@ -462,6 +485,12 @@ All commands are run from the **monorepo root** via `pnpm`.
 | `pnpm harvester:dev` | Start the harvester in watch mode — auto-restarts on file changes |
 | `pnpm operator:start` | Start the operator HITL web UI (Fastify, default port 8080). Requires `OPERATOR_PASSWORD` and `SESSION_SECRET` (≥32 chars) in `.env`. |
 | `pnpm operator:dev` | Start the operator UI in watch mode — auto-restarts on file changes |
+| `pnpm consensus:refresh` | Rebuild `employer_soc_consensus` from `lca_records` aggregations. Powers Stage 0 of the classifier. Run post-ingest. |
+| `pnpm aliases:bootstrap` | Mine consensus `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` into `soc_aliases` (self-supervised). Run post-ingest. |
+| `pnpm employers:embed` | Encode every `canonical_employers.canonical_name` lacking an entry in `employer_embeddings` (Layer 3 backfill). Idempotent. |
+| `pnpm canonical:backfill` | Layer-1-only orphan sweep — fills `canonical_employer_id` on `lca_records` whose FEIN is already registered as a canonical. Cheap post-ingest housekeeping. |
+| `pnpm canonical:backfill-full` | Full Layer 1/2/3 cascade against `staging.unresolved_employers`. Inserts new canonicals on miss, encodes + bulk-backfills matching `lca_records`. Use `--dry-run --limit N` first to sanity-check the layer-hit mix. |
+| `pnpm quarantine:reclassify` | Stage 3 LLM-on-residual drain (Ollama / Anthropic). Cost-heavy — recommend GPU or batched-LLM mode for >5K records. |
 
 ### Code Quality
 
