@@ -1,0 +1,247 @@
+/* LCA Analytics — Dashboard styling */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  color: #1f2937;
+  background: #f4f6fa;
+  line-height: 1.5;
+}
+
+a { color: #2563eb; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.muted { color: #6b7280; }
+.small { font-size: 12px; }
+
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #eef2f7;
+  border-radius: 3px;
+}
+code { padding: 1px 5px; font-size: 0.92em; }
+
+/* ---- Top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: #0f172a;
+  color: #f3f4f6;
+}
+.topbar a { color: #f3f4f6; }
+.topbar .brand a { font-weight: 700; font-size: 16px; }
+.topbar nav { display: flex; gap: 18px; flex: 1; margin-left: 24px; }
+.topbar nav a { font-size: 14px; opacity: 0.78; }
+.topbar nav a:hover, .topbar nav a.active { opacity: 1; }
+.topbar nav a.active { border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
+.topbar .muted { color: #94a3b8; }
+
+/* ---- Layout ---- */
+.container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.footer {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px 24px 32px;
+  text-align: center;
+  color: #6b7280;
+}
+
+h1 { margin-top: 0; }
+h1 + p { color: #4b5563; margin-top: -4px; }
+
+/* ---- KPI tiles (home page hero) ---- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 20px 0 32px;
+}
+.kpi-tile {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+.kpi-tile h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  font-weight: 600;
+}
+.kpi-tile .big {
+  font-size: 30px;
+  font-weight: 700;
+  margin-top: 4px;
+  color: #0f172a;
+}
+.kpi-tile .sub { color: #6b7280; font-size: 12px; }
+
+/* ---- Persona cards (home page) ---- */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.persona-card {
+  display: block;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid var(--accent, #2563eb);
+  border-radius: 8px;
+  padding: 18px 20px;
+  color: #1f2937;
+}
+.persona-card:hover { border-color: var(--accent, #2563eb); text-decoration: none; box-shadow: 0 4px 12px rgba(15,23,42,0.08); }
+.persona-card h3 { margin: 0 0 6px; font-size: 16px; color: #0f172a; }
+.persona-card p { margin: 0; color: #4b5563; font-size: 13px; }
+.persona-card.journalist { --accent: #ef4444; }
+.persona-card.jobseeker  { --accent: #10b981; }
+.persona-card.policy     { --accent: #6366f1; }
+.persona-card.academic   { --accent: #f59e0b; }
+
+/* ---- Panels (the analytical units) ---- */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+  gap: 18px;
+  margin-top: 16px;
+}
+.panel-grid.cols-1 { grid-template-columns: 1fr; }
+.panel-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+.panel-head h2 { margin: 0; font-size: 15px; color: #0f172a; }
+.panel-sub { margin: 4px 0 12px; }
+.tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+.panel-body { margin-top: 8px; }
+
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 280px;
+  margin-top: 6px;
+}
+
+/* ---- Tables ---- */
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+}
+table.data th, table.data td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1f1f4;
+  vertical-align: middle;
+}
+table.data th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  font-weight: 600;
+  background: #f8fafc;
+}
+table.data tbody tr:last-child td { border-bottom: none; }
+table.data tbody tr:hover { background: #fafbfd; }
+table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- Filter form (jobseeker) ---- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 16px 0;
+}
+.filters label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: #6b7280;
+  gap: 4px;
+}
+.filters input, .filters select {
+  font-size: 14px;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  min-width: 180px;
+}
+.filters button {
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+}
+.filters button:hover { background: #1d4ed8; }
+
+.empty {
+  border: 1px dashed #d1d5db;
+  padding: 30px;
+  text-align: center;
+  color: #6b7280;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* ---- Hero text on persona pages ---- */
+.persona-hero {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin-bottom: 16px;
+}
+.persona-hero h1 { margin: 0 0 6px; font-size: 22px; }
+.persona-hero p  { margin: 0; color: #4b5563; }
+.persona-hero .questions {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #1f2937;
+  font-size: 13px;
+}
+.persona-hero .questions li { margin: 2px 0; }

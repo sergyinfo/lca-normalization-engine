@@ -1,0 +1,148 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Job Seeker / Career Researcher</h1>
+  <p>The personal-decision angle: what does an H-1B-sponsored role pay in your city, and who's hiring for it?</p>
+  <ul class="questions">
+    <li>What's the prevailing wage (P25 / P50 / P75) for an occupation in a specific worksite?</li>
+    <li>Which employers file the most for a given SOC?</li>
+    <li>How have wages drifted over time for the role I'm watching?</li>
+  </ul>
+</section>
+
+<form class="filters" method="get" action="/jobseeker">
+  <label>SOC / Occupation
+    <select name="soc">
+      <% socOptions.forEach(o => { %>
+        <option value="<%= o.soc_code %>" <%= filters.soc === o.soc_code ? 'selected' : '' %>>
+          <%= o.soc_code %> — <%= (o.soc_title || '').slice(0, 60) %> (<%= Number(o.filings).toLocaleString() %>)
+        </option>
+      <% }) %>
+    </select>
+  </label>
+  <label>Worksite state (2-letter, optional)
+    <input type="text" name="state" value="<%= filters.state %>" maxlength="2" placeholder="e.g. CA" />
+  </label>
+  <label>Worksite city (optional)
+    <input type="text" name="city" value="<%= filters.city %>" placeholder="e.g. SAN FRANCISCO" />
+  </label>
+  <button type="submit">Update</button>
+</form>
+
+<div class="panel-grid">
+
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Wage percentiles for <%= filters.soc %><%= selectedTitle ? ' — ' + selectedTitle.slice(0, 60) : '' %></h2>
+      <span class="tag">wage</span>
+    </header>
+    <p class="panel-sub muted small">
+      Annual USD, normalised from hour/week/month/year pay units.
+      <% if (filters.state || filters.city) { %>
+        Filtered by
+        <% if (filters.state) { %>state=<code><%= filters.state %></code><% } %>
+        <% if (filters.state && filters.city) { %>, <% } %>
+        <% if (filters.city) { %>city=<code><%= filters.city %></code><% } %>.
+      <% } else { %>
+        All worksites.
+      <% } %>
+    </p>
+    <% if (lookup && lookup.timed_out) { %>
+      <div class="empty">Filter too broad to compute live (this SOC + worksite combination has hundreds of thousands of records). Try a narrower filter, or remove the worksite filter to read pre-aggregated percentiles from the materialized view.</div>
+    <% } else if (lookup && lookup.n && Number(lookup.n) > 0) { %>
+      <table class="data">
+        <thead><tr><th class="num">P25</th><th class="num">Median</th><th class="num">P75</th><th class="num">Min</th><th class="num">Max</th><th class="num">N</th></tr></thead>
+        <tbody><tr>
+          <td class="num">$<%= Number(lookup.p25).toLocaleString() %></td>
+          <td class="num"><strong>$<%= Number(lookup.p50).toLocaleString() %></strong></td>
+          <td class="num">$<%= Number(lookup.p75).toLocaleString() %></td>
+          <td class="num">$<%= Number(lookup.min_wage).toLocaleString() %></td>
+          <td class="num">$<%= Number(lookup.max_wage).toLocaleString() %></td>
+          <td class="num"><%= Number(lookup.n).toLocaleString() %></td>
+        </tr></tbody>
+      </table>
+    <% } else { %>
+      <div class="empty">No wage data for the current filter.</div>
+    <% } %>
+  </section>
+
+  <%- include('partials/panel', {
+    title: 'Wage trend over time',
+    subtitle: 'Median annual wage for the selected SOC, by filing year.',
+    tag: 'trend',
+    chartId: 'chartTrend',
+  }) %>
+
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Top employers for this SOC</h2><span class="tag">employers</span>
+    </header>
+    <p class="panel-sub muted small">Canonicalised — same employer counted once even if DOL spelled the name multiple ways.</p>
+    <table class="data">
+      <thead><tr><th>#</th><th>Canonical employer</th><th>State</th><th class="num">Filings</th></tr></thead>
+      <tbody>
+      <% employers.forEach((e, i) => { %>
+        <tr>
+          <td><%= i + 1 %></td>
+          <td><%= e.canonical_name %></td>
+          <td><%= e.employer_state || '—' %></td>
+          <td class="num"><%= Number(e.filings).toLocaleString() %></td>
+        </tr>
+      <% }) %>
+      </tbody>
+    </table>
+  </section>
+
+  <%- include('partials/panel', {
+    title: 'Wage distribution across top 10 SOCs (all years, all worksites)',
+    subtitle: 'P25 → P50 → P75 of annual wage for the ten highest-volume occupations.',
+    tag: 'percentiles',
+    chartId: 'chartPctiles',
+  }) %>
+
+</div>
+
+<script>
+const trendLabels = <%- JSON.stringify(trend.map(t => 'FY' + t.year)) %>;
+const trendValues = <%- JSON.stringify(trend.map(t => Number(t.median_wage))) %>;
+
+const pctileLabels = <%- JSON.stringify(wagesByTopSoc.map(w => (w.soc_title || w.soc_code).slice(0, 28))) %>;
+const pctileP25    = <%- JSON.stringify(wagesByTopSoc.map(w => Number(w.p25))) %>;
+const pctileP50    = <%- JSON.stringify(wagesByTopSoc.map(w => Number(w.p50))) %>;
+const pctileP75    = <%- JSON.stringify(wagesByTopSoc.map(w => Number(w.p75))) %>;
+
+const ACCENT = '#10b981';
+
+new Chart(document.getElementById('chartTrend'), {
+  type: 'line',
+  data: { labels: trendLabels, datasets: [{ data: trendValues, borderColor: ACCENT, backgroundColor: 'rgba(16,185,129,0.15)', fill: true, tension: 0.25, pointRadius: 4 }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => '$' + Number(ctx.parsed.y).toLocaleString() } },
+    },
+    scales: { y: { ticks: { callback: v => '$' + Number(v / 1000).toFixed(0) + 'k' } } },
+  }
+});
+
+new Chart(document.getElementById('chartPctiles'), {
+  type: 'bar',
+  data: {
+    labels: pctileLabels,
+    datasets: [
+      { label: 'P25', data: pctileP25, backgroundColor: 'rgba(16,185,129,0.35)' },
+      { label: 'Median', data: pctileP50, backgroundColor: ACCENT },
+      { label: 'P75', data: pctileP75, backgroundColor: 'rgba(5,150,105,0.85)' },
+    ],
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + Number(ctx.parsed.x).toLocaleString() } } },
+    scales: { x: { beginAtZero: true, ticks: { callback: v => '$' + Number(v / 1000).toFixed(0) + 'k' } } },
+  }
+});
+</script>
+
+<%- include('partials/footer') %>

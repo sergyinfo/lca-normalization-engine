@@ -1,0 +1,137 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Policy / Labor Economist</h1>
+  <p>The macro angle: how has the H-1B program moved across six years of disclosures, in volume, wages, and geographic spread?</p>
+  <ul class="questions">
+    <li>How has overall filing volume evolved across FY2020-FY2025?</li>
+    <li>What's the median wage growth across the program — and within specific high-volume occupations?</li>
+    <li>Is the geographic spread concentrating or diversifying over time?</li>
+    <li>How are case outcomes (certified / withdrawn / denied) distributed?</li>
+  </ul>
+</section>
+
+<div class="panel-grid">
+
+  <%- include('partials/panel', {
+    title: 'Filings per fiscal year',
+    subtitle: 'Total LCAs ingested per FY. The post-2024 surge tracks both program growth and the DOL schema cleanup.',
+    tag: 'volume',
+    chartId: 'chartYearly',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Median annual wage by year',
+    subtitle: 'Median of WAGE_RATE_OF_PAY_FROM normalised to annual USD; outliers (< $20k or > $1M) clipped.',
+    tag: 'wage',
+    chartId: 'chartMedian',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Geographic mix over time',
+    subtitle: 'Top-5 worksite states share of total filings, year by year. "Other" lumps everything else.',
+    tag: 'geography',
+    chartId: 'chartStateMix',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Wage growth — top 5 occupations',
+    subtitle: 'Median annual wage trajectory across years for the five highest-volume SOCs.',
+    tag: 'occupations',
+    chartId: 'chartWageGrowth',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Case outcomes',
+    subtitle: 'Case-status disposition across the corpus, as reported by DOL.',
+    tag: 'outcomes',
+    chartId: 'chartStatus',
+    body: null,
+  }) %>
+
+</div>
+
+<script>
+const yearLabels      = <%- JSON.stringify(yearly.map(y => 'FY' + y.year)) %>;
+const yearValues      = <%- JSON.stringify(yearly.map(y => Number(y.filings))) %>;
+const medianLabels    = <%- JSON.stringify(medianWage.map(y => 'FY' + y.year)) %>;
+const medianValues    = <%- JSON.stringify(medianWage.map(y => Number(y.median_wage))) %>;
+const statusLabels    = <%- JSON.stringify(caseStatus.map(s => s.status)) %>;
+const statusValues    = <%- JSON.stringify(caseStatus.map(s => Number(s.filings))) %>;
+
+// Pivot stateMix (long format: year, state, filings) into Chart.js datasets
+const stateMixRaw = <%- JSON.stringify(stateMix) %>;
+const stateMixYears = [...new Set(stateMixRaw.map(r => r.year))].sort();
+const stateMixStates = [...new Set(stateMixRaw.map(r => r.state))];
+const stateMixIndex = Object.fromEntries(stateMixRaw.map(r => [`${r.year}__${r.state}`, Number(r.filings)]));
+const stateMixDatasets = stateMixStates.map((state, i) => {
+  const palette = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#a855f7','#94a3b8'];
+  return {
+    label: state,
+    data: stateMixYears.map(y => stateMixIndex[`${y}__${state}`] || 0),
+    backgroundColor: palette[i % palette.length],
+    stack: 'states',
+  };
+});
+
+// Pivot wageGrowth (long: soc_code, soc_title, year, median_wage) into per-SOC lines
+const wgRaw = <%- JSON.stringify(wageGrowth) %>;
+const wgYears = [...new Set(wgRaw.map(r => r.year))].sort();
+const wgSocs  = [...new Set(wgRaw.map(r => r.soc_code))];
+const wgIndex = Object.fromEntries(wgRaw.map(r => [`${r.soc_code}__${r.year}`, Number(r.median_wage)]));
+const wgSocTitleByCode = Object.fromEntries(wgRaw.map(r => [r.soc_code, (r.soc_title || r.soc_code).slice(0, 32)]));
+const wgPalette = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444'];
+const wgDatasets = wgSocs.map((soc, i) => ({
+  label: wgSocTitleByCode[soc],
+  data: wgYears.map(y => wgIndex[`${soc}__${y}`] || null),
+  borderColor: wgPalette[i % wgPalette.length],
+  backgroundColor: wgPalette[i % wgPalette.length] + '22',
+  fill: false, tension: 0.25, spanGaps: true, pointRadius: 3,
+}));
+
+const ACCENT = '#6366f1';
+
+new Chart(document.getElementById('chartYearly'), {
+  type: 'bar',
+  data: { labels: yearLabels, datasets: [{ data: yearValues, backgroundColor: ACCENT }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+});
+
+new Chart(document.getElementById('chartMedian'), {
+  type: 'line',
+  data: { labels: medianLabels, datasets: [{ data: medianValues, borderColor: ACCENT, backgroundColor: 'rgba(99,102,241,0.15)', fill: true, tension: 0.25, pointRadius: 4 }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + Number(ctx.parsed.y).toLocaleString() } } },
+    scales: { y: { ticks: { callback: v => '$' + Number(v / 1000).toFixed(0) + 'k' } } },
+  },
+});
+
+new Chart(document.getElementById('chartStateMix'), {
+  type: 'bar',
+  data: { labels: stateMixYears.map(y => 'FY' + y), datasets: stateMixDatasets },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } },
+});
+
+new Chart(document.getElementById('chartWageGrowth'), {
+  type: 'line',
+  data: { labels: wgYears.map(y => 'FY' + y), datasets: wgDatasets },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': $' + Number(ctx.parsed.y).toLocaleString() } } },
+    scales: { y: { ticks: { callback: v => '$' + Number(v / 1000).toFixed(0) + 'k' } } },
+  },
+});
+
+new Chart(document.getElementById('chartStatus'), {
+  type: 'doughnut',
+  data: { labels: statusLabels, datasets: [{ data: statusValues, backgroundColor: ['#10b981','#6366f1','#f59e0b','#ef4444','#0ea5e9','#a855f7','#94a3b8','#475569'] }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } },
+});
+</script>
+
+<%- include('partials/footer') %>

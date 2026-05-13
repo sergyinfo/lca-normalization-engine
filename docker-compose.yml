@@ -132,6 +132,28 @@ services:
         condition: service_healthy
 
   # --------------------------------------------------------------------------
+  # Analytics Dashboard (Node.js)
+  # Runs apps/analytics-ui — public, read-only persona-driven views over the
+  # canonicalised corpus. No auth.
+  # --------------------------------------------------------------------------
+  analytics-ui:
+    build:
+      context: .
+      dockerfile: apps/analytics-ui/Dockerfile
+    container_name: lca_analytics_ui
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lca_user}:${POSTGRES_PASSWORD:-lca_pass}@db:5432/${POSTGRES_DB:-lca_db}
+      ANALYTICS_UI_PORT: 8081
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    ports:
+      - "${ANALYTICS_UI_PORT:-8081}:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
   # Ingestion Worker (Node.js)
   # Runs apps/ingestor — XLSX streaming → pg-copy-streams → PostgreSQL
   # --------------------------------------------------------------------------

@@ -167,7 +167,7 @@ more ad-hoc SQL.
 FY2020 → FY2025 (24 LCA Disclosure files, 3.83 M records) ingested
 end-to-end with 0 errors and 0 failed BullMQ jobs over ~13 h 45 m of
 unattended NLP drain. Full timeline, snapshots, and findings recorded in
-[`INGEST_RUN_REPORT.md`](INGEST_RUN_REPORT.md).
+[`INGEST_RUN_REPORT.md`](project_notes/INGEST_RUN_REPORT.md).
 
 Key takeaways from this exercise:
 
@@ -231,7 +231,7 @@ canonical 32.1 %.
 
 **Outcome:** `unresolved_employers` is at zero, `canonical_employers`
 grew to 146,206, and `lca_records` canonical coverage is 99.47 %.
-Full timeline + numbers in [`INGEST_RUN_REPORT.md`](INGEST_RUN_REPORT.md)
+Full timeline + numbers in [`INGEST_RUN_REPORT.md`](project_notes/INGEST_RUN_REPORT.md)
 Phase 9.
 
 To execute:

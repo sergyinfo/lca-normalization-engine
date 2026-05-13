@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= typeof title !== 'undefined' ? title : 'LCA Analytics' %> · LCA Analytics</title>
+  <link rel="stylesheet" href="/public/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a href="/">LCA Analytics</a></div>
+  <nav>
+    <a href="/journalist" <%= typeof active !== 'undefined' && active === 'journalist' ? 'class="active"' : '' %>>Journalist</a>
+    <a href="/jobseeker"  <%= typeof active !== 'undefined' && active === 'jobseeker'  ? 'class="active"' : '' %>>Job Seeker</a>
+    <a href="/policy"     <%= typeof active !== 'undefined' && active === 'policy'     ? 'class="active"' : '' %>>Policy</a>
+    <a href="/academic"   <%= typeof active !== 'undefined' && active === 'academic'   ? 'class="active"' : '' %>>Academic</a>
+  </nav>
+  <span class="muted small">3.83 M records · FY2020-FY2025 · DOL LCA disclosures</span>
+</header>
+<main class="container">

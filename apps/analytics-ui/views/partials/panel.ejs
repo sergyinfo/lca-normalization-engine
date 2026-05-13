@@ -1,0 +1,25 @@
+<%
+/*
+  Renders one analytical panel. Pass:
+    - title       (string)            required
+    - subtitle    (string|null)       optional explanatory text
+    - body        (string)            optional HTML to inject (tables, etc.)
+    - chartId     (string|null)       if set, renders a <canvas> the inline script can target
+    - tag         (string|null)       small label in the panel header (e.g. "wage")
+*/
+%>
+<section class="panel">
+  <header class="panel-head">
+    <h2><%= title %></h2>
+    <% if (typeof tag !== 'undefined' && tag) { %><span class="tag"><%= tag %></span><% } %>
+  </header>
+  <% if (typeof subtitle !== 'undefined' && subtitle) { %>
+    <p class="panel-sub muted small"><%- subtitle %></p>
+  <% } %>
+  <% if (typeof chartId !== 'undefined' && chartId) { %>
+    <div class="chart-wrap"><canvas id="<%= chartId %>"></canvas></div>
+  <% } %>
+  <% if (typeof body !== 'undefined' && body) { %>
+    <div class="panel-body"><%- body %></div>
+  <% } %>
+</section>

@@ -1,0 +1,142 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Academic / Thesis Examiner</h1>
+  <p>The methodology view — for the reader who cares not just what the answers are, but how the pipeline produced them. Mirrors the 4-stage SOC classifier and 3-layer entity-resolution cascade described in the thesis.</p>
+  <ul class="questions">
+    <li>How does each classification stage contribute to total coverage?</li>
+    <li>How confident is the semantic classifier across its outputs?</li>
+    <li>How did the entity-resolution layers (FEIN → trigram → vector) split the canonical pool?</li>
+    <li>What's the operational state — how much is classified, canonicalised, still in review queues?</li>
+  </ul>
+</section>
+
+<section class="kpi-grid">
+  <div class="kpi-tile">
+    <h3>Total records</h3>
+    <div class="big"><%= Number(coverage.total_records).toLocaleString() %></div>
+    <div class="sub">LCA disclosures ingested</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>SOC-classified</h3>
+    <div class="big"><%= ((Number(coverage.classified_records) / Number(coverage.total_records)) * 100).toFixed(2) %>%</div>
+    <div class="sub"><%= Number(coverage.classified_records).toLocaleString() %> records</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Canonical-resolved</h3>
+    <div class="big"><%= ((Number(coverage.canonicalised_records) / Number(coverage.total_records)) * 100).toFixed(2) %>%</div>
+    <div class="sub"><%= Number(coverage.canonicalised_records).toLocaleString() %> records</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Canonicals · Embeddings</h3>
+    <div class="big"><%= Number(coverage.canonical_employers).toLocaleString() %></div>
+    <div class="sub"><%= Number(coverage.employer_embeddings).toLocaleString() %> 384-dim vectors (pgvector HNSW)</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Quarantine open</h3>
+    <div class="big"><%= Number(coverage.quarantine_open).toLocaleString() %></div>
+    <div class="sub">Awaiting Stage 3 LLM reclassify</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Unresolved open</h3>
+    <div class="big"><%= Number(coverage.unresolved_open).toLocaleString() %></div>
+    <div class="sub">Layer 1/2/3 + UPSERT all miss</div>
+  </div>
+</section>
+
+<div class="panel-grid">
+
+  <%- include('partials/panel', {
+    title: 'SOC classification source mix',
+    subtitle: 'How each classified record landed its SOC — DMTF exact-match, sentence-transformer semantic retrieval, per-employer consensus, or operator override.',
+    tag: 'classifier',
+    chartId: 'chartSource',
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Stage 2 semantic-classifier confidence distribution',
+    subtitle: 'Cosine-similarity scores from the all-MiniLM-L6-v2 retrieval step. The 0.7 gate routes anything below into the quarantine queue.',
+    tag: 'confidence',
+    chartId: 'chartConfidence',
+  }) %>
+
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Entity-resolution layer outcomes</h2><span class="tag">resolution</span>
+    </header>
+    <p class="panel-sub muted small">Canonical employers grouped by the layer that minted them. Layer 1 = FEIN-bearing rows (FY2024+); Layer 2/3 = name-based matches and new UPSERTs by the full-cascade backfill.</p>
+    <div class="chart-wrap"><canvas id="chartLayers"></canvas></div>
+    <table class="data" style="margin-top:12px">
+      <tbody>
+        <tr><td>Layer 1 (FEIN-keyed canonicals)</td><td class="num"><%= Number(layerMix.layer1_fein_canonicals).toLocaleString() %></td></tr>
+        <tr><td>Layer 2/3 + new-canonical UPSERTs</td><td class="num"><%= Number(layerMix.layer23_namebased_canonicals).toLocaleString() %></td></tr>
+        <tr><td>Unresolved entries merged to a canonical</td><td class="num"><%= Number(layerMix.unresolved_merged).toLocaleString() %></td></tr>
+        <tr><td>Unresolved entries still open</td><td class="num"><%= Number(layerMix.unresolved_open).toLocaleString() %></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Top 10 canonical employers</h2><span class="tag">canonicals</span>
+    </header>
+    <p class="panel-sub muted small">By <code>record_count</code> — the largest entities after the 3-layer entity-resolution cascade settled.</p>
+    <table class="data">
+      <thead><tr><th>#</th><th>Canonical name</th><th>FEIN</th><th>State</th><th class="num">Records</th></tr></thead>
+      <tbody>
+      <% topCanonicals.forEach((c, i) => { %>
+        <tr>
+          <td><%= i + 1 %></td>
+          <td><%= c.canonical_name %></td>
+          <td><code><%= c.fein || '—' %></code></td>
+          <td><%= c.employer_state || '—' %></td>
+          <td class="num"><%= Number(c.record_count).toLocaleString() %></td>
+        </tr>
+      <% }) %>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+<script>
+const sourceLabels = <%- JSON.stringify(sourceMix.map(r => r.source)) %>;
+const sourceValues = <%- JSON.stringify(sourceMix.map(r => Number(r.records))) %>;
+const confLabels   = <%- JSON.stringify(confidence.map(r => r.bucket)) %>;
+const confValues   = <%- JSON.stringify(confidence.map(r => Number(r.records))) %>;
+
+const ACCENT = '#f59e0b';
+const palette = ['#10b981','#6366f1','#f59e0b','#ef4444','#0ea5e9','#94a3b8'];
+
+new Chart(document.getElementById('chartSource'), {
+  type: 'doughnut',
+  data: { labels: sourceLabels, datasets: [{ data: sourceValues, backgroundColor: palette }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } },
+});
+
+if (confLabels.length > 0) {
+  new Chart(document.getElementById('chartConfidence'), {
+    type: 'bar',
+    data: { labels: confLabels, datasets: [{ data: confValues, backgroundColor: ACCENT }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+  });
+} else {
+  document.getElementById('chartConfidence').replaceWith(
+    Object.assign(document.createElement('div'), { className: 'empty', textContent: 'No semantic-classifier rows in this corpus snapshot.' })
+  );
+}
+
+new Chart(document.getElementById('chartLayers'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Layer 1 (FEIN)', 'Layer 2/3 + UPSERT'],
+    datasets: [{
+      data: [<%= Number(layerMix.layer1_fein_canonicals) %>, <%= Number(layerMix.layer23_namebased_canonicals) %>],
+      backgroundColor: ['#6366f1', ACCENT],
+    }],
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } },
+});
+</script>
+
+<%- include('partials/footer') %>

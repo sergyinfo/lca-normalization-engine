@@ -1,0 +1,123 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Journalist / Public</h1>
+  <p>The "who / where / how much" angle: who sponsors the most H-1B workers, where they file, and how the picture has shifted over the years.</p>
+  <ul class="questions">
+    <li>Which companies are the largest H-1B sponsors over the past six years?</li>
+    <li>Which states absorb the most filings — and is it concentrated or spread out?</li>
+    <li>Has the program grown, shrunk, or held steady year over year?</li>
+    <li>Which occupations dominate the H-1B pipeline?</li>
+  </ul>
+</section>
+
+<div class="panel-grid">
+
+  <%- include('partials/panel', {
+    title: 'Top 20 H-1B sponsors (all years)',
+    subtitle: 'Aggregated by <code>canonical_employer_id</code> — the same entity even when DOL spelled the name 12 different ways. Layer 1 / 2 / 3 entity resolution.',
+    tag: 'sponsors',
+    chartId: 'chartSponsors',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Filings by worksite state (top 15)',
+    subtitle: 'State of the actual worksite — where the worker would actually be employed.',
+    tag: 'geography',
+    chartId: 'chartStates',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Filings per fiscal year',
+    subtitle: 'Volume trend across FY2020 through FY2025.',
+    tag: 'volume',
+    chartId: 'chartYears',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Top occupations',
+    subtitle: 'SOC classifications applied by the 4-stage classifier (DMTF → semantic → consensus → LLM).',
+    tag: 'occupations',
+    chartId: 'chartSocs',
+    body: null,
+  }) %>
+
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Top sponsors — table</h2><span class="tag">detail</span></header>
+  <p class="panel-sub muted small">Same data as the chart above, with state context.</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th>State</th><th class="num">Filings</th></tr></thead>
+    <tbody>
+    <% sponsors.forEach((s, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= s.canonical_name %></td>
+        <td><%= s.employer_state || '—' %></td>
+        <td class="num"><%= Number(s.filings).toLocaleString() %></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const sponsorLabels = <%- JSON.stringify(sponsors.map(s => s.canonical_name)) %>;
+const sponsorValues = <%- JSON.stringify(sponsors.map(s => Number(s.filings))) %>;
+const stateLabels   = <%- JSON.stringify(byState.map(s => s.state)) %>;
+const stateValues   = <%- JSON.stringify(byState.map(s => Number(s.filings))) %>;
+const yearLabels    = <%- JSON.stringify(byYear.map(s => 'FY' + s.year)) %>;
+const yearValues    = <%- JSON.stringify(byYear.map(s => Number(s.filings))) %>;
+const socLabels     = <%- JSON.stringify(socs.map(s => (s.soc_title || s.soc_code))) %>;
+const socValues     = <%- JSON.stringify(socs.map(s => Number(s.filings))) %>;
+
+const ACCENT = '#ef4444';
+
+new Chart(document.getElementById('chartSponsors'), {
+  type: 'bar',
+  data: { labels: sponsorLabels, datasets: [{ data: sponsorValues, backgroundColor: ACCENT }] },
+  options: {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { beginAtZero: true } },
+  }
+});
+
+new Chart(document.getElementById('chartStates'), {
+  type: 'bar',
+  data: { labels: stateLabels, datasets: [{ data: stateValues, backgroundColor: ACCENT }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true } },
+  }
+});
+
+new Chart(document.getElementById('chartYears'), {
+  type: 'line',
+  data: { labels: yearLabels, datasets: [{ data: yearValues, borderColor: ACCENT, backgroundColor: 'rgba(239,68,68,0.15)', fill: true, tension: 0.25 }] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true } },
+  }
+});
+
+new Chart(document.getElementById('chartSocs'), {
+  type: 'bar',
+  data: { labels: socLabels, datasets: [{ data: socValues, backgroundColor: ACCENT }] },
+  options: {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { beginAtZero: true } },
+  }
+});
+</script>
+
+<%- include('partials/footer') %>

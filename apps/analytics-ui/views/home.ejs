@@ -1,0 +1,60 @@
+<%- include('partials/header', { title }) %>
+
+<h1>LCA Analytics</h1>
+<p>
+  A read-only exploration of the U.S. Department of Labor's H-1B Labor Condition
+  Application disclosures (FY<%= kpis.first_year %>–FY<%= kpis.last_year %>), normalised,
+  classified, and entity-resolved by the LCA Normalization Engine.
+</p>
+
+<section class="kpi-grid">
+  <div class="kpi-tile">
+    <h3>Records</h3>
+    <div class="big"><%= Number(kpis.total_records).toLocaleString() %></div>
+    <div class="sub">Total LCA disclosures ingested</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Classified</h3>
+    <div class="big"><%= ((Number(kpis.classified_records) / Number(kpis.total_records)) * 100).toFixed(1) %>%</div>
+    <div class="sub"><%= Number(kpis.classified_records).toLocaleString() %> with SOC code</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Canonicalised</h3>
+    <div class="big"><%= ((Number(kpis.canonicalised_records) / Number(kpis.total_records)) * 100).toFixed(2) %>%</div>
+    <div class="sub"><%= Number(kpis.canonicalised_records).toLocaleString() %> linked to a canonical employer</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Employers</h3>
+    <div class="big"><%= Number(kpis.canonical_employers).toLocaleString() %></div>
+    <div class="sub">Distinct canonical employers</div>
+  </div>
+  <div class="kpi-tile">
+    <h3>Occupations</h3>
+    <div class="big"><%= Number(kpis.distinct_socs).toLocaleString() %></div>
+    <div class="sub">Distinct SOC codes</div>
+  </div>
+</section>
+
+<h2 style="margin-top:32px">Pick your lens</h2>
+<p class="muted">Each persona answers the questions that user actually asks of the corpus.</p>
+
+<section class="persona-grid">
+  <a class="persona-card journalist" href="/journalist">
+    <h3>Journalist / Public →</h3>
+    <p>Who sponsors the most H-1Bs? Where do they file? How has the volume moved year over year, and which occupations dominate?</p>
+  </a>
+  <a class="persona-card jobseeker" href="/jobseeker">
+    <h3>Job Seeker →</h3>
+    <p>What's the prevailing wage for a role in a city? Which employers hire for a given SOC? How have wages drifted over time?</p>
+  </a>
+  <a class="persona-card policy" href="/policy">
+    <h3>Policy / Labor Economist →</h3>
+    <p>Long-term trends — filings per year, wage growth by occupation, geographic concentration shifts, case-outcome distribution.</p>
+  </a>
+  <a class="persona-card academic" href="/academic">
+    <h3>Academic / Methodology →</h3>
+    <p>How the data was made: classification source mix, confidence distribution, entity-resolution layer outcomes, coverage stats.</p>
+  </a>
+</section>
+
+<%- include('partials/footer') %>

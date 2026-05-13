@@ -1,0 +1,22 @@
+{
+  "name": "analytics-ui",
+  "version": "0.1.0",
+  "description": "Public analytics dashboard for the LCA Normalization Engine — persona-driven views over the canonicalised, classified corpus",
+  "type": "module",
+  "main": "./index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/static": "^7.0.4",
+    "@fastify/view": "^9.1.0",
+    "@lca/db-lib": "workspace:*",
+    "dotenv": "^16.4.0",
+    "ejs": "^3.1.10",
+    "fastify": "^4.28.0",
+    "pino": "^9.2.0"
+  }
+}
