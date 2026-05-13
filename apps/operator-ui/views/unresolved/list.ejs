@@ -1,12 +1,30 @@
 <%- include('../partials/header', { title: 'Unresolved employers' }) %>
 
 <h1>Unresolved employers <span class="muted">(<%= rows.length %>)</span></h1>
-<p class="muted">Employers no entity-resolution layer matched. Merge into existing canonical or create a new one.</p>
+<p class="muted">Employer name + state pairs the 3-layer entity-resolution cascade missed.</p>
+
+<%- include('../partials/help', {
+  title: 'high-leverage queue — one merge backfills hundreds of records',
+  open: false,
+  body: `
+    <p>Each row is a unique <code>(employer_name, employer_state)</code> pair that
+    no resolver layer matched to a known <code>canonical_employers</code> row:</p>
+    <ul>
+      <li><strong>Layer 1 (FEIN)</strong> — pre-2024 DOL files have 0% FEIN, so this is data-dead on FY2020-FY2023.</li>
+      <li><strong>Layer 2 (pg_trgm)</strong> — trigram similarity in same state, threshold ~0.6.</li>
+      <li><strong>Layer 3 (pgvector)</strong> — sentence-transformer cosine against <code>employer_embeddings</code>.</li>
+    </ul>
+    <p>The list is sorted by <strong>Hits</strong> — how many LCA records share this name+state.
+    Work the top of the list first; one merge backfills all those rows in one transaction.</p>
+    <p><strong>Click "Inspect →"</strong> to see trigram-similar canonicals and pick:
+    Merge (into an existing canonical) · Create new · Reject.</p>
+  `
+}) %>
 
 <%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
 
 <% if (rows.length === 0) { %>
-  <p class="empty">Queue is empty. (Expected on FY2025 Q1 — populated by historical / dirtier corpora.)</p>
+  <p class="empty">Queue is empty. (Expected after a full-cascade backfill — populates again as new ingests land.)</p>
 <% } else { %>
   <table class="data">
     <thead>
@@ -16,7 +34,7 @@
         <th>State</th>
         <th>FEIN</th>
         <th>City</th>
-        <th>Hits</th>
+        <th class="num">Hits</th>
         <th>Last seen</th>
         <th></th>
       </tr>
@@ -29,7 +47,7 @@
           <td><%= r.employer_state || '—' %></td>
           <td><%= r.employer_fein || '—' %></td>
           <td><%= r.employer_city || '—' %></td>
-          <td><%= r.hits %></td>
+          <td class="num"><strong><%= r.hits %></strong></td>
           <td class="muted"><%= new Date(r.updated_at).toISOString().slice(0, 10) %></td>
           <td><a href="/unresolved/<%= r.id %>">Inspect →</a></td>
         </tr>

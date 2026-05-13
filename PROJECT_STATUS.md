@@ -241,13 +241,46 @@ DATABASE_URL=... packages/nlp-engine/.venv/bin/backfill-canonical-full \
     --dry-run --limit 1000                             # sample first
 ```
 
-### Step 4 — Stage 3 LLM reclassify on GPU
+### Step 4 — Analytics dashboard ✅ *(done 2026-05-13)*
+
+Shipped as `apps/analytics-ui` — Fastify + EJS + Chart.js, public read-only
+app on port 8081. Four persona pages over the canonicalised corpus:
+
+| Page | Audience | Headline question |
+|---|---|---|
+| `/journalist` | Public, reporters | Who sponsors H-1Bs, where, how much? |
+| `/jobseeker`  | Career researchers | What's the prevailing wage for my role + city? |
+| `/policy`     | Labour economists | How is the program evolving over time? |
+| `/academic`   | Thesis examiner | How does the pipeline produce these numbers? |
+
+Backed by **12 materialized views + 1 plain view** in a new `analytics.*`
+schema (`apps/analytics-ui/db/analytics_views.sql`) — without them a naive
+`count(*)` over the 3.83 M-row table takes ~75 s cold; the matviews drop
+page paint to **16-552 ms** cold / **7-117 ms** warm. Total matview
+storage: ~29 MB.
+
+Full data walkthrough with worked persona-by-persona analysis in
+[`project_notes/analytics_ui.md`](project_notes/analytics_ui.md). The
+defence story: every panel is a question the pipeline made cheap to ask
+— *the value of normalisation is everything past this page.*
+
+Bring up:
+```bash
+DATABASE_URL=...  pnpm analytics:bootstrap-views     # one-shot, ~30-45 min
+docker compose up -d analytics-ui                    # http://localhost:8081
+DATABASE_URL=...  pnpm analytics:refresh-views       # after data changes
+```
+
+**Outcome:** the corpus is now legible to four different audiences without
+any SQL. Defense-demo URL ready.
+
+### Step 5 — Stage 3 LLM reclassify on GPU
 
 Run `quarantine:reclassify` on a rented A10G/L4 against the 181,839 open
 quarantine records (expected wall time ~5–10 h on a single GPU vs
 ~250 h on Mac CPU). Drives quarantine residue to near zero.
 
-### Step 5 — Tests + CI/CD
+### Step 6 — Tests + CI/CD
 
 Add unit tests for the classifier, entity resolver, Pydantic models, and
 ingestor; integration tests that exercise the full Docker stack; GitHub Actions
@@ -263,8 +296,9 @@ to run lint + test + Docker build on every PR.
 |---|---|---|
 | **Node.js ingestion pipeline** | **100 %** | All six years (3.83 M records, 24 XLSX files) ingested cleanly via SAX streaming + `pg-copy-streams`, 0 failed jobs |
 | **Python NLP enrichment** | **97 %** | Stages 0/1/2 run inline and processed 3.65 M records (95.3 % coverage) with 0 errors. Stage 3 LLM is in code but unrun at scale (181 K residue × Mac CPU is uneconomical — needs GPU). All three entity-resolution layers wired in; the full-cascade backfill (Layer 1→2→3 + UPSERT) drained `unresolved_employers` to zero, ending at 146,206 canonicals and 99.47 % LCA canonical coverage. |
-| **Infrastructure & DevOps** | **95 %** | Docker stack with pgvector, Redis, ingestor, nlp-worker, operator-ui all healthy; nlp-worker image rebuilt 2026-05-11 with current Layer 2/3 code. Still missing CI/CD and tests. |
-| **Documentation** | **98 %** | README + this status file reflect current implementation. Full re-ingest run captured in `INGEST_RUN_REPORT.md`. Entity-resolution evolution in `project_notes/`. |
+| **Infrastructure & DevOps** | **97 %** | Docker stack with pgvector, Redis, ingestor, nlp-worker, operator-ui, analytics-ui all healthy; nlp-worker image rebuilt 2026-05-11 with current Layer 2/3 code. Still missing CI/CD and tests. |
+| **Analytics surface** | **100 %** | Public dashboard (`apps/analytics-ui`) on port 8081 — four persona pages, 12 matviews + 1 view, sub-second paint on all default routes. |
+| **Documentation** | **99 %** | README + this status file reflect current implementation. Full re-ingest run captured in `INGEST_RUN_REPORT.md`. Entity-resolution evolution and analytics dashboard walkthrough in `project_notes/`. |
 
 ---
 
@@ -297,6 +331,7 @@ to run lint + test + Docker build on every PR.
 | **NLP Worker** | `.../worker.py` | Async Redis consumer; runs SOC pipeline + 3-layer entity resolution; writes `soc_source`, `requires_review`, `review_reason`, `canonical_employer_id`; UPSERTs misses into `staging.unresolved_employers`. |
 | **Reclassify-quarantine** | `.../reclassify_quarantine.py` | LLM-on-residual drain. Now also calls `resolve_fein` inline so quarantine drains never leave `canonical_employer_id` unset. |
 | **Operator HITL UI** | `apps/operator-ui` | New: Fastify + EJS web app on port 8080. Walks all three review queues with list / inspect / accept / override / merge / reject actions. Single shared password (`OPERATOR_PASSWORD`) + signed-cookie session (`SESSION_SECRET`). Reuses `@lca/db-lib` pool. Unresolved-employer merges run a transactional `lca_records` backfill. Ships as Docker Compose service `operator-ui`. |
+| **Analytics dashboard** | `apps/analytics-ui` | New (2026-05-13): Fastify + EJS + Chart.js web app on port 8081, no auth. Four persona pages (Journalist / Job Seeker / Policy / Academic) over the canonicalised corpus, backed by 12 materialized views + 1 plain view in a new `analytics.*` schema (~29 MB total). Page paint 16-552 ms cold / 7-117 ms warm. Bootstrap once via `pnpm analytics:bootstrap-views`; refresh after data changes via `pnpm analytics:refresh-views`. Full data walkthrough in `project_notes/analytics_ui.md`. |
 | **Documentation** | `README.md`, `PROJECT_STATUS.md`, `project_notes/` | Architecture, status, plus full evolution narratives for the SOC classifier (`soc_classifier_evolution.md`) and the entity-resolution cascade (`entity_resolution_evolution.md`). |
 
 ### Not Yet Implemented

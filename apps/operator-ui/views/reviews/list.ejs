@@ -1,7 +1,31 @@
 <%- include('../partials/header', { title: 'Reviews' }) %>
 
 <h1>Reviews <span class="muted">(<%= rows.length %>)</span></h1>
-<p class="muted">Records flagged <code>requires_review = true</code>.</p>
+<p class="muted">Records the classifier picked a SOC for, but flagged the pick as suspicious.</p>
+
+<%- include('../partials/help', {
+  title: 'when to accept, override, or reject',
+  open: false,
+  body: `
+    <p>Each row is an <code>lca_records</code> row with <code>requires_review=true</code>.
+    The <em>Reason</em> column tells you why the pipeline flagged it:</p>
+    <table>
+      <thead><tr><th>Reason code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>short_title_gate</code></td><td>The job title was generic (e.g. "Engineer", "SWE 4") and the LLM's pick is risky. Inspect carefully.</td></tr>
+        <tr><td><code>low_confidence</code></td><td>Stage 2 semantic classifier picked the best it could but cosine similarity was below the 0.7 trust threshold.</td></tr>
+        <tr><td><i>other</i></td><td>Routed here by custom worker logic — check <code>data->>'review_reason'</code>.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Click "Inspect →"</strong> to see the full record and the three action options
+    (Accept · Override · Reject to quarantine). Decision shortcuts:</p>
+    <ul>
+      <li>Confident the SOC is right → <strong>Accept</strong>.</li>
+      <li>Wrong, and you know the right code → <strong>Override</strong>. Look codes up at <a href="https://www.bls.gov/soc/" target="_blank" rel="noopener">BLS SOC</a>.</li>
+      <li>You can't tell → <strong>Reject to quarantine</strong> — don't guess.</li>
+    </ul>
+  `
+}) %>
 
 <%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
 
@@ -32,7 +56,13 @@
           <td><%= r.soc_code || '—' %></td>
           <td><%= r.soc_confidence ? Number(r.soc_confidence).toFixed(2) : '—' %></td>
           <td><%= r.soc_source || '—' %></td>
-          <td><%= r.review_reason || '—' %></td>
+          <td>
+            <% if (r.review_reason) { %>
+              <span class="pill <%= r.review_reason === 'short_title_gate' ? 'pill-warn' : (r.review_reason === 'low_confidence' ? 'pill-warn' : '') %>"><%= r.review_reason %></span>
+            <% } else { %>
+              —
+            <% } %>
+          </td>
           <td><a href="/reviews/<%= r.filing_year %>/<%= r.id %>">Inspect →</a></td>
         </tr>
       <% }) %>

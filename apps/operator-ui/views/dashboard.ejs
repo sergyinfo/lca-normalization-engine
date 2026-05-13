@@ -3,6 +3,27 @@
 <h1>Review queues</h1>
 <p class="muted">Pick a queue to walk pending items.</p>
 
+<%- include('partials/help', {
+  title: 'three things the pipeline can flag for you',
+  open: true,
+  body: `
+    <p>The automated pipeline classifies and canonicalises every record. When it
+    can't, the record lands in one of these three queues:</p>
+    <table>
+      <thead><tr><th>Queue</th><th>Why records arrive</th><th>What you do</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Reviews</strong></td><td>Classifier picked a SOC but flagged the pick as suspicious.</td><td>Accept · Override · Reject</td></tr>
+        <tr><td><strong>Quarantine</strong></td><td>Classifier refused to pick, or validation failed at ingest.</td><td>Assign SOC manually · Drop</td></tr>
+        <tr><td><strong>Unresolved</strong></td><td>Entity-resolution layers (FEIN / pg_trgm / pgvector) all missed.</td><td>Merge into existing canonical · Create new · Reject</td></tr>
+      </tbody>
+    </table>
+    <p>Every action is a transactional write. The merge/create actions on the
+    Unresolved queue cascade — one click backfills <code>canonical_employer_id</code>
+    on every matching <code>lca_records</code> row. Take a moment before each click.</p>
+    <p><a href="https://github.com/anthropics/lca-normalization-engine/blob/main/apps/operator-ui/README.md" target="_blank" rel="noopener">Full manual →</a></p>
+  `
+}) %>
+
 <div class="queue-grid">
   <a class="queue-card" href="/reviews">
     <h2>Reviews</h2>

@@ -1,0 +1,14 @@
+<%
+/*
+  Renders a collapsible "How this queue works" banner.
+
+  Locals:
+    title       — short heading shown in the toggle
+    body        — HTML content (use <p>, <ul>, etc.)
+    open        — boolean; default false. Pass true to open by default.
+*/
+%>
+<details class="help" <%= (typeof open !== 'undefined' && open) ? 'open' : '' %>>
+  <summary><strong>How this works</strong> — <span class="muted"><%= title %></span></summary>
+  <div class="help-body"><%- body %></div>
+</details>

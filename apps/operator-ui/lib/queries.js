@@ -10,6 +10,42 @@
 import { getPool } from '@lca/db-lib';
 
 // ---------------------------------------------------------------------------
+// SOC autocomplete dictionary
+// ---------------------------------------------------------------------------
+//
+// One distinct (soc_code, soc_title) pair per code, mined from soc_aliases.
+// Used to render a <datalist> for the SOC inputs on Reviews and Quarantine
+// inspect pages so the operator can type a job-title fragment ("software")
+// and pick the canonical SOC instead of looking it up on bls.gov.
+//
+// Cached for the lifetime of the process — the dictionary is effectively
+// static (DMTF + thesis-bootstrapped aliases don't change between deploys).
+// If you load a fresh DMTF release, restart the app to pick it up.
+
+let _socListCache = null;
+let _socListPromise = null;
+
+export async function listSocCodes() {
+  if (_socListCache) return _socListCache;
+  if (_socListPromise) return _socListPromise;
+  _socListPromise = (async () => {
+    const pool = getPool();
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (soc_code)
+             soc_code,
+             soc_title
+      FROM   soc_aliases
+      WHERE  soc_code IS NOT NULL
+        AND  soc_title IS NOT NULL
+      ORDER  BY soc_code, length(soc_title) ASC
+    `);
+    _socListCache = rows;
+    return rows;
+  })();
+  return _socListPromise;
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 

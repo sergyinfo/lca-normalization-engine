@@ -3,6 +3,7 @@ import {
   getReview,
   patchReview,
   rejectReviewToQuarantine,
+  listSocCodes,
 } from '../lib/queries.js';
 
 export default async function reviewRoutes(app) {
@@ -23,11 +24,18 @@ export default async function reviewRoutes(app) {
   app.get('/reviews/:filingYear/:id', async (req, reply) => {
     const filingYear = Number(req.params.filingYear);
     const id = Number(req.params.id);
-    const record = await getReview({ filingYear, id });
+    const [record, socList] = await Promise.all([
+      getReview({ filingYear, id }),
+      listSocCodes(),
+    ]);
     if (!record) {
       return reply.code(404).view('error.ejs', { message: 'Review record not found' });
     }
-    return reply.view('reviews/inspect.ejs', { record, flash: req.query.flash || null });
+    return reply.view('reviews/inspect.ejs', {
+      record,
+      socList,
+      flash: req.query.flash || null,
+    });
   });
 
   app.post('/reviews/:filingYear/:id/accept', async (req, reply) => {

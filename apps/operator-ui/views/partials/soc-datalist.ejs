@@ -1,0 +1,51 @@
+<%
+/*
+  Renders a <datalist> of every known SOC code from soc_aliases. Inputs that
+  declare list="soc-codes" will get a native browser autocomplete dropdown.
+
+  Browsers match the user's typed string against BOTH the option's `value`
+  (the SOC code) and the option's text/label (the title), so typing either
+  "soft" or "15-12" surfaces "15-1252 — Software Developers".
+
+  Picking an option fills the input with the SOC code only. A small inline
+  script in the host page can mirror the matching soc_title into the
+  adjacent title input (see reviews/inspect.ejs and quarantine/inspect.ejs).
+
+  Locals:
+    socList — array of { soc_code, soc_title }
+*/
+%>
+<datalist id="soc-codes">
+  <% socList.forEach((s) => { %><option value="<%= s.soc_code %>" label="<%= s.soc_title %>"></option>
+  <% }) %>
+</datalist>
+<script>
+  // Map for auto-filling the soc_title input when a known soc_code is entered.
+  window.SOC_TITLES = window.SOC_TITLES || (function () {
+    const m = Object.create(null);
+    <% socList.forEach((s) => { %>m["<%= s.soc_code %>"] = <%- JSON.stringify(s.soc_title) %>;
+    <% }) %>
+    return m;
+  })();
+
+  // Wire any input[data-soc-input] so picking a SOC also fills the matching
+  // soc_title input that shares the same form.
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('input[data-soc-input]').forEach(function (codeInput) {
+      const form = codeInput.closest('form');
+      if (!form) return;
+      const titleInput = form.querySelector('input[name="soc_title"]');
+      if (!titleInput) return;
+      codeInput.addEventListener('input', function () {
+        const v = codeInput.value.trim();
+        const t = window.SOC_TITLES[v];
+        if (t && !titleInput.value) titleInput.value = t;
+      });
+      codeInput.addEventListener('change', function () {
+        const v = codeInput.value.trim();
+        const t = window.SOC_TITLES[v];
+        if (t) titleInput.value = t;
+      });
+    });
+  });
+</script>

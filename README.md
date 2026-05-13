@@ -21,14 +21,17 @@ lca-normalization-engine/
 │   │                    #   FLAG mode: JOINs LCA_Disclosure + LCA_Worksites + LCA_Appendix_A
 │   ├── harvester/       # Cron service: scrapes DOL quarterly releases → Shared Volume → BullMQ
 │   ├── cli-tool/        # CLI: DB init, schema migrations, task-tree seeding for backfill
-│   └── operator-ui/     # Fastify + EJS web app (port 8080): walks the three HITL queues
-│                        #   (requires_review records, staging.quarantine_records,
-│                        #    staging.unresolved_employers) — accept/override/merge/reject
+│   ├── operator-ui/     # Fastify + EJS web app (port 8080): walks the three HITL queues
+│   │                    #   (requires_review records, staging.quarantine_records,
+│   │                    #    staging.unresolved_employers) — accept/override/merge/reject
+│   └── analytics-ui/    # Fastify + EJS + Chart.js (port 8081): public read-only dashboard
+│                        #   over the canonicalised corpus. Four persona pages backed by
+│                        #   12 materialized views in analytics.* schema.
 │
 ├── infra/
 │   └── postgres/        # init.sql (extensions: pg_trgm, pgvector, btree_gin)
 │
-└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestion-worker, operator-ui
+└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestion-worker, operator-ui, analytics-ui
 ```
 
 ### Data Flow
@@ -332,6 +335,44 @@ write-back semantics.
 
 ---
 
+## Analytics Dashboard (Analytics UI)
+
+Public, read-only, persona-driven dashboard over the canonicalised corpus.
+Runs at `http://localhost:8081` once `analytics-ui` is up. Four pages:
+
+| Page | Audience | Headline question |
+|---|---|---|
+| `/journalist` | Public, reporters | Who sponsors H-1Bs, where, how much? |
+| `/jobseeker`  | Career researchers | What's the prevailing wage for my role + city? |
+| `/policy`     | Labour economists | How is the program evolving over time? |
+| `/academic`   | Thesis examiner | How does the pipeline actually produce these numbers? |
+
+Every aggregation panel is backed by a materialized view in the
+`analytics.*` schema (12 matviews + 1 plain view, ~29 MB total). This is
+what makes the dashboard demoable: a naive `count(*)` on the 3.83 M-row
+`lca_records` takes ~75 s cold-cache; reading from the pre-aggregated
+matviews paints in 16-552 ms.
+
+Bring up:
+```bash
+# Build the matviews once (after ingest / backfill)
+DATABASE_URL=...  pnpm analytics:bootstrap-views
+
+# Run the app
+docker compose up -d analytics-ui                    # http://localhost:8081
+# or for host iteration:
+pnpm analytics:dev
+
+# Refresh the matviews after a data update
+DATABASE_URL=...  pnpm analytics:refresh-views
+```
+
+See [`apps/analytics-ui/README.md`](apps/analytics-ui/README.md) for the
+files layout and [`project_notes/analytics_ui.md`](project_notes/analytics_ui.md)
+for a full data walkthrough (worked examples per persona + analysis).
+
+---
+
 ## Prerequisites
 
 - Node.js >= 20
@@ -401,6 +442,11 @@ pnpm db:status
 #     LLM-refused records, unresolved employers).
 #     Set OPERATOR_PASSWORD and SESSION_SECRET in .env first.
 docker compose up -d operator-ui   # then open http://localhost:8080
+
+# 13. Bring up the analytics dashboard. Bootstrap matviews once, then start.
+DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \
+  pnpm analytics:bootstrap-views
+docker compose up -d analytics-ui  # then open http://localhost:8081
 ```
 
 ## Mode 2: Production Run (Ongoing Quarterly Updates)
@@ -432,25 +478,26 @@ table check).
 ## Workspace Dependency Graph
 
 ```
-cli-tool ────┐
-ingestor ────┤
-harvester ───┤──▶ @lca/db-lib ──▶ PostgreSQL 16
-operator-ui ─┘         │                │
-                       │           (pg_trgm, pgvector,
-                       │            jsonb_path_ops)
-                       │
-                 zod (validation)
+cli-tool ─────┐
+ingestor ─────┤
+harvester ────┤──▶ @lca/db-lib ──▶ PostgreSQL 16
+operator-ui ──┤         │                │
+analytics-ui ─┘         │           (pg_trgm, pgvector,
+                        │            jsonb_path_ops)
+                        │
+                  zod (validation)
 
 nlp-engine (Python) ──▶ PostgreSQL 16 (soc_code, canonical_employer_id writes)
                     └──▶ Redis (results stream: lca:nlp-results)
 
-                       Browser ──▶ operator-ui (Fastify, port 8080)
-                                       │
-                                       ▼
-                                  Postgres write-back
-                                  (clears requires_review,
-                                   resolves quarantine,
-                                   merges unresolved employers)
+  Browser ──▶ operator-ui  (Fastify, port 8080, auth)  ──▶ Postgres write-back
+                                                             (clears requires_review,
+                                                              resolves quarantine,
+                                                              merges unresolved)
+
+  Browser ──▶ analytics-ui (Fastify, port 8081, public) ──▶ analytics.mv_* reads
+                                                             (4 persona pages,
+                                                              12 matviews + 1 view)
 ```
 
 ---
@@ -488,6 +535,10 @@ All commands are run from the **monorepo root** via `pnpm`.
 | `pnpm harvester:dev` | Start the harvester in watch mode — auto-restarts on file changes |
 | `pnpm operator:start` | Start the operator HITL web UI (Fastify, default port 8080). Requires `OPERATOR_PASSWORD` and `SESSION_SECRET` (≥32 chars) in `.env`. |
 | `pnpm operator:dev` | Start the operator UI in watch mode — auto-restarts on file changes |
+| `pnpm analytics:start` | Start the public analytics dashboard (Fastify, default port 8081). No auth. Requires the matviews to be bootstrapped. |
+| `pnpm analytics:dev` | Start the analytics UI in watch mode — auto-restarts on file changes |
+| `pnpm analytics:bootstrap-views` | Build the 12 `analytics.mv_*` materialized views + the `v_overview_kpis` view. One-shot after a re-ingest. Wall time: ~30-45 min on a 3.83M-row corpus. |
+| `pnpm analytics:refresh-views` | Refresh every `analytics.mv_*` materialized view. Run after any pipeline change (ingest / backfill / HITL writes). Wall time: ~5-10 min. |
 | `pnpm consensus:refresh` | Rebuild `employer_soc_consensus` from `lca_records` aggregations. Powers Stage 0 of the classifier. Run post-ingest. |
 | `pnpm aliases:bootstrap` | Mine consensus `(JOB_TITLE, SOC_CODE)` pairs from `lca_records` into `soc_aliases` (self-supervised). Run post-ingest. |
 | `pnpm employers:embed` | Encode every `canonical_employers.canonical_name` lacking an entry in `employer_embeddings` (Layer 3 backfill). Idempotent. |
@@ -529,6 +580,7 @@ Each workspace exposes its own scripts, runnable via `pnpm --filter <name> run <
 | `harvester` | `start`, `dev`, `test`, `lint` |
 | `cli-tool` | `start`, `db:init`, `seed`, `test`, `lint` |
 | `operator-ui` | `start`, `dev`, `lint` |
+| `analytics-ui` | `start`, `dev`, `lint` |
 
 ---
 
@@ -552,3 +604,4 @@ See `.env.example` for the full list. Key variables:
 | `OPERATOR_PASSWORD` | — | Shared password for the operator HITL UI. Required to start `operator-ui`. |
 | `SESSION_SECRET` | — | HMAC key for signing the operator session cookie. **Must be ≥ 32 characters** — generate with `openssl rand -hex 32`. |
 | `OPERATOR_UI_PORT` | `8080` | Host port the operator UI binds to |
+| `ANALYTICS_UI_PORT` | `8081` | Host port the analytics dashboard binds to |

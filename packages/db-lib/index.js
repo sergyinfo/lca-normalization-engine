@@ -199,6 +199,17 @@ export async function ensureSchema(conn = pool) {
       WHERE data->>'EMPLOYER_FEIN' IS NOT NULL;
   `);
 
+  // Partial index for the operator-ui Reviews queue. The Reviews list and
+  // the dashboard count both filter by data->>'requires_review' = 'true'.
+  // Without this index a 3.83M-row seq scan is required even when the
+  // queue is empty — 30s+ per page paint. The partial index covers only
+  // flagged rows (usually << 1% of the corpus), so it stays tiny.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_lca_records_requires_review
+      ON lca_records (filing_year DESC, id ASC)
+      WHERE data->>'requires_review' = 'true';
+  `);
+
   // ---------------------------------------------------------------------------
   // NLP enrichment tables
   // ---------------------------------------------------------------------------
@@ -303,6 +314,16 @@ export async function ensureSchema(conn = pool) {
     );
   `);
 
+  // Partial index supporting both the dashboard count and the Quarantine
+  // list (ORDER BY created_at DESC, id DESC). With only the PK present
+  // both queries seq-scan a 180K+ row table; the partial index drops them
+  // to single-digit ms.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_quarantine_records_open
+      ON staging.quarantine_records (created_at DESC, id DESC)
+      WHERE reprocessed_at IS NULL;
+  `);
+
   // Operator queue for records whose employer couldn't be resolved by any
   // entity-resolution layer. Aggregated by (name, state) with a hits counter
   // so this stays a small review list rather than a per-record log.
@@ -326,5 +347,13 @@ export async function ensureSchema(conn = pool) {
   await conn.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_unresolved_employers_name_state
       ON staging.unresolved_employers (lower(employer_name), COALESCE(employer_state, ''));
+  `);
+
+  // Partial index for the Unresolved queue list (sorted by hits DESC) and
+  // the dashboard count. Without it, every page paint seq-scans the table.
+  await conn.query(`
+    CREATE INDEX IF NOT EXISTS idx_unresolved_employers_open
+      ON staging.unresolved_employers (hits DESC, updated_at DESC)
+      WHERE resolved_at IS NULL;
   `);
 }

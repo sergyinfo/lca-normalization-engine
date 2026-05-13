@@ -14,8 +14,21 @@
   <dt>Current SOC</dt><dd><%= record.data.soc_code || '—' %> <span class="muted"><%= record.data.soc_title || '' %></span></dd>
   <dt>Confidence</dt><dd><%= record.data.soc_confidence != null ? Number(record.data.soc_confidence).toFixed(3) : '—' %></dd>
   <dt>SOC source</dt><dd><%= record.data.soc_source || '—' %></dd>
-  <dt>Review reason</dt><dd><%= record.data.review_reason || '—' %></dd>
+  <dt>Review reason</dt><dd>
+    <% if (record.data.review_reason) { %>
+      <span class="pill pill-warn"><%= record.data.review_reason %></span>
+    <% } else { %>—<% } %>
+  </dd>
 </dl>
+
+<div class="decision-guide">
+  <h3>Which action should I pick?</h3>
+  <ul>
+    <li><strong>Accept</strong> — the SOC above is right. Just clears the review flag and moves on.</li>
+    <li><strong>Override</strong> — the SOC is wrong but you know the right one. Type the new code (and optionally the title) below. Find codes at <a href="https://www.bls.gov/soc/" target="_blank" rel="noopener">bls.gov/soc</a>.</li>
+    <li><strong>Reject to quarantine</strong> — you genuinely cannot tell. The record copies into <code>staging.quarantine_records</code> so another pass (e.g. Stage 3 LLM) can try.</li>
+  </ul>
+</div>
 
 <div class="actions">
   <section class="action-card">
@@ -28,9 +41,10 @@
 
   <section class="action-card">
     <h3>Override SOC</h3>
+    <p class="muted">Sets <code>soc_source='operator'</code>, <code>soc_confidence=1.0</code>.</p>
     <form method="post" action="/reviews/<%= record.filing_year %>/<%= record.id %>/override">
-      <label>SOC code <input name="soc_code" placeholder="15-1252" required /></label>
-      <label>SOC title <input name="soc_title" placeholder="Software Developers" /></label>
+      <label>SOC code or job title <input name="soc_code" list="soc-codes" data-soc-input autocomplete="off" placeholder="type 'software' or '15-1252'" required pattern="^\d{2}-\d{4}$" title="Format: NN-NNNN, e.g. 15-1252" /></label>
+      <label>SOC title <input name="soc_title" placeholder="auto-fills when you pick a SOC" /></label>
       <button type="submit">Override</button>
     </form>
   </section>
@@ -39,11 +53,15 @@
     <h3>Reject to quarantine</h3>
     <p class="muted">Clears SOC fields and inserts a copy into <code>staging.quarantine_records</code>.</p>
     <form method="post" action="/reviews/<%= record.filing_year %>/<%= record.id %>/reject">
-      <label>Reason (optional) <input name="reason" /></label>
+      <label>Reason (optional) <input name="reason" placeholder="why you're rejecting" /></label>
       <button type="submit" class="danger" onclick="return confirm('Reject this record to quarantine?')">Reject</button>
     </form>
   </section>
 </div>
+
+<% if (typeof socList !== 'undefined') { %>
+  <%- include('../partials/soc-datalist', { socList }) %>
+<% } %>
 
 <details class="raw">
   <summary>Full record (JSONB)</summary>

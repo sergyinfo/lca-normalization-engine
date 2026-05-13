@@ -1,7 +1,33 @@
 <%- include('../partials/header', { title: 'Quarantine' }) %>
 
 <h1>Quarantine <span class="muted">(<%= rows.length %>)</span></h1>
-<p class="muted">Records the LLM declined to classify. Assign a SOC manually or drop.</p>
+<p class="muted">Records the automated classifier gave up on.</p>
+
+<%- include('../partials/help', {
+  title: 'manual SOC assignment or drop',
+  open: false,
+  body: `
+    <p>Each row is in <code>staging.quarantine_records</code> with
+    <code>reprocessed_at IS NULL</code>. The <em>Error</em> column tells you
+    why the row landed here:</p>
+    <table>
+      <thead><tr><th>Error type</th><th>What happened</th></tr></thead>
+      <tbody>
+        <tr><td><code>llm_refused</code></td><td>Stage 3 LLM was given candidate SOCs and returned "NONE" or invalid output. Most common for generic titles ("Engineer", "Manager").</td></tr>
+        <tr><td><code>validation_failed</code></td><td>Zod schema rejected the record at ingest — required field missing or malformed.</td></tr>
+        <tr><td><code>operator_rejected_review</code></td><td>An operator rejected this from the Reviews queue.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Click "Inspect →"</strong> to see the full record and decide:</p>
+    <ul>
+      <li>You can guess the SOC from title + employer context → <strong>Assign SOC manually</strong>.</li>
+      <li>Title is too generic / garbage → <strong>Drop</strong>.</li>
+      <li>Not sure → Skip; a later Stage 3 LLM run on GPU may handle it.</li>
+    </ul>
+    <p><em>Heads up:</em> at large queue depths (10K+), walk this queue only for high-value records.
+    The bulk pass should be <code>quarantine:reclassify</code> on GPU.</p>
+  `
+}) %>
 
 <%- include('../partials/flash', { flash: typeof flash !== 'undefined' ? flash : null }) %>
 
@@ -33,7 +59,12 @@
             <%= (r.raw_data && r.raw_data.employer_name) || '—' %>
           </td>
           <td><%= (r.raw_data && r.raw_data.employer_state) || '—' %></td>
-          <td><%= (r.errors && r.errors.type) || '—' %></td>
+          <td>
+            <% var errType = (r.errors && r.errors.type) || null; %>
+            <% if (errType) { %>
+              <span class="pill <%= errType === 'validation_failed' ? 'pill-danger' : 'pill-warn' %>"><%= errType %></span>
+            <% } else { %>—<% } %>
+          </td>
           <td class="muted"><%= new Date(r.created_at).toISOString().slice(0, 10) %></td>
           <td><a href="/quarantine/<%= r.id %>">Inspect →</a></td>
         </tr>

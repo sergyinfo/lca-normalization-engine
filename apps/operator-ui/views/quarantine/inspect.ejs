@@ -16,19 +16,33 @@
   <dt>Employer</dt><dd><%= (record.raw_data && record.raw_data.employer_name) || '—' %></dd>
   <dt>State</dt><dd><%= (record.raw_data && record.raw_data.employer_state) || '—' %></dd>
   <dt>Existing SOC</dt><dd><%= (record.raw_data && record.raw_data.soc_code) || '—' %></dd>
-  <dt>Error type</dt><dd><%= (record.errors && record.errors.type) || '—' %></dd>
+  <dt>Error type</dt><dd>
+    <% var errType = (record.errors && record.errors.type) || null; %>
+    <% if (errType) { %>
+      <span class="pill <%= errType === 'validation_failed' ? 'pill-danger' : 'pill-warn' %>"><%= errType %></span>
+    <% } else { %>—<% } %>
+  </dd>
   <dt>Created</dt><dd class="muted"><%= new Date(record.created_at).toISOString() %></dd>
 </dl>
 
 <% if (!record.reprocessed_at) { %>
+  <div class="decision-guide">
+    <h3>Which action should I pick?</h3>
+    <ul>
+      <li><strong>Assign SOC manually</strong> — you can read the job title and (with the employer context) pick a sensible SOC. The originating <code>lca_records</code> row will be patched in the same transaction (matched by <code>_nlp_id</code>).</li>
+      <li><strong>Drop</strong> — the title is unrecoverable (e.g. <code>"X"</code>, <code>"-"</code>, <code>"Person"</code>). Marks the quarantine row processed without touching <code>lca_records</code>.</li>
+    </ul>
+    <p class="muted small">If you're not sure, skip — Stage 3 LLM-on-GPU is a better bulk option than guessing per-record.</p>
+  </div>
+
   <div class="actions">
     <section class="action-card">
       <h3>Assign SOC manually</h3>
       <p class="muted">Updates the originating <code>lca_records</code> row (matched by <code>_nlp_id</code>) and marks this entry processed.</p>
       <form method="post" action="/quarantine/<%= record.id %>/assign">
-        <label>SOC code <input name="soc_code" placeholder="15-1252" required /></label>
-        <label>SOC title <input name="soc_title" placeholder="Software Developers" /></label>
-        <label>Note <input name="note" /></label>
+        <label>SOC code or job title <input name="soc_code" list="soc-codes" data-soc-input autocomplete="off" placeholder="type 'software' or '15-1252'" required pattern="^\d{2}-\d{4}$" title="Format: NN-NNNN, e.g. 15-1252" /></label>
+        <label>SOC title <input name="soc_title" placeholder="auto-fills when you pick a SOC" /></label>
+        <label>Note <input name="note" placeholder="optional — recorded in errors JSON" /></label>
         <button type="submit" class="primary">Assign</button>
       </form>
     </section>
@@ -37,11 +51,15 @@
       <h3>Drop</h3>
       <p class="muted">Marks the entry as processed without writing back. Use when the record is not recoverable.</p>
       <form method="post" action="/quarantine/<%= record.id %>/drop">
-        <label>Note <input name="note" /></label>
+        <label>Note <input name="note" placeholder="optional — recorded in errors JSON" /></label>
         <button type="submit" class="danger" onclick="return confirm('Drop this quarantine record without assigning a SOC?')">Drop</button>
       </form>
     </section>
   </div>
+<% } %>
+
+<% if (!record.reprocessed_at && typeof socList !== 'undefined') { %>
+  <%- include('../partials/soc-datalist', { socList }) %>
 <% } %>
 
 <details class="raw">

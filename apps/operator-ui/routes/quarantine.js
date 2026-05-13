@@ -3,6 +3,7 @@ import {
   getQuarantineRecord,
   assignQuarantineSoc,
   dropQuarantine,
+  listSocCodes,
 } from '../lib/queries.js';
 
 export default async function quarantineRoutes(app) {
@@ -20,11 +21,18 @@ export default async function quarantineRoutes(app) {
 
   app.get('/quarantine/:id', async (req, reply) => {
     const id = Number(req.params.id);
-    const record = await getQuarantineRecord(id);
+    const [record, socList] = await Promise.all([
+      getQuarantineRecord(id),
+      listSocCodes(),
+    ]);
     if (!record) {
       return reply.code(404).view('error.ejs', { message: 'Quarantine record not found' });
     }
-    return reply.view('quarantine/inspect.ejs', { record, flash: req.query.flash || null });
+    return reply.view('quarantine/inspect.ejs', {
+      record,
+      socList,
+      flash: req.query.flash || null,
+    });
   });
 
   app.post('/quarantine/:id/assign', async (req, reply) => {

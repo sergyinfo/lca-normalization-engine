@@ -238,3 +238,83 @@ details.raw pre {
   overflow-x: auto;
   font-size: 12px;
 }
+
+/* "How this works" banner — shown above each queue list */
+details.help {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 12px 0 16px;
+  font-size: 13px;
+}
+details.help[open] { padding-bottom: 14px; }
+details.help summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #1e40af;
+}
+details.help summary::-webkit-details-marker { color: #1e40af; }
+details.help .help-body { margin-top: 8px; color: #1f2937; }
+details.help .help-body p { margin: 6px 0; }
+details.help .help-body ul { margin: 6px 0 6px 18px; padding: 0; }
+details.help .help-body li { margin: 3px 0; }
+details.help .help-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 12px;
+}
+details.help .help-body th, details.help .help-body td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #dbeafe;
+  text-align: left;
+  vertical-align: top;
+}
+details.help .help-body th { color: #1e40af; font-weight: 600; }
+
+/* Inspect-page decision guide */
+.decision-guide {
+  background: #fefce8;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 12px 0 16px;
+  font-size: 13px;
+}
+.decision-guide h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #854d0e;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.decision-guide ul { margin: 4px 0 0 18px; padding: 0; }
+.decision-guide li { margin: 2px 0; }
+.decision-guide code { background: #fef3c7; }
+
+/* Trigram-score badge on the unresolved inspect candidate table */
+.score-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.score-strong { background: #dcfce7; color: #166534; }
+.score-medium { background: #fef3c7; color: #92400e; }
+.score-weak   { background: #fee2e2; color: #991b1b; }
+
+/* Inline pill for short labels (review reasons, error types) */
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #e5e7eb;
+  color: #374151;
+}
+.pill-warn { background: #fef3c7; color: #92400e; }
+.pill-danger { background: #fee2e2; color: #991b1b; }

@@ -15,14 +15,26 @@
   <dt>State</dt><dd><%= record.employer_state || '—' %></dd>
   <dt>FEIN</dt><dd><%= record.employer_fein || '—' %></dd>
   <dt>City</dt><dd><%= record.employer_city || '—' %></dd>
-  <dt>Hits</dt><dd><%= record.hits %></dd>
+  <dt>Hits</dt><dd><strong><%= record.hits %></strong> <span class="muted small">lca_records share this name+state</span></dd>
   <dt>First seen (year)</dt><dd><%= record.first_filing_year || '—' %></dd>
 </dl>
 
 <% if (!record.resolved_at) { %>
+
+  <div class="decision-guide">
+    <h3>Reading the candidate table — trigram score guide</h3>
+    <ul>
+      <li><span class="score-badge score-strong">≥ 0.60</span> Very likely the same entity. Names usually differ by a word or punctuation. <strong>Merge</strong> unless FEINs disagree.</li>
+      <li><span class="score-badge score-medium">0.40 – 0.60</span> Plausibly the same entity, often legal-entity variants (<code>"Inc"</code> vs <code>"LLC"</code>). FEIN match wins; otherwise inspect carefully.</li>
+      <li><span class="score-badge score-weak">&lt; 0.40</span> Probably different entities. Prefer <strong>Create new canonical</strong>.</li>
+    </ul>
+    <p class="muted small">FEIN tiebreaker: if both the unresolved entry and a candidate have a FEIN, FEIN equality is authoritative — merge even if names differ.<br>
+    Different FEINs with identical names = legally distinct employers (e.g. Amazon WA HQ vs Amazon AWS Virginia). <strong>Do not merge.</strong></p>
+  </div>
+
   <h2>Similar canonical employers <span class="muted">(<%= candidates.length %>)</span></h2>
   <% if (candidates.length === 0) { %>
-    <p class="empty">No close matches found via trigram similarity.</p>
+    <p class="empty">No close matches found via trigram similarity. Use <strong>Create new canonical</strong> below.</p>
   <% } else { %>
     <table class="data">
       <thead>
@@ -31,23 +43,31 @@
           <th>Canonical name</th>
           <th>State</th>
           <th>FEIN</th>
-          <th>Records</th>
+          <th class="num">Records</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         <% candidates.forEach((c) => { %>
+          <%
+            var score = Number(c.score);
+            var scoreClass = score >= 0.60 ? 'score-strong' : (score >= 0.40 ? 'score-medium' : 'score-weak');
+            var feinMatch = record.employer_fein && c.fein && record.employer_fein === c.fein;
+          %>
           <tr>
-            <td><%= Number(c.score).toFixed(3) %></td>
+            <td><span class="score-badge <%= scoreClass %>"><%= score.toFixed(3) %></span></td>
             <td><%= c.canonical_name %></td>
             <td><%= c.employer_state || '—' %></td>
-            <td><%= c.fein || '—' %></td>
-            <td><%= c.record_count %></td>
+            <td>
+              <%= c.fein || '—' %>
+              <% if (feinMatch) { %><span class="pill" style="background:#dcfce7;color:#166534;">FEIN match</span><% } %>
+            </td>
+            <td class="num"><%= c.record_count %></td>
             <td>
               <form method="post" action="/unresolved/<%= record.id %>/merge" style="display:inline">
                 <input type="hidden" name="canonical_id" value="<%= c.id %>" />
                 <button type="submit" class="primary"
-                  onclick="return confirm('Merge into <%= c.canonical_name.replace(/'/g, '&#39;') %>? This will backfill canonical_employer_id on all matching lca_records.')">
+                  onclick="return confirm('Merge \'<%= record.employer_name.replace(/'/g, '&#39;') %>\' into \'<%= c.canonical_name.replace(/'/g, '&#39;') %>\'? This backfills canonical_employer_id on <%= record.hits %> lca_records rows.')">
                   Merge here
                 </button>
               </form>
@@ -61,7 +81,7 @@
   <div class="actions">
     <section class="action-card">
       <h3>Create new canonical</h3>
-      <p class="muted">No existing canonical fits. Create a new <code>canonical_employers</code> row, then backfill matching lca_records.</p>
+      <p class="muted">No existing canonical fits. Creates a new <code>canonical_employers</code> row, then backfills matching <code>lca_records</code> in the same transaction.</p>
       <form method="post" action="/unresolved/<%= record.id %>/create">
         <label>Canonical name <input name="canonical_name" value="<%= record.employer_name %>" required /></label>
         <button type="submit" class="primary">Create &amp; merge</button>
@@ -70,9 +90,9 @@
 
     <section class="action-card danger">
       <h3>Reject</h3>
-      <p class="muted">Marks the row resolved with no canonical link. Use for junk / unparseable names.</p>
+      <p class="muted">Marks the row resolved with no canonical link. Use for junk / unparseable names. No <code>lca_records</code> backfill.</p>
       <form method="post" action="/unresolved/<%= record.id %>/reject">
-        <button type="submit" class="danger" onclick="return confirm('Reject this entry?')">Reject</button>
+        <button type="submit" class="danger" onclick="return confirm('Reject this entry? lca_records rows will keep canonical_employer_id = NULL.')">Reject</button>
       </form>
     </section>
   </div>
