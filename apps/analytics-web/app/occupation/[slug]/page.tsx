@@ -1,12 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ArrowLeft, Briefcase } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import {
   getOccupationBySlug, getOccupationLevels, getOccupationTopStates,
   getOccupationTopEmployers, getOccupationYearly, getEntitySummary,
-  listAllOccupationSlugs,
+  listAllOccupationSlugs, listTopOccupations,
 } from '@/lib/queries';
 import { fmt, fmtUsd } from '@/lib/format';
 import { entityMetadata, occupationJsonLd } from '@/lib/seo';
@@ -17,13 +17,14 @@ import { EntityHero } from '@/components/EntityHero';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
+import { ComparePicker, type PeerOption } from '@/components/ComparePicker';
+import { SeeAlsoLinks } from '@/components/SeeAlsoLinks';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
 import { LevelLadderClient } from '@/components/charts/LevelLadderClient';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
@@ -284,29 +285,21 @@ export default async function OccupationPage(
 
       <Article article={article} />
 
-      <Card className="mt-8 bg-secondary/30 border-primary/20">
-        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="size-9 rounded-md bg-background flex items-center justify-center text-primary">
-              <Briefcase className="size-4" />
-            </div>
-            <div>
-              <div className="font-semibold">More occupation context</div>
-              <div className="text-sm text-muted-foreground">
-                Compare across all SOCs and find what pays best.
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/top-h1b-occupations">Top occupations</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link href="/highest-paying-h1b-jobs">Highest-paying</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="mt-8 space-y-4">
+        <ComparePicker
+          kind="occupation"
+          selfSlug={slug}
+          selfLabel={o.soc_title ?? o.soc_code}
+          peers={listTopOccupations(30)
+            .filter((p) => p.slug !== slug)
+            .map<PeerOption>((p) => ({
+              slug: p.slug,
+              label: p.soc_title ?? p.soc_code,
+              hint: p.soc_code,
+            }))}
+        />
+        <SeeAlsoLinks kind="occupation" />
+      </div>
 
       <script
         type="application/ld+json"

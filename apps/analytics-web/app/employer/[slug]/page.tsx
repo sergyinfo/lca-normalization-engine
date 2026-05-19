@@ -1,11 +1,11 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ArrowLeft, MapPin } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import {
   getEmployer, getEmployerTopSocs, getEmployerYearly,
-  getEntitySummary, listAllEmployerSlugs,
+  getEntitySummary, listAllEmployerSlugs, listTopEmployers,
 } from '@/lib/queries';
 import { fmt, fmtPct, fmtFy } from '@/lib/format';
 import { entityMetadata, organizationJsonLd } from '@/lib/seo';
@@ -16,13 +16,14 @@ import { EntityHero } from '@/components/EntityHero';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
+import { ComparePicker, type PeerOption } from '@/components/ComparePicker';
+import { SeeAlsoLinks } from '@/components/SeeAlsoLinks';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 import { StackedBarSvg } from '@/components/charts/StackedBarSvg';
@@ -234,31 +235,22 @@ export default async function EmployerPage(
 
       <Article article={article} />
 
-      {/* Secondary "explore more" rail at the bottom */}
-      <Card className="mt-8 bg-secondary/30 border-primary/20">
-        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="size-9 rounded-md bg-background flex items-center justify-center text-primary">
-              <MapPin className="size-4" />
-            </div>
-            <div>
-              <div className="font-semibold">Explore the program more broadly</div>
-              <div className="text-sm text-muted-foreground">
-                Compare {e.canonical_name} against ranked leaderboards and
-                state-level views.
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/top-h1b-sponsors">Top 100 sponsors</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link href="/cleanest-h1b-sponsors">Cleanest sponsors</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Real compare CTA — pick a peer, see side-by-side. */}
+      <div className="mt-8 space-y-4">
+        <ComparePicker
+          kind="employer"
+          selfSlug={slug}
+          selfLabel={e.canonical_name}
+          peers={listTopEmployers(50)
+            .filter((p) => p.slug !== slug)
+            .map<PeerOption>((p) => ({
+              slug: p.slug,
+              label: p.canonical_name,
+              hint: p.employer_state ?? undefined,
+            }))}
+        />
+        <SeeAlsoLinks kind="employer" />
+      </div>
 
       <script
         type="application/ld+json"

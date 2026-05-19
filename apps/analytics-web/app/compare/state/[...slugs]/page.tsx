@@ -1,0 +1,286 @@
+import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import type { Metadata } from 'next';
+import { ArrowLeft, GitCompare, ArrowRight } from 'lucide-react';
+
+import {
+  getStateBySlug, getStateTopEmployers, getStateTopOccupations, getStateYearly,
+  listTopStates, getSiteKpis,
+} from '@/lib/queries';
+import { CompareSwapper } from '@/components/CompareSwapper';
+import type { PeerOption } from '@/components/ComparePicker';
+import { fmt, fmtPct } from '@/lib/format';
+import { entityMetadata } from '@/lib/seo';
+import { SITE_NAME } from '@/lib/site';
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { LineChartClient } from '@/components/charts/LineChartClient';
+
+export const dynamicParams = true;
+
+export function generateStaticParams() {
+  const top = listTopStates(10);
+  const out: Array<{ slugs: string[] }> = [];
+  for (const a of top) for (const b of top) {
+    if (a.slug !== b.slug) out.push({ slugs: [a.slug, b.slug] });
+  }
+  return out;
+}
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ slugs: string[] }> },
+): Promise<Metadata> {
+  const { slugs } = await params;
+  const [aSlug, bSlug] = slugs;
+  if (!aSlug || !bSlug) return { title: 'Compare states' };
+  const a = getStateBySlug(aSlug);
+  const b = getStateBySlug(bSlug);
+  if (!a || !b) return { title: 'Not found' };
+  return entityMetadata({
+    title: `${a.name} vs ${b.name} — H-1B State Comparison`,
+    description: `Side-by-side H-1B sponsorship comparison for ${a.name} (${fmt(a.filings)} filings) and ${b.name} (${fmt(b.filings)} filings). Top sponsors, top occupations, yearly trend.`,
+    path: `/compare/state/${aSlug}/${bSlug}`,
+  });
+}
+
+export default async function CompareStatesPage(
+  { params }: { params: Promise<{ slugs: string[] }> },
+) {
+  const { slugs } = await params;
+  if (slugs.length !== 2) notFound();
+  const [aSlug, bSlug] = slugs as [string, string];
+  const a = getStateBySlug(aSlug);
+  const b = getStateBySlug(bSlug);
+  if (!a || !b) notFound();
+
+  const aEmps   = getStateTopEmployers(a.code).slice(0, 5);
+  const bEmps   = getStateTopEmployers(b.code).slice(0, 5);
+  const aSocs   = getStateTopOccupations(a.code).slice(0, 5);
+  const bSocs   = getStateTopOccupations(b.code).slice(0, 5);
+  const aYearly = getStateYearly(a.code);
+  const bYearly = getStateYearly(b.code);
+  const kpis    = getSiteKpis();
+  const aShare  = kpis.total_records > 0 ? (a.filings / kpis.total_records) * 100 : 0;
+  const bShare  = kpis.total_records > 0 ? (b.filings / kpis.total_records) * 100 : 0;
+
+  const entities = [a, b];
+
+  return (
+    <>
+      <nav aria-label="Breadcrumb" className="pb-2">
+        <Link href={`/state/${aSlug}`}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="size-3.5" /> Back to {a.name}
+        </Link>
+      </nav>
+
+      <section className="space-y-4 pb-6">
+        <Badge variant="secondary" className="rounded-full gap-1.5">
+          <GitCompare className="size-3" /> State comparison
+        </Badge>
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight max-w-4xl">
+          {a.name} <span className="text-muted-foreground">vs</span> {b.name}
+        </h1>
+        <p className="text-muted-foreground max-w-3xl">
+          H-1B filing geography compared side-by-side. Volume, national
+          share, top sponsoring employers and most-filed occupations. Built
+          from the same DOL LCA data that drives every page on {SITE_NAME}.
+        </p>
+      </section>
+
+      <div className="grid md:grid-cols-2 gap-4 pb-6">
+        {entities.map((e, i) => (
+          <Card key={e.slug} className={i === 0 ? 'border-primary/30' : 'border-violet-300/40'}>
+            <CardContent className="p-5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                {i === 0 ? 'State A' : 'State B'}
+              </div>
+              <Link href={`/state/${e.slug}`} className="text-lg font-bold tracking-tight hover:text-primary">
+                {e.name}
+              </Link>
+              <div className="flex flex-wrap gap-2 mt-3 text-xs">
+                <Badge variant="outline">{e.code}</Badge>
+                <Badge variant="secondary">Rank #{e.rank}</Badge>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Key metrics</CardTitle>
+          <CardDescription>National share is each state&rsquo;s portion of total US H-1B filings.</CardDescription>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          <table className="w-full text-sm">
+            <thead className="border-t border-b bg-muted/30">
+              <tr>
+                <th className="text-left p-3 font-medium text-muted-foreground w-1/3">Metric</th>
+                <th className="text-right p-3 font-medium">{a.name}</th>
+                <th className="text-right p-3 font-medium">{b.name}</th>
+              </tr>
+            </thead>
+            <tbody className="[&_tr]:border-b last:[&_tr]:border-b-0">
+              <Row label="Total filings" a={fmt(a.filings)} b={fmt(b.filings)}
+                   winner={a.filings > b.filings ? 'a' : a.filings < b.filings ? 'b' : null} />
+              <Row label="National share %" a={`${aShare.toFixed(2)}%`} b={`${bShare.toFixed(2)}%`}
+                   winner={aShare > bShare ? 'a' : bShare > aShare ? 'b' : null} />
+              <Row label="Rank nationally" a={`#${a.rank}`} b={`#${b.rank}`}
+                   winner={a.rank < b.rank ? 'a' : a.rank > b.rank ? 'b' : null} />
+              <Row label="Top sponsor"
+                   a={aEmps[0]?.canonical_name ?? '—'}
+                   b={bEmps[0]?.canonical_name ?? '—'} winner={null} />
+              <Row label="Top sponsor share"
+                   a={fmtPct(aEmps[0]?.share_pct, 1)}
+                   b={fmtPct(bEmps[0]?.share_pct, 1)} winner={null} />
+              <Row label="Top occupation"
+                   a={aSocs[0]?.soc_title ?? '—'}
+                   b={bSocs[0]?.soc_title ?? '—'} winner={null} />
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {(aYearly.length > 0 || bYearly.length > 0) ? (
+        <Card className="mb-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Filings by fiscal year</CardTitle>
+            <CardDescription>Year-over-year H-1B demand in each state.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <YearlyOverlay
+              a={{ name: a.name, points: aYearly }}
+              b={{ name: b.name, points: bYearly }}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
+        {[{ ent: a, emps: aEmps }, { ent: b, emps: bEmps }].map(({ ent, emps }) => (
+          <Card key={ent.slug}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base truncate">Top 5 sponsors — {ent.name}</CardTitle>
+            </CardHeader>
+            <CardContent className="px-0 pb-0">
+              {emps.length > 0 ? (
+                <ul className="divide-y">
+                  {emps.map((e, i) => (
+                    <li key={e.employer_slug} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                      <span className="text-muted-foreground tabular-nums w-5">{i + 1}</span>
+                      <span className="flex-1 truncate">
+                        <Link href={`/employer/${e.employer_slug}`} className="hover:text-primary font-medium">{e.canonical_name}</Link>
+                      </span>
+                      <span className="tabular-nums text-muted-foreground">{fmt(e.filings)}</span>
+                      <span className="tabular-nums font-medium w-12 text-right">{fmtPct(e.share_pct, 1)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-sm text-muted-foreground px-5 pb-5">No sponsor breakdown.</p>}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4 mb-6">
+        {[{ ent: a, socs: aSocs }, { ent: b, socs: bSocs }].map(({ ent, socs }) => (
+          <Card key={ent.slug}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base truncate">Top 5 occupations — {ent.name}</CardTitle>
+            </CardHeader>
+            <CardContent className="px-0 pb-0">
+              {socs.length > 0 ? (
+                <ul className="divide-y">
+                  {socs.map((o, i) => (
+                    <li key={o.soc_code} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                      <span className="text-muted-foreground tabular-nums w-5">{i + 1}</span>
+                      <span className="font-mono text-xs text-muted-foreground w-16">{o.soc_code}</span>
+                      <span className="flex-1 truncate">
+                        {o.soc_slug ? (
+                          <Link href={`/occupation/${o.soc_slug}`} className="hover:text-primary">{o.soc_title ?? '—'}</Link>
+                        ) : (o.soc_title ?? '—')}
+                      </span>
+                      <span className="tabular-nums font-medium">{fmt(o.filings)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-sm text-muted-foreground px-5 pb-5">No occupation breakdown.</p>}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <CompareSwapper
+        kind="state"
+        current={{
+          left:  { slug: aSlug, label: a.name },
+          right: { slug: bSlug, label: b.name },
+        }}
+        peers={listTopStates(30)
+          .filter((p) => p.slug !== aSlug && p.slug !== bSlug)
+          .map<PeerOption>((p) => ({
+            slug: p.slug,
+            label: p.name,
+            hint: p.code,
+          }))}
+      />
+
+      <Card className="mt-4 bg-muted/20">
+        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="text-sm text-muted-foreground">Or browse the full state index.</div>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm"><Link href={`/state/${aSlug}`}>{a.name}</Link></Button>
+            <Button asChild variant="outline" size="sm"><Link href={`/state/${bSlug}`}>{b.name}</Link></Button>
+            <Button asChild size="sm"><Link href="/state">Browse all <ArrowRight className="size-3" /></Link></Button>
+          </div>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function Row({ label, a, b, winner }: { label: string; a: string; b: string; winner: 'a' | 'b' | null }) {
+  return (
+    <tr>
+      <td className="p-3 text-muted-foreground">{label}</td>
+      <td className={`p-3 text-right tabular-nums ${winner === 'a' ? 'font-bold text-primary' : ''}`}>
+        {a}{winner === 'a' ? <span className="ml-1.5 text-[10px] text-primary">▲</span> : null}
+      </td>
+      <td className={`p-3 text-right tabular-nums ${winner === 'b' ? 'font-bold text-primary' : ''}`}>
+        {b}{winner === 'b' ? <span className="ml-1.5 text-[10px] text-primary">▲</span> : null}
+      </td>
+    </tr>
+  );
+}
+
+function YearlyOverlay({
+  a, b,
+}: {
+  a: { name: string; points: Array<{ year: number; filings: number }> };
+  b: { name: string; points: Array<{ year: number; filings: number }> };
+}) {
+  const years = Array.from(new Set([...a.points.map((p) => p.year), ...b.points.map((p) => p.year)])).sort();
+  const aIdx = new Map(a.points.map((p) => [p.year, p.filings]));
+  const bIdx = new Map(b.points.map((p) => [p.year, p.filings]));
+  return (
+    <div className="grid md:grid-cols-2 gap-6">
+      <div>
+        <div className="flex items-center gap-2 text-sm mb-2">
+          <span className="inline-block size-2.5 rounded-sm" style={{ background: 'hsl(217 91% 55%)' }} />
+          <span className="truncate font-medium">{a.name}</span>
+        </div>
+        <LineChartClient data={years.map((y) => ({ label: `FY${y}`, value: aIdx.get(y) ?? 0 }))} color="hsl(217 91% 55%)" height={200} />
+      </div>
+      <div>
+        <div className="flex items-center gap-2 text-sm mb-2">
+          <span className="inline-block size-2.5 rounded-sm" style={{ background: 'hsl(262 83% 62%)' }} />
+          <span className="truncate font-medium">{b.name}</span>
+        </div>
+        <LineChartClient data={years.map((y) => ({ label: `FY${y}`, value: bIdx.get(y) ?? 0 }))} color="hsl(262 83% 62%)" height={200} />
+      </div>
+    </div>
+  );
+}

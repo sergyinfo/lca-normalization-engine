@@ -1,12 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ArrowLeft, Factory } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import {
   getSectorBySlug, getEntitySummary, listAllSectorSlugs,
   getSectorTopEmployers, getSectorTopOccupations,
-  getSectorTopStates, getSectorYearly,
+  getSectorTopStates, getSectorYearly, listTopSectors,
 } from '@/lib/queries';
 import { fmt } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
@@ -17,13 +17,14 @@ import { EntityHero } from '@/components/EntityHero';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
+import { ComparePicker, type PeerOption } from '@/components/ComparePicker';
+import { SeeAlsoLinks } from '@/components/SeeAlsoLinks';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 
@@ -288,29 +289,21 @@ export default async function SectorPage(
 
       <Article article={article} />
 
-      <Card className="mt-8 bg-secondary/30 border-primary/20">
-        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="size-9 rounded-md bg-background flex items-center justify-center text-primary">
-              <Factory className="size-4" />
-            </div>
-            <div>
-              <div className="font-semibold">Compare across industries</div>
-              <div className="text-sm text-muted-foreground">
-                Where this sector sits in the broader US H-1B landscape.
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/sector">All sectors</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link href="/h1b-by-industry">Industry ranking</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="mt-8 space-y-4">
+        <ComparePicker
+          kind="sector"
+          selfSlug={slug}
+          selfLabel={s.label}
+          peers={listTopSectors(30)
+            .filter((p) => p.slug !== slug)
+            .map<PeerOption>((p) => ({
+              slug: p.slug,
+              label: p.label,
+              hint: `NAICS ${p.naics2}`,
+            }))}
+        />
+        <SeeAlsoLinks kind="sector" />
+      </div>
     </>
   );
 }

@@ -1,11 +1,11 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { ArrowLeft, MapPin } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import {
   getStateBySlug, getStateTopEmployers, getStateTopOccupations, getStateYearly,
-  getEntitySummary, listAllStateSlugs, getSiteKpis,
+  getEntitySummary, listAllStateSlugs, getSiteKpis, listTopStates,
 } from '@/lib/queries';
 import { fmt, fmtPct } from '@/lib/format';
 import { entityMetadata, placeJsonLd } from '@/lib/seo';
@@ -16,13 +16,14 @@ import { EntityHero } from '@/components/EntityHero';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
+import { ComparePicker, type PeerOption } from '@/components/ComparePicker';
+import { SeeAlsoLinks } from '@/components/SeeAlsoLinks';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 
@@ -251,29 +252,21 @@ export default async function StatePage(
 
       <Article article={article} />
 
-      <Card className="mt-8 bg-secondary/30 border-primary/20">
-        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="size-9 rounded-md bg-background flex items-center justify-center text-primary">
-              <MapPin className="size-4" />
-            </div>
-            <div>
-              <div className="font-semibold">See {s.name} in context</div>
-              <div className="text-sm text-muted-foreground">
-                Compare states across the program.
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/state">All states</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link href="/top-h1b-states">Top states ranked</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="mt-8 space-y-4">
+        <ComparePicker
+          kind="state"
+          selfSlug={slug}
+          selfLabel={s.name}
+          peers={listTopStates(30)
+            .filter((p) => p.slug !== slug)
+            .map<PeerOption>((p) => ({
+              slug: p.slug,
+              label: p.name,
+              hint: p.code,
+            }))}
+        />
+        <SeeAlsoLinks kind="state" />
+      </div>
 
       <script
         type="application/ld+json"
