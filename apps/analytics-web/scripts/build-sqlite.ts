@@ -91,8 +91,44 @@ async function main() {
     LIMIT  $1
   `, [TOP_EMPLOYERS]);
 
+  // Disambiguate canonical_name collisions across the top-N sponsor set.
+  // Different legal entities can share a trade name with different FEINs
+  // (e.g. two "AMAZON.COM SERVICES LLC" rows — one WA HQ, one VA subsidiary).
+  // Append a disambiguator to the *displayed* name when ≥2 rows collide:
+  //   1st choice: state (when state is non-null AND unique within the group)
+  //   2nd choice: FEIN last-4
+  //   3rd choice: short canonical_id prefix
+  // Slugs and FEINs stay untouched; only the displayed string changes.
+  const idToDisplay = new Map<string, string>();
+  {
+    const byName = new Map<string, typeof empRows>();
+    for (const r of empRows) {
+      const arr = byName.get(r.canonical_name) ?? [];
+      arr.push(r); byName.set(r.canonical_name, arr);
+    }
+    for (const [name, rows] of byName) {
+      if (rows.length === 1) {
+        idToDisplay.set(rows[0]!.id, name);
+        continue;
+      }
+      const states = rows.map((r) => r.employer_state ?? '');
+      const statesUnique = new Set(states).size === rows.length && !states.includes('');
+      for (const r of rows) {
+        if (statesUnique && r.employer_state) {
+          idToDisplay.set(r.id, `${name} (${r.employer_state})`);
+        } else if (r.fein) {
+          const digits = r.fein.replace(/\D/g, '');
+          idToDisplay.set(r.id, `${name} (FEIN…${digits.slice(-4)})`);
+        } else {
+          idToDisplay.set(r.id, `${name} (#${r.id.slice(0, 6)})`);
+        }
+      }
+    }
+  }
+
   const slugsSeen = new Map<string, number>();
   const canonicalToSlug = new Map<string, string>();
+  const canonicalToDisplay = new Map<string, string>();
   const insertEmp = db.prepare(`INSERT INTO employer
     (slug, canonical_id, canonical_name, employer_state, fein, filings,
      certified_pct, withdrawn_pct, cert_withdrawn_pct, denied_pct,
@@ -104,8 +140,10 @@ async function main() {
     slugsSeen.set(slug, n);
     if (n > 1) slug = `${slug}-${n}`;
     canonicalToSlug.set(r.id, slug);
+    const displayName = idToDisplay.get(r.id) ?? r.canonical_name;
+    canonicalToDisplay.set(r.id, displayName);
     insertEmp.run(
-      slug, r.id, r.canonical_name, r.employer_state, r.fein,
+      slug, r.id, displayName, r.employer_state, r.fein,
       Number(r.filings),
       toNumOrNull(r.certified_pct), toNumOrNull(r.withdrawn_pct),
       toNumOrNull(r.cert_withdrawn_pct), toNumOrNull(r.denied_pct),
@@ -239,7 +277,8 @@ async function main() {
     for (const r of occEmps) {
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
-      insOccEmp.run(r.soc_code, slug, r.canonical_name, Number(r.filings), Number(r.rk));
+      const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
+      insOccEmp.run(r.soc_code, slug, name, Number(r.filings), Number(r.rk));
     }
     console.log(`[build-sqlite]   occupation_top_employer: ${occEmps.length} rows`);
 
@@ -289,7 +328,8 @@ async function main() {
     for (const r of stEmps) {
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
-      insStEmp.run(r.state, slug, r.canonical_name, Number(r.filings),
+      const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
+      insStEmp.run(r.state, slug, name, Number(r.filings),
         r.share_pct ?? null, Number(r.rk));
     }
     console.log(`[build-sqlite]   state_top_employer: ${stEmps.length} rows`);
@@ -382,7 +422,8 @@ async function main() {
       if (!r.canonical_name) continue;
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
-      insSecEmp.run(r.sector, slug, r.canonical_name, Number(r.filings), Number(r.rk));
+      const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
+      insSecEmp.run(r.sector, slug, name, Number(r.filings), Number(r.rk));
     }
     console.log(`[build-sqlite]   sector_top_employer: ${secEmps.length} rows`);
 
