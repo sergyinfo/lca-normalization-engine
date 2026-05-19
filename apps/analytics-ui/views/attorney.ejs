@@ -1,0 +1,115 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Immigration Attorney</h1>
+  <p>The advisory angle: which sponsors have clean track records and which drift toward withdrawal / denial? Sort and filter by outcome rate to triage client questions.</p>
+  <ul class="questions">
+    <li>How are case outcomes trending year over year?</li>
+    <li>Which sponsors have the highest denial / withdrawal rates (≥50 filings)?</li>
+    <li>Which high-volume sponsors have the cleanest certification record?</li>
+    <li>What does the overall outcome mix look like across the corpus?</li>
+  </ul>
+</section>
+
+<form class="filters" method="get" action="/attorney">
+  <label>Sort sponsor leaderboard by
+    <select name="sort">
+      <option value="denied"         <%= sort === 'denied'         ? 'selected' : '' %>>Denial rate</option>
+      <option value="withdrawn"      <%= sort === 'withdrawn'      ? 'selected' : '' %>>Withdrawal rate</option>
+      <option value="cert_withdrawn" <%= sort === 'cert_withdrawn' ? 'selected' : '' %>>Cert-withdrawn rate</option>
+    </select>
+  </label>
+  <button type="submit">Update</button>
+</form>
+
+<div class="panel-grid">
+  <%- include('partials/panel', {
+    title: 'Case outcomes by year',
+    subtitle: 'Stacked filings — Certified / Cert-Withdrawn / Withdrawn / Denied. Trends visible at a glance.',
+    tag: 'trend',
+    chartId: 'chartOutcomes',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Overall outcome mix',
+    subtitle: 'Total disposition across FY' + new Date().getFullYear() + ' and prior years.',
+    tag: 'outcomes',
+    chartId: 'chartOverall',
+    body: null,
+  }) %>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Sponsor risk leaderboard — sorted by <%= sort.replace('_',' ') %></h2><span class="tag">risk</span></header>
+  <p class="panel-sub muted small">Canonical employers with ≥50 filings. Read this as a flag, not a verdict — high withdrawal rates often mean withdrawn-by-employer (project change, candidate left), not USCIS rejection.</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th>State</th><th class="num">Filings</th><th class="num">Cert %</th><th class="num">Cert-WD %</th><th class="num">WD %</th><th class="num">Denied %</th></tr></thead>
+    <tbody>
+    <% risky.forEach((r, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= r.canonical_name %></td>
+        <td><%= r.employer_state || '—' %></td>
+        <td class="num"><%= Number(r.filings).toLocaleString() %></td>
+        <td class="num"><%= r.certified_pct ?? '—' %></td>
+        <td class="num"><%= r.cert_withdrawn_pct ?? '—' %></td>
+        <td class="num"><%= r.withdrawn_pct ?? '—' %></td>
+        <td class="num"><strong><%= r.denied_pct ?? '—' %></strong></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Cleanest high-volume sponsors</h2><span class="tag">clean</span></header>
+  <p class="panel-sub muted small">Employers with ≥200 filings and the highest certification percentage. A baseline for "what good looks like".</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th>State</th><th class="num">Filings</th><th class="num">Cert %</th><th class="num">WD %</th><th class="num">Denied %</th></tr></thead>
+    <tbody>
+    <% clean.forEach((c, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= c.canonical_name %></td>
+        <td><%= c.employer_state || '—' %></td>
+        <td class="num"><%= Number(c.filings).toLocaleString() %></td>
+        <td class="num"><strong><%= c.certified_pct %></strong></td>
+        <td class="num"><%= c.withdrawn_pct ?? '—' %></td>
+        <td class="num"><%= c.denied_pct ?? '—' %></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const trendRaw = <%- JSON.stringify(trend) %>;
+const trendYears  = [...new Set(trendRaw.map(r => r.year))].sort();
+const trendStati  = [...new Set(trendRaw.map(r => r.status))];
+const trendIndex  = Object.fromEntries(trendRaw.map(r => [`${r.year}__${r.status}`, Number(r.filings)]));
+const statusPalette = { 'Certified':'#10b981','Certified - Withdrawn':'#f59e0b','Withdrawn':'#0ea5e9','Denied':'#ef4444','(unknown)':'#94a3b8' };
+const trendDatasets = trendStati.map(st => ({
+  label: st,
+  data: trendYears.map(y => trendIndex[`${y}__${st}`] || 0),
+  backgroundColor: statusPalette[st] || '#a855f7',
+  stack: 'outcomes',
+}));
+
+new Chart(document.getElementById('chartOutcomes'), {
+  type: 'bar',
+  data: { labels: trendYears.map(y => 'FY' + y), datasets: trendDatasets },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } },
+});
+
+const overallLabels = <%- JSON.stringify(overall.map(o => o.status)) %>;
+const overallValues = <%- JSON.stringify(overall.map(o => Number(o.filings))) %>;
+const overallColors = overallLabels.map(s => statusPalette[s] || '#a855f7');
+new Chart(document.getElementById('chartOverall'), {
+  type: 'doughnut',
+  data: { labels: overallLabels, datasets: [{ data: overallValues, backgroundColor: overallColors }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } },
+});
+</script>
+
+<%- include('partials/footer') %>

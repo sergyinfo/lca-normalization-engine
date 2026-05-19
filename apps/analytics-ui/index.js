@@ -28,6 +28,12 @@ import journalistRoutes from './routes/journalist.js';
 import jobseekerRoutes from './routes/jobseeker.js';
 import policyRoutes from './routes/policy.js';
 import academicRoutes from './routes/academic.js';
+import attorneyRoutes from './routes/attorney.js';
+import hrRoutes from './routes/hr.js';
+import economistRoutes from './routes/economist.js';
+import investorRoutes from './routes/investor.js';
+import workerRightsRoutes from './routes/worker-rights.js';
+import studentRoutes from './routes/student.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,6 +61,12 @@ await app.register(journalistRoutes);
 await app.register(jobseekerRoutes);
 await app.register(policyRoutes);
 await app.register(academicRoutes);
+await app.register(attorneyRoutes);
+await app.register(hrRoutes);
+await app.register(economistRoutes);
+await app.register(investorRoutes);
+await app.register(workerRightsRoutes);
+await app.register(studentRoutes);
 
 async function shutdown(signal) {
   app.log.info({ signal }, 'analytics_ui.shutdown');

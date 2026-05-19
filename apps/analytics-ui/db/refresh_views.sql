@@ -18,6 +18,18 @@ REFRESH MATERIALIZED VIEW analytics.mv_confidence_distribution;
 REFRESH MATERIALIZED VIEW analytics.mv_top_employers_by_soc;
 REFRESH MATERIALIZED VIEW analytics.mv_coverage;
 
+-- Extended-personas matviews (added 2026-05-13)
+REFRESH MATERIALIZED VIEW analytics.mv_case_status_by_year;
+REFRESH MATERIALIZED VIEW analytics.mv_employer_outcomes;
+REFRESH MATERIALIZED VIEW analytics.mv_naics_sector_summary;
+REFRESH MATERIALIZED VIEW analytics.mv_naics_sector_by_year;
+REFRESH MATERIALIZED VIEW analytics.mv_employer_growth_by_year;
+REFRESH MATERIALIZED VIEW analytics.mv_wage_by_soc_level;
+REFRESH MATERIALIZED VIEW analytics.mv_wage_by_soc_state;
+REFRESH MATERIALIZED VIEW analytics.mv_wage_premium_by_soc;
+REFRESH MATERIALIZED VIEW analytics.mv_state_concentration;
+REFRESH MATERIALIZED VIEW analytics.mv_soc_share_by_year;
+
 SELECT relname,
        pg_size_pretty(pg_relation_size(oid)) AS size,
        (SELECT reltuples::bigint FROM pg_class c2 WHERE c2.oid = c.oid) AS approx_rows

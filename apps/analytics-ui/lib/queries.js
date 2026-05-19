@@ -355,3 +355,331 @@ export async function topCanonicalsByVolume({ limit = 10 } = {}) {
   );
   return rows;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Persona 5 — Immigration Attorney                                           */
+/* -------------------------------------------------------------------------- */
+
+export async function caseStatusByYear() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT year, status, filings
+    FROM   analytics.mv_case_status_by_year
+    ORDER  BY year, status
+  `);
+  return rows;
+}
+
+export async function sponsorRiskLeaderboard({ sort = 'denied', limit = 25, minFilings = 50 } = {}) {
+  const pool = getPool();
+  const sortCol = sort === 'withdrawn' ? 'withdrawn_pct'
+                : sort === 'cert_withdrawn' ? 'cert_withdrawn_pct'
+                : 'denied_pct';
+  const { rows } = await pool.query(
+    `
+    SELECT canonical_name, employer_state, filings,
+           certified_pct, withdrawn_pct, cert_withdrawn_pct, denied_pct
+    FROM   analytics.mv_employer_outcomes
+    WHERE  filings >= $1
+    ORDER  BY ${sortCol} DESC NULLS LAST, filings DESC
+    LIMIT  $2
+    `,
+    [minFilings, limit],
+  );
+  return rows;
+}
+
+export async function cleanestSponsors({ limit = 25, minFilings = 200 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT canonical_name, employer_state, filings,
+           certified_pct, withdrawn_pct, denied_pct
+    FROM   analytics.mv_employer_outcomes
+    WHERE  filings >= $1
+    ORDER  BY certified_pct DESC, filings DESC
+    LIMIT  $2
+    `,
+    [minFilings, limit],
+  );
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Persona 6 — HR / Compensation Manager                                      */
+/* -------------------------------------------------------------------------- */
+
+export async function hrBenchmark({ socCode, state = null }) {
+  const pool = getPool();
+  if (state) {
+    const { rows } = await pool.query(
+      `SELECT n, p25, p50, p75 FROM analytics.mv_wage_by_soc_state
+       WHERE soc_code = $1 AND state = $2`,
+      [socCode, state.toUpperCase()],
+    );
+    return rows[0] || null;
+  }
+  const { rows } = await pool.query(
+    `SELECT n, p25, p50, p75 FROM analytics.mv_wage_by_soc WHERE soc_code = $1`,
+    [socCode],
+  );
+  return rows[0] || null;
+}
+
+export async function wageByLevelForSoc({ socCode }) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT wage_level, n, p25, p50, p75
+    FROM   analytics.mv_wage_by_soc_level
+    WHERE  soc_code = $1
+    ORDER  BY wage_level
+    `,
+    [socCode],
+  );
+  return rows;
+}
+
+export async function topStatesForSoc({ socCode, limit = 12 }) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT state, n, p50
+    FROM   analytics.mv_wage_by_soc_state
+    WHERE  soc_code = $1
+    ORDER  BY n DESC
+    LIMIT  $2
+    `,
+    [socCode, limit],
+  );
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Persona 7 — Economist / Labor Market Analyst                               */
+/* -------------------------------------------------------------------------- */
+
+export async function naicsSectorSummary() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT sector, filings, employers
+    FROM   analytics.mv_naics_sector_summary
+    ORDER  BY filings DESC
+    LIMIT  15
+  `);
+  return rows;
+}
+
+export async function naicsSectorByYear() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    WITH top_sectors AS (
+      SELECT sector FROM analytics.mv_naics_sector_summary ORDER BY filings DESC LIMIT 6
+    )
+    SELECT m.year, coalesce(ts.sector, 'Other') AS sector, sum(m.filings)::bigint AS filings
+    FROM   analytics.mv_naics_sector_by_year m
+    LEFT   JOIN top_sectors ts ON ts.sector = m.sector
+    GROUP  BY m.year, coalesce(ts.sector, 'Other')
+    ORDER  BY m.year
+  `);
+  return rows;
+}
+
+export async function socShareByYear() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT y.year, y.soc_code, y.share_pct, y.filings, s.soc_title
+    FROM   analytics.mv_soc_share_by_year y
+    LEFT   JOIN analytics.mv_soc_summary s USING (soc_code)
+    ORDER  BY y.year, y.share_pct DESC
+  `);
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Persona 8 — Investor / Business Intelligence                               */
+/* -------------------------------------------------------------------------- */
+
+export async function topGrowthSponsors({ limit = 20 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    WITH bookends AS (
+      SELECT canonical_id, canonical_name,
+             min(year) AS first_year, max(year) AS last_year
+      FROM   analytics.mv_employer_growth_by_year
+      GROUP  BY canonical_id, canonical_name
+    ),
+    earliest AS (
+      SELECT g.canonical_id, g.filings AS first_filings
+      FROM   analytics.mv_employer_growth_by_year g
+      JOIN   bookends b ON b.canonical_id = g.canonical_id AND b.first_year = g.year
+    ),
+    latest AS (
+      SELECT g.canonical_id, g.filings AS last_filings
+      FROM   analytics.mv_employer_growth_by_year g
+      JOIN   bookends b ON b.canonical_id = g.canonical_id AND b.last_year = g.year
+    ),
+    totals AS (
+      SELECT canonical_id, sum(filings)::bigint AS total_filings
+      FROM   analytics.mv_employer_growth_by_year
+      GROUP  BY canonical_id
+    )
+    SELECT b.canonical_name, b.first_year, b.last_year,
+           e.first_filings, l.last_filings, t.total_filings,
+           CASE WHEN e.first_filings > 0
+                THEN round(100.0 * (l.last_filings - e.first_filings) / e.first_filings, 1)
+                ELSE NULL END AS pct_change
+    FROM   bookends b
+    JOIN   earliest e ON e.canonical_id = b.canonical_id
+    JOIN   latest   l ON l.canonical_id = b.canonical_id
+    JOIN   totals   t ON t.canonical_id = b.canonical_id
+    WHERE  e.first_filings >= 100 AND t.total_filings >= 1000
+    ORDER  BY pct_change DESC NULLS LAST
+    LIMIT  $1
+    `,
+    [limit],
+  );
+  return rows;
+}
+
+export async function shrinkingSponsors({ limit = 20 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    WITH bookends AS (
+      SELECT canonical_id, canonical_name,
+             min(year) AS first_year, max(year) AS last_year
+      FROM   analytics.mv_employer_growth_by_year
+      GROUP  BY canonical_id, canonical_name
+    ),
+    earliest AS (
+      SELECT g.canonical_id, g.filings AS first_filings
+      FROM   analytics.mv_employer_growth_by_year g
+      JOIN   bookends b ON b.canonical_id = g.canonical_id AND b.first_year = g.year
+    ),
+    latest AS (
+      SELECT g.canonical_id, g.filings AS last_filings
+      FROM   analytics.mv_employer_growth_by_year g
+      JOIN   bookends b ON b.canonical_id = g.canonical_id AND b.last_year = g.year
+    ),
+    totals AS (
+      SELECT canonical_id, sum(filings)::bigint AS total_filings
+      FROM   analytics.mv_employer_growth_by_year
+      GROUP  BY canonical_id
+    )
+    SELECT b.canonical_name, b.first_year, b.last_year,
+           e.first_filings, l.last_filings, t.total_filings,
+           CASE WHEN e.first_filings > 0
+                THEN round(100.0 * (l.last_filings - e.first_filings) / e.first_filings, 1)
+                ELSE NULL END AS pct_change
+    FROM   bookends b
+    JOIN   earliest e ON e.canonical_id = b.canonical_id
+    JOIN   latest   l ON l.canonical_id = b.canonical_id
+    JOIN   totals   t ON t.canonical_id = b.canonical_id
+    WHERE  e.first_filings >= 200 AND t.total_filings >= 1000
+    ORDER  BY pct_change ASC NULLS LAST
+    LIMIT  $1
+    `,
+    [limit],
+  );
+  return rows;
+}
+
+export async function topSponsorsInTech({ limit = 20 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT te.canonical_name, te.employer_state, sum(te.filings)::bigint AS filings
+    FROM   analytics.mv_top_employers_by_soc te
+    WHERE  te.soc_code LIKE '15-%'
+    GROUP  BY te.canonical_name, te.employer_state
+    ORDER  BY filings DESC
+    LIMIT  $1
+    `,
+    [limit],
+  );
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Persona 9 — Worker Rights / NGO                                            */
+/* -------------------------------------------------------------------------- */
+
+export async function wagePremiumBySoc({ limit = 20 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT p.soc_code, s.soc_title, p.n,
+           p.p25_ratio, p.p50_ratio, p.p75_ratio,
+           p.near_floor_n,
+           round(100.0 * p.near_floor_n / NULLIF(p.n,0), 2) AS near_floor_pct
+    FROM   analytics.mv_wage_premium_by_soc p
+    LEFT   JOIN analytics.mv_soc_summary s USING (soc_code)
+    WHERE  p.n >= 1000
+    ORDER  BY p.p50_ratio ASC
+    LIMIT  $1
+    `,
+    [limit],
+  );
+  return rows;
+}
+
+export async function stateConcentration() {
+  const pool = getPool();
+  const { rows } = await pool.query(`
+    SELECT state, canonical_name, filings, state_filings, share_pct
+    FROM   analytics.mv_state_concentration
+    ORDER  BY state, share_pct DESC
+  `);
+  return rows;
+}
+
+export async function highWithdrawalSponsors({ limit = 25, minFilings = 100 } = {}) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT canonical_name, employer_state, filings,
+           withdrawn_pct, cert_withdrawn_pct, denied_pct, certified_pct
+    FROM   analytics.mv_employer_outcomes
+    WHERE  filings >= $1
+    ORDER  BY (withdrawn_pct + cert_withdrawn_pct) DESC NULLS LAST
+    LIMIT  $2
+    `,
+    [minFilings, limit],
+  );
+  return rows;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Persona 10 — Student / Career Planner                                      */
+/* -------------------------------------------------------------------------- */
+
+export async function careerLadderForSoc({ socCode }) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT wage_level, n, p25, p50, p75
+    FROM   analytics.mv_wage_by_soc_level
+    WHERE  soc_code = $1
+    ORDER  BY wage_level
+    `,
+    [socCode],
+  );
+  return rows;
+}
+
+export async function bestStatesForSoc({ socCode, limit = 10 }) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+    SELECT state, n, p50
+    FROM   analytics.mv_wage_by_soc_state
+    WHERE  soc_code = $1
+    ORDER  BY p50 DESC NULLS LAST
+    LIMIT  $2
+    `,
+    [socCode, limit],
+  );
+  return rows;
+}

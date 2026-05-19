@@ -1,0 +1,102 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Investor / Business Intelligence</h1>
+  <p>The hiring-signal angle: H-1B filing volume is a leading indicator of skilled-labor demand. See which large employers are scaling up, which are pulling back, and how sectors split.</p>
+  <ul class="questions">
+    <li>Which top-300 sponsors had the biggest growth in filing volume FY first → FY last?</li>
+    <li>Which large sponsors are pulling back?</li>
+    <li>Who are the top tech-occupation (SOC 15-xxxx) sponsors?</li>
+    <li>How concentrated is the sponsor base across NAICS sectors?</li>
+  </ul>
+</section>
+
+<div class="panel-grid">
+  <%- include('partials/panel', {
+    title: 'Sector concentration (NAICS top-15)',
+    subtitle: 'Where the program\'s sponsoring demand sits.',
+    tag: 'sectors',
+    chartId: 'chartSectors',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Tech occupations — top 20 sponsors (SOC 15-xxxx)',
+    subtitle: 'Software developers, data scientists, system analysts, etc. Heaviest concentration of tech hiring.',
+    tag: 'tech',
+    chartId: 'chartTech',
+    body: null,
+  }) %>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Top growing sponsors (first FY → last FY)</h2><span class="tag">growth</span></header>
+  <p class="panel-sub muted small">Top-300 sponsors with ≥100 filings in their first year. Sorted by % change; a 200% growth = tripled hiring.</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th class="num">First FY</th><th class="num">First filings</th><th class="num">Last FY</th><th class="num">Last filings</th><th class="num">Total</th><th class="num">% change</th></tr></thead>
+    <tbody>
+    <% growing.forEach((g, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= g.canonical_name %></td>
+        <td class="num"><%= g.first_year %></td>
+        <td class="num"><%= Number(g.first_filings).toLocaleString() %></td>
+        <td class="num"><%= g.last_year %></td>
+        <td class="num"><%= Number(g.last_filings).toLocaleString() %></td>
+        <td class="num"><%= Number(g.total_filings).toLocaleString() %></td>
+        <td class="num"><strong style="color:#16a34a"><%= g.pct_change == null ? '—' : ('+' + g.pct_change + '%') %></strong></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Sponsors pulling back</h2><span class="tag">shrink</span></header>
+  <p class="panel-sub muted small">Top-300 sponsors with ≥200 filings in their first year and ≥1,000 total. Negative % change = fewer filings than in their peak years.</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th class="num">First FY</th><th class="num">First filings</th><th class="num">Last FY</th><th class="num">Last filings</th><th class="num">Total</th><th class="num">% change</th></tr></thead>
+    <tbody>
+    <% shrinking.forEach((s, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= s.canonical_name %></td>
+        <td class="num"><%= s.first_year %></td>
+        <td class="num"><%= Number(s.first_filings).toLocaleString() %></td>
+        <td class="num"><%= s.last_year %></td>
+        <td class="num"><%= Number(s.last_filings).toLocaleString() %></td>
+        <td class="num"><%= Number(s.total_filings).toLocaleString() %></td>
+        <td class="num"><strong style="color:#dc2626"><%= s.pct_change == null ? '—' : (s.pct_change + '%') %></strong></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const sectorLabels = <%- JSON.stringify(sectors.map(s => s.sector)) %>;
+const sectorFilings = <%- JSON.stringify(sectors.map(s => Number(s.filings))) %>;
+const sectorEmp = <%- JSON.stringify(sectors.map(s => Number(s.employers))) %>;
+new Chart(document.getElementById('chartSectors'), {
+  type: 'bar',
+  data: { labels: sectorLabels, datasets: [
+    { label: 'Filings', data: sectorFilings, backgroundColor: '#16a34a' },
+    { label: 'Distinct employers', data: sectorEmp, backgroundColor: '#86efac', yAxisID: 'y1' },
+  ] },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { position: 'top' } },
+    scales: { y: { beginAtZero: true, position: 'left', title: { display: true, text: 'Filings' } }, y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Employers' } } },
+  },
+});
+
+const techLabels = <%- JSON.stringify(tech.map(t => t.canonical_name)) %>;
+const techValues = <%- JSON.stringify(tech.map(t => Number(t.filings))) %>;
+new Chart(document.getElementById('chartTech'), {
+  type: 'bar',
+  data: { labels: techLabels, datasets: [{ data: techValues, backgroundColor: '#16a34a' }] },
+  options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } },
+});
+</script>
+
+<%- include('partials/footer') %>

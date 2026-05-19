@@ -154,6 +154,39 @@ services:
         condition: service_healthy
 
   # --------------------------------------------------------------------------
+  # Analytics Web (Next.js 15 — production website)
+  # Runs apps/analytics-web — public, SEO-first, monetisable. Reads from a
+  # read-only SQLite file baked into the image at build time. Does NOT
+  # connect to Postgres at runtime, so it survives a `docker compose stop db`.
+  #
+  # Build prerequisite: `pnpm --filter analytics-web build:data` on the host
+  # (generates the lca.db that gets copied into the image).
+  #
+  # The keys.db (API keys, mutable) lives on the analytics-web-keys volume
+  # so create/revoke don't require a rebuild. Bind-mount it to a host
+  # directory if you want to run `pnpm keys:*` from the host instead of
+  # via `docker exec`.
+  # --------------------------------------------------------------------------
+  analytics-web:
+    build:
+      context: .
+      dockerfile: apps/analytics-web/Dockerfile
+    container_name: lca_analytics_web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_SITE_NAME: ${SITE_NAME:-H1B Report}
+      NEXT_PUBLIC_SITE_URL:  ${SITE_URL:-https://h1b.report}
+      LCA_KEYS_DB_PATH:      /keys/keys.db
+      # AdSense — leave unset to render dev placeholders.
+      ADSENSE_CLIENT_ID:     ${ADSENSE_CLIENT_ID:-}
+      ADSENSE_SLOTS:         ${ADSENSE_SLOTS:-}
+      NODE_ENV:              production
+    ports:
+      - "${ANALYTICS_WEB_PORT:-3000}:3000"
+    volumes:
+      - analytics-web-keys:/keys
+
+  # --------------------------------------------------------------------------
   # Ingestion Worker (Node.js)
   # Runs apps/ingestor — XLSX streaming → pg-copy-streams → PostgreSQL
   # --------------------------------------------------------------------------
@@ -187,4 +220,7 @@ volumes:
   redis-data:
     driver: local
   hf-cache:
+    driver: local
+  # Mutable API-key DB for analytics-web (survives image rebuilds).
+  analytics-web-keys:
     driver: local

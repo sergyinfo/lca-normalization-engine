@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.local
+*.tsbuildinfo
+
+# The built SQLite is regenerated quarterly via scripts/build-sqlite.ts.
+# It can be committed (small enough at ~30-50 MB) or fetched at deploy
+# time; for now keep it out of the repo and let the build step produce it.
+data/lca.db
+data/lca.db-journal
+data/lca.db-wal
+data/lca.db-shm

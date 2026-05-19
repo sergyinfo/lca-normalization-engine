@@ -1,0 +1,135 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>HR / Compensation Manager</h1>
+  <p>The benchmarking angle: what are competitors paying for the SOC + state you're hiring for, and how does that change across wage levels (I–IV)?</p>
+  <ul class="questions">
+    <li>What's the P25 / P50 / P75 for an SOC in a specific state?</li>
+    <li>How does pay scale across wage levels (entry I → senior IV)?</li>
+    <li>Which states offer the strongest pay for this role?</li>
+    <li>How does this SOC compare against other high-volume occupations?</li>
+  </ul>
+</section>
+
+<form class="filters" method="get" action="/hr">
+  <label>SOC / Occupation
+    <select name="soc">
+      <% socOptions.forEach(o => { %>
+        <option value="<%= o.soc_code %>" <%= filters.soc === o.soc_code ? 'selected' : '' %>>
+          <%= o.soc_code %> — <%= (o.soc_title || '').slice(0, 60) %> (<%= Number(o.filings).toLocaleString() %>)
+        </option>
+      <% }) %>
+    </select>
+  </label>
+  <label>Worksite state (optional)
+    <input type="text" name="state" value="<%= filters.state %>" maxlength="2" placeholder="e.g. CA" />
+  </label>
+  <button type="submit">Update</button>
+</form>
+
+<div class="panel-grid">
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Benchmark for <%= filters.soc %><%= selectedTitle ? ' — ' + selectedTitle.slice(0, 60) : '' %></h2>
+      <span class="tag">wage</span>
+    </header>
+    <p class="panel-sub muted small">
+      <% if (filters.state) { %>State <code><%= filters.state %></code>.<% } else { %>All worksites.<% } %>
+      Source: <code>mv_wage_by_soc<%= filters.state ? '_state' : '' %></code>.
+    </p>
+    <% if (benchmark && Number(benchmark.n) > 0) { %>
+      <table class="data">
+        <thead><tr><th class="num">P25</th><th class="num">Median</th><th class="num">P75</th><th class="num">N</th></tr></thead>
+        <tbody><tr>
+          <td class="num">$<%= Number(benchmark.p25).toLocaleString() %></td>
+          <td class="num"><strong>$<%= Number(benchmark.p50).toLocaleString() %></strong></td>
+          <td class="num">$<%= Number(benchmark.p75).toLocaleString() %></td>
+          <td class="num"><%= Number(benchmark.n).toLocaleString() %></td>
+        </tr></tbody>
+      </table>
+    <% } else { %>
+      <div class="empty">No data for this SOC + state combination (need ≥25 filings to publish).</div>
+    <% } %>
+  </section>
+
+  <%- include('partials/panel', {
+    title: 'Wage by PW_WAGE_LEVEL (I = entry, IV = senior)',
+    subtitle: 'P50 across the four DOL wage tiers — direct measure of how seniority maps to pay.',
+    tag: 'levels',
+    chartId: 'chartLevels',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Top 15 states by filing count for this SOC',
+    subtitle: 'Where the demand for this role concentrates, with the local median wage.',
+    tag: 'geography',
+    chartId: 'chartStates',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'P25 / P50 / P75 across top 15 occupations',
+    subtitle: 'Compare this SOC against the rest of the corpus.',
+    tag: 'comparison',
+    chartId: 'chartAll',
+    body: null,
+  }) %>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>State-by-state benchmark table</h2><span class="tag">detail</span></header>
+  <table class="data">
+    <thead><tr><th>State</th><th class="num">N</th><th class="num">Median wage</th></tr></thead>
+    <tbody>
+    <% byState.forEach(s => { %>
+      <tr>
+        <td><strong><%= s.state %></strong></td>
+        <td class="num"><%= Number(s.n).toLocaleString() %></td>
+        <td class="num">$<%= Number(s.p50).toLocaleString() %></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const levelLabels = <%- JSON.stringify(byLevel.map(l => 'Level ' + l.wage_level)) %>;
+const levelP25    = <%- JSON.stringify(byLevel.map(l => Number(l.p25))) %>;
+const levelP50    = <%- JSON.stringify(byLevel.map(l => Number(l.p50))) %>;
+const levelP75    = <%- JSON.stringify(byLevel.map(l => Number(l.p75))) %>;
+
+new Chart(document.getElementById('chartLevels'), {
+  type: 'bar',
+  data: { labels: levelLabels, datasets: [
+    { label: 'P25', data: levelP25, backgroundColor: 'rgba(37,99,235,0.35)' },
+    { label: 'Median', data: levelP50, backgroundColor: '#2563eb' },
+    { label: 'P75', data: levelP75, backgroundColor: 'rgba(29,78,216,0.85)' },
+  ] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: c => c.dataset.label + ': $' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+
+const stateLabels = <%- JSON.stringify(byState.map(s => s.state)) %>;
+const stateMedians = <%- JSON.stringify(byState.map(s => Number(s.p50))) %>;
+new Chart(document.getElementById('chartStates'), {
+  type: 'bar',
+  data: { labels: stateLabels, datasets: [{ label: 'Median wage', data: stateMedians, backgroundColor: '#2563eb' }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => '$' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+
+const allLabels = <%- JSON.stringify(allSocs.map(w => (w.soc_title || w.soc_code).slice(0, 28))) %>;
+const allP25 = <%- JSON.stringify(allSocs.map(w => Number(w.p25))) %>;
+const allP50 = <%- JSON.stringify(allSocs.map(w => Number(w.p50))) %>;
+const allP75 = <%- JSON.stringify(allSocs.map(w => Number(w.p75))) %>;
+new Chart(document.getElementById('chartAll'), {
+  type: 'bar',
+  data: { labels: allLabels, datasets: [
+    { label: 'P25', data: allP25, backgroundColor: 'rgba(37,99,235,0.35)' },
+    { label: 'Median', data: allP50, backgroundColor: '#2563eb' },
+    { label: 'P75', data: allP75, backgroundColor: 'rgba(29,78,216,0.85)' },
+  ] },
+  options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: c => c.dataset.label + ': $' + Number(c.parsed.x).toLocaleString() } } }, scales: { x: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+</script>
+
+<%- include('partials/footer') %>

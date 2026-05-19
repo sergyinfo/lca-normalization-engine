@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* shadcn-style theme tokens. We're on the slate base palette. The
+   @theme block exposes these as Tailwind utility colors (bg-background,
+   text-foreground, border-border, etc.). */
+@theme {
+  --color-background: hsl(0 0% 100%);
+  --color-foreground: hsl(222.2 84% 4.9%);
+
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(222.2 84% 4.9%);
+
+  --color-popover: hsl(0 0% 100%);
+  --color-popover-foreground: hsl(222.2 84% 4.9%);
+
+  /* Brand blue — sits between Tailwind blue-500 and blue-600. Same range
+     as Djinni / Stripe accent, deep enough to pass WCAG AA on white. */
+  --color-primary: hsl(217 91% 55%);
+  --color-primary-foreground: hsl(0 0% 100%);
+
+  /* Secondary brand tones for variety. Use these on charts to avoid the
+     "all bars are blue" monotony. */
+  --color-cyan:   hsl(190 95% 50%);
+  --color-violet: hsl(262 83% 62%);
+  --color-pink:   hsl(330 81% 60%);
+  --color-amber:  hsl(38  92% 50%);
+  --color-emerald: hsl(160 84% 39%);
+
+  --color-secondary: hsl(214 95% 96%);
+  --color-secondary-foreground: hsl(217 91% 30%);
+
+  --color-muted: hsl(210 40% 96.1%);
+  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
+
+  --color-accent: hsl(214 95% 96%);
+  --color-accent-foreground: hsl(217 91% 30%);
+
+  --color-destructive: hsl(0 84.2% 60.2%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+
+  --color-border: hsl(214.3 31.8% 91.4%);
+  --color-input: hsl(214.3 31.8% 91.4%);
+  --color-ring: hsl(217 91% 55%);
+
+  /* Delta / status colors — for KPI tiles and ranking page badges. */
+  --color-positive: hsl(160 84% 35%);
+  --color-positive-bg: hsl(160 84% 95%);
+  --color-negative: hsl(0 84% 50%);
+  --color-negative-bg: hsl(0 84% 96%);
+
+  --radius: 0.5rem;
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Bridge styles — kept until every page is migrated to shadcn primitives.    */
+/* Anything below is candidate for deletion once the migration is done.       */
+/* -------------------------------------------------------------------------- */
+
+/* Summary block (LLM-generated, on entity pages) */
+.summary {
+  background: linear-gradient(135deg, hsl(217 91% 96%) 0%, hsl(190 95% 95%) 100%);
+  border-left: 4px solid hsl(217 91% 55%);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin: 14px 0 22px;
+  box-shadow: 0 1px 2px hsl(217 30% 80% / 0.3);
+}
+.summary p { margin: 0.5em 0; }
+.summary p:first-child { margin-top: 0; }
+.summary p:last-child  { margin-bottom: 0; }
+
+/* Ad slot placeholder — overlaid by real AdSense ins tag when configured */
+.ad-slot {
+  background: hsl(210 40% 96.1%);
+  color: hsl(215.4 16.3% 46.9%);
+  border: 1px dashed hsl(214.3 31.8% 80%);
+  border-radius: 6px;
+  text-align: center;
+  padding: 24px;
+  margin: 24px 0;
+  font-size: 12px;
+}
+
+/* MDX article body — light prose styling until we add a real Tailwind
+   typography plugin. */
+.article {
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  line-height: 1.65;
+}
+.article h2 { margin-top: 0; font-size: 1.25rem; font-weight: 600; }
+.article p  { margin: 0.75em 0; }
+.article a  { color: hsl(217 91% 60%); text-decoration: underline; text-underline-offset: 2px; }

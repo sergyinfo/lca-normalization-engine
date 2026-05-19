@@ -34,8 +34,8 @@ code { padding: 1px 5px; font-size: 0.92em; }
 }
 .topbar a { color: #f3f4f6; }
 .topbar .brand a { font-weight: 700; font-size: 16px; }
-.topbar nav { display: flex; gap: 18px; flex: 1; margin-left: 24px; }
-.topbar nav a { font-size: 14px; opacity: 0.78; }
+.topbar nav { display: flex; gap: 14px; flex-wrap: wrap; flex: 1; margin-left: 24px; }
+.topbar nav a { font-size: 13px; opacity: 0.78; }
 .topbar nav a:hover, .topbar nav a.active { opacity: 1; }
 .topbar nav a.active { border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
 .topbar .muted { color: #94a3b8; }
@@ -107,10 +107,16 @@ h1 + p { color: #4b5563; margin-top: -4px; }
 .persona-card:hover { border-color: var(--accent, #2563eb); text-decoration: none; box-shadow: 0 4px 12px rgba(15,23,42,0.08); }
 .persona-card h3 { margin: 0 0 6px; font-size: 16px; color: #0f172a; }
 .persona-card p { margin: 0; color: #4b5563; font-size: 13px; }
-.persona-card.journalist { --accent: #ef4444; }
-.persona-card.jobseeker  { --accent: #10b981; }
-.persona-card.policy     { --accent: #6366f1; }
-.persona-card.academic   { --accent: #f59e0b; }
+.persona-card.journalist    { --accent: #ef4444; }
+.persona-card.jobseeker     { --accent: #10b981; }
+.persona-card.policy        { --accent: #6366f1; }
+.persona-card.academic      { --accent: #f59e0b; }
+.persona-card.attorney      { --accent: #0891b2; }
+.persona-card.hr            { --accent: #2563eb; }
+.persona-card.economist     { --accent: #8b5cf6; }
+.persona-card.investor      { --accent: #16a34a; }
+.persona-card.worker-rights { --accent: #ea580c; }
+.persona-card.student       { --accent: #db2777; }
 
 /* ---- Panels (the analytical units) ---- */
 .panel-grid {

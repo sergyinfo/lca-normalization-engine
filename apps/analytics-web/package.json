@@ -1,0 +1,48 @@
+{
+  "name": "analytics-web",
+  "version": "0.1.0",
+  "description": "Next.js 15 production analytics website for the LCA / H-1B corpus. Self-hosted, SEO-first, monetisable via display ads + paid B2B API. Entity-first information architecture (employer / occupation / state / sector pages) with LLM-generated per-page summaries and optional MDX article overlays.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "build:sqlite": "tsx scripts/build-sqlite.ts",
+    "build:summaries": "tsx scripts/generate-summaries.ts",
+    "build:data": "pnpm run build:sqlite && pnpm run build:summaries",
+    "keys:create": "tsx scripts/manage-keys.ts create",
+    "keys:list":   "tsx scripts/manage-keys.ts list",
+    "keys:revoke": "tsx scripts/manage-keys.ts revoke"
+  },
+  "dependencies": {
+    "@lca/db-lib": "workspace:*",
+    "@radix-ui/react-slot": "^1.1.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^16.4.0",
+    "geist": "^1.7.0",
+    "lucide-react": "^0.469.0",
+    "next": "^15.0.3",
+    "next-mdx-remote": "^5.0.0",
+    "react": "^19.0.0-rc-66855b96-20241106",
+    "react-dom": "^19.0.0-rc-66855b96-20241106",
+    "recharts": "^2.13.3",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.13",
+    "@types/react-dom": "^18.3.1",
+    "eslint": "^9.16.0",
+    "eslint-config-next": "^15.0.3",
+    "tailwindcss": "^4.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

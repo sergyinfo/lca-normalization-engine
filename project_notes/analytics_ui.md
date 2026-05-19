@@ -505,3 +505,174 @@ The cleanest version of the thesis story: **"Without the pipeline this
 dashboard would have taken weeks of data wrangling to produce. The
 materialized views are seconds. The point of normalisation is the speed
 of insight, not just the cleanliness of the schema."**
+
+---
+
+## Extended personas — added 2026-05-13
+
+The four-persona cut shipped on 2026-05-13 morning. Six more personas were
+added the same day to push the "same data, different lens" thesis further.
+Each new page is backed by 1–2 new materialized views in the same
+`analytics.*` schema; total matview footprint grew from ~29 MB to ~55 MB.
+
+### `/attorney` — Immigration Attorney
+
+**Goal.** Help an attorney triage which sponsors carry track-record risk
+before advising a client.
+
+**Panels.**
+- **Case outcomes by year** (stacked bars). Watching certified / withdrawn /
+  cert-withdrawn / denied move across FY2020-FY2025.
+- **Overall outcome mix** (doughnut). 92.6 % Certified, 5.0 %
+  Cert-Withdrawn, 1.8 % Withdrawn, 0.6 % Denied — DOL approves almost
+  everything; the interesting variance is *within-employer*.
+- **Sponsor risk leaderboard** — sortable by denial rate, withdrawal rate
+  or cert-withdrawn rate. Filtered to employers with ≥50 filings so noise
+  is bounded.
+- **Cleanest high-volume sponsors** — ≥200 filings, sorted by cert %.
+
+**Backed by:** `mv_case_status_by_year`, `mv_employer_outcomes`.
+
+**Data insight.** Withdrawal rates above 20 % across hundreds of filings
+almost always come from staffing/consulting firms with project-based work,
+not denial-risk indicators. The leaderboard is a flag, not a verdict.
+
+### `/hr` — HR / Compensation Manager
+
+**Goal.** Give a hiring manager an evidence-based salary band for a SOC in
+a specific state, including how wages stratify across the four DOL
+prevailing-wage levels (I = entry → IV = expert).
+
+**Panels.**
+- **Benchmark percentiles** for SOC + state (interactive filter).
+- **Wage by PW_WAGE_LEVEL** — direct measure of seniority → pay scaling.
+  For 15-1252 nationally: Level I = $84 k, Level II = $113 k, Level III =
+  $144 k, Level IV = $182 k. ~2.2x premium for top-tier.
+- **Top 15 states by filing count** for the chosen SOC.
+- **P25 / P50 / P75 across top 15 occupations** for cross-SOC reference.
+- **State-by-state benchmark table.**
+
+**Backed by:** `mv_wage_by_soc_state` (1.5 MB), `mv_wage_by_soc_level`.
+
+**Data insight.** The same SOC's median wage can vary by $30–50 k across
+states (CA / NY high; AL / MS low). The state slice is the practical
+benchmark — the national P50 is a poor starting point for a Birmingham,
+AL offer.
+
+### `/economist` — Economist / Labor Market Analyst
+
+**Goal.** Track structural labor-market signals — sector rotation,
+occupation concentration, real-terms wage growth.
+
+**Panels.**
+- **NAICS sector mix (top 15)** — 54 (Professional/Scientific/Technical) =
+  51 % of filings. 51 (Information) = 9 %. The H-1B program is
+  overwhelmingly a tech-services program.
+- **Sector evolution over time** (stacked bars per FY).
+- **Top-10 SOC market share by year** — software developers alone are
+  ~25 % of all filings. Watching this share rise = program concentrating.
+- **Real-terms median wage trend** (line chart).
+- **Wage growth — top 5 occupations** — already in policy, repeated here
+  with macro framing.
+- **NAICS sector reference table** with description mapping.
+
+**Backed by:** `mv_naics_sector_summary`, `mv_naics_sector_by_year`,
+`mv_soc_share_by_year`.
+
+**Data insight.** The program's NAICS-54 concentration shifted upward from
+~48 % in 2020 to ~53 % in 2025; the program is *consolidating* into
+consulting and contracting firms, not diversifying.
+
+### `/investor` — Investor / Business Intelligence
+
+**Goal.** Treat filing volume as a hiring leading-indicator. Tell which
+top-300 sponsors are scaling up vs which are pulling back.
+
+**Panels.**
+- **Sector concentration (NAICS top-15)** — filings + distinct employers
+  on a dual-axis chart. Helps spot fragmented sectors (many employers, few
+  filings each) vs concentrated ones.
+- **Tech occupations — top 20 sponsors (SOC 15-xxxx).** Cognizant,
+  Infosys, TCS, Wipro, Accenture top the list — consulting firms, not
+  Big Tech.
+- **Top growing sponsors** — bookend % change first FY → last FY.
+  Filtered to ≥100 filings in their first year so percentages mean
+  something.
+- **Sponsors pulling back** — same query, reverse sort.
+
+**Backed by:** `mv_employer_growth_by_year`, `mv_naics_sector_summary`,
+`mv_top_employers_by_soc`.
+
+**Data insight.** The "% change" leaderboard reveals the structural shift
+to GCC (Global Capability Centers) in India: many former mid-volume
+sponsors shrunk 60-80 %, while their Indian-headquartered counterparts
+scaled 200-400 %.
+
+### `/worker-rights` — Worker Rights / NGO
+
+**Goal.** Surface signals NGOs and researchers use as starting points for
+wage-theft or labor-condition investigations.
+
+**Panels.**
+- **Wage premium over prevailing wage** — the offered/prevailing ratio
+  across SOCs. SOCs where the median ratio is ≈1.00 mean the typical
+  worker is paid exactly the legal floor; legally compliant, but
+  suggestive of bidding-down dynamics.
+- **State employer concentration (top 3 per state)** — exposes states
+  where one sponsor controls 20-40 % of all filings, raising bargaining
+  power concerns.
+- **Highest-withdrawal sponsors (≥100 filings)** — sponsors where 25-60 %
+  of cases are withdrawn or certified-then-withdrawn. Useful signal for
+  visa-status churn or revolving-door employment patterns.
+
+**Backed by:** `mv_wage_premium_by_soc`, `mv_state_concentration`,
+`mv_employer_outcomes`.
+
+**Data insight.** Median offered/prevailing ratio across the corpus is
+~1.07 — typical worker paid 7 % above the floor. But the lower-tail SOCs
+(certain low-skill technical roles) cluster at exactly 1.00 with >40 % of
+filings near-floor. Those are the SOCs worth a deeper NGO look.
+
+### `/student` — Student / Career Planner
+
+**Goal.** Help a student or career-changer evaluate a target SOC across
+three dimensions: long-term pay growth, geographic options, employer
+landscape.
+
+**Panels.**
+- **Career ladder** — P25 / P50 / P75 by PW_WAGE_LEVEL (I → IV). Direct
+  visualization of the seniority-pay runway for the chosen role.
+- **Best-paying states** — top 10 by median offered wage (n ≥ 25
+  filings). Often surprising — small states with niche tech hubs (e.g.
+  WA, CA, MA) outperform population centers.
+- **Wage trend over time** — line chart for the chosen SOC, year by year.
+- **Top employers for the SOC** — companies actually hiring for the role.
+
+**Backed by:** existing `mv_wage_by_soc_level`, `mv_wage_by_soc_state`,
+`mv_wage_by_soc_year`, `mv_top_employers_by_soc` — no new matview.
+
+**Data insight.** The Level I → Level IV gap is the most useful single
+number for a student. For Software Developers (15-1252), Level I is
+~$84 k and Level IV is ~$182 k — a 2.2x runway over a career, which is
+strong. For lower-tech SOCs the same multiple is ~1.5x — flatter ceiling.
+
+### Summary — 10 personas, one corpus
+
+| Persona | Primary question | Built atop |
+|---|---|---|
+| Journalist | Who? Where? How big? | `mv_top_sponsors`, `mv_filings_by_state`, `mv_soc_summary` |
+| Job Seeker | What does *this* role pay in *this* city? | `wageLookup`, `mv_wage_by_soc`, `mv_wage_by_soc_year` |
+| Policy | Macro trends across FY2020-2025 | `mv_filings_by_year`, `mv_median_wage_by_year`, `mv_state_share_by_year` |
+| Academic | How was the corpus built? | `mv_classification_source_mix`, `mv_confidence_distribution`, `mv_coverage` |
+| Attorney | Which sponsors carry outcome risk? | `mv_case_status_by_year`, `mv_employer_outcomes` |
+| HR | What's the salary band for SOC × state? | `mv_wage_by_soc_state`, `mv_wage_by_soc_level` |
+| Economist | Sector rotation? Occupation concentration? | `mv_naics_sector_summary`, `mv_naics_sector_by_year`, `mv_soc_share_by_year` |
+| Investor | Which sponsors are scaling / shrinking? | `mv_employer_growth_by_year`, `mv_top_employers_by_soc` |
+| Worker Rights | Where do wages cluster at the legal floor? | `mv_wage_premium_by_soc`, `mv_state_concentration`, `mv_employer_outcomes` |
+| Student | What's the entry → senior runway in my target SOC? | `mv_wage_by_soc_level`, `mv_wage_by_soc_state`, `mv_top_employers_by_soc` |
+
+Total matviews: 23 (12 originals + 10 new + `v_overview_kpis` plain view).
+Total matview storage: ~55 MB. Cold-cache page paint stays under 1 s on
+every page; the dashboard scales linearly with the corpus *only* during
+refresh, not at request time. That separation — slow build, fast read — is
+the whole point of the materialized-view design.

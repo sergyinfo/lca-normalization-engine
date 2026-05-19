@@ -1,0 +1,130 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Economist / Labor Market Analyst</h1>
+  <p>The macro angle: how is H-1B labor demand distributed across NAICS sectors, how concentrated is occupation mix, and which roles drive real-terms wage growth?</p>
+  <ul class="questions">
+    <li>Which NAICS sectors absorb the most H-1B labor — and is that mix shifting?</li>
+    <li>How concentrated is the occupation mix (top-10 SOC share over time)?</li>
+    <li>What's median wage growth across the whole corpus and the top-5 occupations?</li>
+  </ul>
+</section>
+
+<div class="panel-grid">
+  <%- include('partials/panel', {
+    title: 'NAICS sector mix (top 15)',
+    subtitle: 'Filings grouped by NAICS 2-digit sector code. 54 = Professional/Scientific/Technical, 51 = Information, 52 = Finance, etc.',
+    tag: 'sectors',
+    chartId: 'chartSectors',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Sector evolution over time',
+    subtitle: 'Year-over-year stacked filings for the top-6 sectors. Watch for sector rotation.',
+    tag: 'trend',
+    chartId: 'chartSectorTrend',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Top-10 SOC market share by year',
+    subtitle: 'How much of the program the most popular ten occupations consume. Rising share = concentration; falling = diversification.',
+    tag: 'concentration',
+    chartId: 'chartSocShare',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Real-terms median wage trend',
+    subtitle: 'Median annual offered wage across the entire corpus, year by year.',
+    tag: 'wages',
+    chartId: 'chartMedianTrend',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Wage growth — top 5 occupations',
+    subtitle: 'Per-SOC median wage trajectory for the five highest-volume occupations.',
+    tag: 'occupations',
+    chartId: 'chartWageGrowth',
+    body: null,
+  }) %>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>NAICS sector reference</h2><span class="tag">detail</span></header>
+  <p class="panel-sub muted small">Filings, distinct sponsoring employers per sector. <a href="https://www.census.gov/naics/" target="_blank" rel="noopener">NAICS sector code definitions</a>.</p>
+  <table class="data">
+    <thead><tr><th>Sector</th><th>Description</th><th class="num">Filings</th><th class="num">Distinct employers</th></tr></thead>
+    <tbody>
+    <% const SECTOR_NAMES = { '11':'Agriculture, Forestry, Fishing & Hunting','21':'Mining, Quarrying, Oil & Gas','22':'Utilities','23':'Construction','31':'Manufacturing (food/textile)','32':'Manufacturing (paper/chemicals)','33':'Manufacturing (metal/machinery/electronics)','42':'Wholesale Trade','44':'Retail Trade (motor/furniture)','45':'Retail Trade (general)','48':'Transportation','49':'Warehousing & Postal','51':'Information','52':'Finance & Insurance','53':'Real Estate, Rental & Leasing','54':'Professional, Scientific & Technical Services','55':'Management of Companies','56':'Administrative & Support Services','61':'Educational Services','62':'Health Care & Social Assistance','71':'Arts, Entertainment & Recreation','72':'Accommodation & Food Services','81':'Other Services','92':'Public Administration' }; %>
+    <% sectors.forEach(s => { %>
+      <tr>
+        <td><strong><%= s.sector %></strong></td>
+        <td><%= SECTOR_NAMES[s.sector] || '—' %></td>
+        <td class="num"><%= Number(s.filings).toLocaleString() %></td>
+        <td class="num"><%= Number(s.employers).toLocaleString() %></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const sectorLabels = <%- JSON.stringify(sectors.map(s => s.sector)) %>;
+const sectorValues = <%- JSON.stringify(sectors.map(s => Number(s.filings))) %>;
+new Chart(document.getElementById('chartSectors'), {
+  type: 'bar',
+  data: { labels: sectorLabels, datasets: [{ data: sectorValues, backgroundColor: '#8b5cf6' }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+});
+
+const stRaw = <%- JSON.stringify(sectorTrend) %>;
+const stYears = [...new Set(stRaw.map(r => r.year))].sort();
+const stSects = [...new Set(stRaw.map(r => r.sector))];
+const stIndex = Object.fromEntries(stRaw.map(r => [`${r.year}__${r.sector}`, Number(r.filings)]));
+const stPalette = ['#8b5cf6','#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#94a3b8'];
+const stDatasets = stSects.map((s, i) => ({ label: s, data: stYears.map(y => stIndex[`${y}__${s}`] || 0), backgroundColor: stPalette[i % stPalette.length], stack: 'sec' }));
+new Chart(document.getElementById('chartSectorTrend'), {
+  type: 'bar',
+  data: { labels: stYears.map(y => 'FY' + y), datasets: stDatasets },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } },
+});
+
+const shareRaw = <%- JSON.stringify(socShare) %>;
+const shYears = [...new Set(shareRaw.map(r => r.year))].sort();
+const shSocs  = [...new Set(shareRaw.map(r => r.soc_code))];
+const shIndex = Object.fromEntries(shareRaw.map(r => [`${r.year}__${r.soc_code}`, Number(r.share_pct)]));
+const shTitleByCode = Object.fromEntries(shareRaw.map(r => [r.soc_code, (r.soc_title || r.soc_code).slice(0, 28)]));
+const shPalette = ['#8b5cf6','#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#a855f7','#0891b2','#16a34a','#eab308','#94a3b8'];
+const shDatasets = shSocs.map((s, i) => ({ label: shTitleByCode[s] || s, data: shYears.map(y => shIndex[`${y}__${s}`] || 0), backgroundColor: shPalette[i % shPalette.length], stack: 'soc' }));
+new Chart(document.getElementById('chartSocShare'), {
+  type: 'bar',
+  data: { labels: shYears.map(y => 'FY' + y), datasets: shDatasets },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y + '%' } } }, scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => v + '%' } } } },
+});
+
+const mLabels = <%- JSON.stringify(medianYearly.map(y => 'FY' + y.year)) %>;
+const mValues = <%- JSON.stringify(medianYearly.map(y => Number(y.median_wage))) %>;
+new Chart(document.getElementById('chartMedianTrend'), {
+  type: 'line',
+  data: { labels: mLabels, datasets: [{ data: mValues, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.15)', fill: true, tension: 0.25, pointRadius: 4 }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => '$' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+
+const wgRaw = <%- JSON.stringify(wageGrowth) %>;
+const wgYears = [...new Set(wgRaw.map(r => r.year))].sort();
+const wgSocs  = [...new Set(wgRaw.map(r => r.soc_code))];
+const wgIndex = Object.fromEntries(wgRaw.map(r => [`${r.soc_code}__${r.year}`, Number(r.median_wage)]));
+const wgTitleByCode = Object.fromEntries(wgRaw.map(r => [r.soc_code, (r.soc_title || r.soc_code).slice(0, 32)]));
+const wgPalette = ['#8b5cf6','#0ea5e9','#10b981','#f59e0b','#ef4444'];
+const wgDatasets = wgSocs.map((s, i) => ({ label: wgTitleByCode[s], data: wgYears.map(y => wgIndex[`${s}__${y}`] || null), borderColor: wgPalette[i % wgPalette.length], backgroundColor: wgPalette[i % wgPalette.length] + '22', fill: false, tension: 0.25, spanGaps: true, pointRadius: 3 }));
+new Chart(document.getElementById('chartWageGrowth'), {
+  type: 'line',
+  data: { labels: wgYears.map(y => 'FY' + y), datasets: wgDatasets },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: c => c.dataset.label + ': $' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+</script>
+
+<%- include('partials/footer') %>

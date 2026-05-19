@@ -4,14 +4,20 @@ Read-only, public-facing analytics dashboard over the canonicalised LCA corpus.
 
 ## What it shows
 
-Four persona pages, each answering questions that *that user* actually asks:
+Ten persona pages, each answering questions that *that user* actually asks:
 
 | Page | Audience | What it shows |
 |---|---|---|
-| `/journalist` | Public, reporters | Top H-1B sponsors (canonicalised), worksite-state distribution, year-over-year filing volume, top occupations |
-| `/jobseeker`  | Career researchers | Wage percentiles (P25/P50/P75) by SOC, interactive SOC + state + city lookup, top employers per SOC, wage trend over time |
-| `/policy`     | Labor economists | Filings per year, median wage per year, top-state share over time (stacked), wage-growth trajectory for top 5 SOCs, case outcome breakdown |
-| `/academic`   | Thesis examiner | Coverage KPIs, classification source mix (DMTF/semantic/consensus/operator), Stage-2 confidence histogram, entity-resolution layer outcomes, top 10 canonical employers |
+| `/journalist`    | Public, reporters             | Top H-1B sponsors (canonicalised), worksite-state distribution, year-over-year filing volume, top occupations |
+| `/jobseeker`     | Career researchers            | Wage percentiles (P25/P50/P75) by SOC, interactive SOC + state + city lookup, top employers per SOC, wage trend over time |
+| `/policy`        | Labor economists              | Filings per year, median wage per year, top-state share over time (stacked), wage-growth trajectory for top 5 SOCs, case outcome breakdown |
+| `/academic`      | Thesis examiner               | Coverage KPIs, classification source mix (DMTF/semantic/consensus/operator), Stage-2 confidence histogram, entity-resolution layer outcomes, top 10 canonical employers |
+| `/attorney`      | Immigration attorneys         | Case-outcome trend by year (stacked), sponsor risk leaderboard (sortable by denial / withdrawal rate), cleanest high-volume sponsors |
+| `/hr`            | HR / compensation managers    | Wage benchmarking percentiles by SOC + state, wage-by-PW_WAGE_LEVEL (I→IV), top hiring states, cross-SOC comparison |
+| `/economist`     | Macro / labor-market analysts | NAICS sector mix + sector evolution over time, top-10 SOC market share (concentration), real-terms median wage trend, wage growth top 5 |
+| `/investor`      | Investors / BI                | Top growing & shrinking sponsors (% change first FY → last FY), sector concentration, tech-SOC (15-xxxx) top sponsors |
+| `/worker-rights` | NGOs / labor advocates        | Wage premium over prevailing-wage by SOC (near-floor clustering), state employer concentration (top 3), highest-withdrawal sponsors |
+| `/student`       | Students / career planners    | Entry → senior career ladder (Level I-IV P25/P50/P75), best-paying states, year-over-year wage trend, top hiring employers |
 
 ## Why materialized views
 

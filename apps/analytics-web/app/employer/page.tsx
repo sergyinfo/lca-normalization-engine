@@ -1,0 +1,95 @@
+import Link from 'next/link';
+import type { Metadata } from 'next';
+import { Building2 } from 'lucide-react';
+
+import { listTopEmployers, getEmployerYearlyAll } from '@/lib/queries';
+import { fmt, fmtPct } from '@/lib/format';
+import { entityMetadata } from '@/lib/seo';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Sparkline } from '@/components/charts/Sparkline';
+import { MiniBar } from '@/components/charts/MiniBar';
+
+export const metadata: Metadata = entityMetadata({
+  title: 'Top H-1B Sponsors — Employer Index',
+  description:
+    'Browse the largest H-1B sponsors in the United States by filing volume. Per-employer profiles cover certification rates, top occupations, and year-over-year hiring trends.',
+  path: '/employer',
+});
+
+export default function EmployerIndex() {
+  const employers = listTopEmployers(500);
+  const spark = getEmployerYearlyAll();
+  const maxFilings = employers.reduce((m, e) => Math.max(m, e.filings), 0);
+  return (
+    <>
+      <section className="space-y-3 pb-6">
+        <Badge variant="secondary" className="rounded-full gap-1.5">
+          <Building2 className="size-3" /> Sponsor index
+        </Badge>
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight">
+          H-1B sponsors by filing volume
+        </h1>
+        <p className="text-muted-foreground max-w-2xl">
+          Every employer that filed an H-1B Labor Condition Application in
+          the covered fiscal years, ordered by total filings. Click through
+          for certification rates, salary mix by occupation, and yearly
+          trends.
+        </p>
+      </section>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">
+            {fmt(employers.length)} sponsors
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-0 pb-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-12">#</TableHead>
+                <TableHead>Employer</TableHead>
+                <TableHead className="w-16">State</TableHead>
+                <TableHead className="text-right">Filings</TableHead>
+                <TableHead className="w-28">Trend FY{spark.years[0]}–{spark.years[spark.years.length - 1]}</TableHead>
+                <TableHead className="text-right">Certified</TableHead>
+                <TableHead className="text-right">Denied</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {employers.map((e) => {
+                const series = spark.byKey.get(e.slug);
+                return (
+                  <TableRow key={e.slug}>
+                    <TableCell className="text-muted-foreground tabular-nums">{e.rank}</TableCell>
+                    <TableCell>
+                      <Link href={`/employer/${e.slug}`} className="font-medium hover:text-primary">
+                        {e.canonical_name}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs font-mono">
+                      {e.employer_state ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <MiniBar value={e.filings} max={maxFilings} />
+                        <span className="tabular-nums">{fmt(e.filings)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {series ? <Sparkline values={series} /> : <span className="text-muted-foreground text-xs">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtPct(e.certified_pct, 1)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtPct(e.denied_pct, 1)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </>
+  );
+}

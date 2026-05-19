@@ -25,8 +25,8 @@ lca-normalization-engine/
 │   │                    #   (requires_review records, staging.quarantine_records,
 │   │                    #    staging.unresolved_employers) — accept/override/merge/reject
 │   └── analytics-ui/    # Fastify + EJS + Chart.js (port 8081): public read-only dashboard
-│                        #   over the canonicalised corpus. Four persona pages backed by
-│                        #   12 materialized views in analytics.* schema.
+│                        #   over the canonicalised corpus. Ten persona pages backed by
+│                        #   22 materialized views in analytics.* schema.
 │
 ├── infra/
 │   └── postgres/        # init.sql (extensions: pg_trgm, pgvector, btree_gin)
@@ -338,17 +338,23 @@ write-back semantics.
 ## Analytics Dashboard (Analytics UI)
 
 Public, read-only, persona-driven dashboard over the canonicalised corpus.
-Runs at `http://localhost:8081` once `analytics-ui` is up. Four pages:
+Runs at `http://localhost:8081` once `analytics-ui` is up. Ten pages:
 
 | Page | Audience | Headline question |
 |---|---|---|
-| `/journalist` | Public, reporters | Who sponsors H-1Bs, where, how much? |
-| `/jobseeker`  | Career researchers | What's the prevailing wage for my role + city? |
-| `/policy`     | Labour economists | How is the program evolving over time? |
-| `/academic`   | Thesis examiner | How does the pipeline actually produce these numbers? |
+| `/journalist`    | Public, reporters         | Who sponsors H-1Bs, where, how much? |
+| `/jobseeker`     | Career researchers        | What's the prevailing wage for my role + city? |
+| `/policy`        | Labour economists         | How is the program evolving over time? |
+| `/academic`      | Thesis examiner           | How does the pipeline actually produce these numbers? |
+| `/attorney`      | Immigration attorneys     | Which sponsors carry outcome risk (denial / withdrawal rate)? |
+| `/hr`            | HR / compensation managers| What's the salary band for SOC × state, level I→IV? |
+| `/economist`     | Macro economists          | NAICS sector rotation? Occupation concentration? |
+| `/investor`      | Investors / BI            | Which sponsors are scaling vs pulling back? |
+| `/worker-rights` | NGOs / labour advocates   | Where do wages cluster at the legal floor? |
+| `/student`       | Students / career planners| Entry → senior pay runway for my target SOC? |
 
 Every aggregation panel is backed by a materialized view in the
-`analytics.*` schema (12 matviews + 1 plain view, ~29 MB total). This is
+`analytics.*` schema (22 matviews + 1 plain view, ~55 MB total). This is
 what makes the dashboard demoable: a naive `count(*)` on the 3.83 M-row
 `lca_records` takes ~75 s cold-cache; reading from the pre-aggregated
 matviews paints in 16-552 ms.
@@ -475,6 +481,338 @@ table check).
 
 ---
 
+## Mode 3: Stage 3 LLM Reclassify on a Rented GPU
+
+This is the runbook for draining the **Stage 3 LLM residue** — currently
+~181 K records sitting in `staging.quarantine_records` where Stages 0/1/2
+couldn't pick a SOC with sufficient confidence. The classifier code is in
+`packages/nlp-engine/.../reclassify_quarantine.py`; what's missing is a fast
+backend to actually run it at scale.
+
+Stage 3 on a Mac CPU is uneconomical (~250 h wall time, an 8B-parameter
+model running at <1 record/sec). A short rental of a single mid-tier GPU
+(A10G / L4) brings the same job down to **5–10 hours** end-to-end with
+batched inference.
+
+### What stays where
+
+The pipeline is designed so that **only the LLM goes on the GPU box**. The
+PostgreSQL database, Redis, BullMQ, and the worker code stay on your local
+host (or wherever they normally live).
+
+```
+  Local host                              Rented GPU box
+  ───────────                              ──────────────
+  PostgreSQL + Redis                       vLLM (Llama 3.1 8B Instruct)
+  reclassify_quarantine.py     ──HTTPS──▶  OpenAI-compatible API :8000
+  ↑                                        (continuous batching)
+  └── reads `staging.quarantine_records`,
+      writes `lca_records.soc_code`
+```
+
+This keeps your data on your machine, makes the GPU box stateless (you
+destroy it after the run), and means the only thing you pay for is GPU
+hours.
+
+### Prerequisites
+
+- A cloud account with GPU quota — Lambda Labs, RunPod, CoreWeave, AWS EC2
+  (`g5.xlarge` = A10G), GCP (`g2-standard-8` = L4). Hourly cost ~$0.50–$1.50.
+- Hugging Face token (`HF_TOKEN`) if you'll pull a gated model like
+  Llama 3.1 8B Instruct. Free models (Qwen2.5-7B-Instruct,
+  Mistral-7B-Instruct) skip this.
+- SSH key uploaded to the provider.
+- A pre-flight `pnpm canonical:backfill-full` + an Operator-UI HITL pass
+  so quarantine only contains records that *actually need* Stage 3 (don't
+  spend GPU dollars on records a human could resolve in 30s).
+
+### Step 1 — Spin up the GPU instance
+
+```bash
+# Example: Lambda Labs CLI
+lambda-cloud instances launch \
+    --instance-type-name gpu_1x_a10 \
+    --region-name us-east-1 \
+    --ssh-key-names my-key \
+    --name lca-stage3
+```
+
+A10G (24 GB VRAM) or L4 (24 GB) is plenty for an 8B model with continuous
+batching. Anything larger (A100 / H100) wastes money for this workload.
+
+Note the public IPv4. SSH in:
+```bash
+ssh ubuntu@<public-ip>
+```
+
+#### AWS `g5.xlarge` — concrete configuration
+
+If you specifically want AWS rather than Lambda Labs / RunPod, this is the
+canonical setup for this workload. `g5.xlarge` is the cheapest g5 SKU
+(1× A10G, 4 vCPU, 16 GB RAM) and is the right size for an 8B model.
+
+| Setting | Value | Why |
+|---|---|---|
+| Instance type | `g5.xlarge` | A10G 24 GB VRAM = our model fits + leaves room for KV-cache. |
+| Region | `us-east-1` or `us-west-2` | Cheapest g5 pricing; widest AMI availability. |
+| AMI | "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)" | Ships with NVIDIA driver + CUDA 12 preinstalled — saves ~30 min of driver wrangling. Look it up by name in the EC2 console; the ID varies by region. |
+| Root volume (EBS) | **80 GB gp3** | Llama-3.1-8B weights = 16 GB; CUDA tooling + buffers want another 30–40 GB. The AMI default (45 GB) fills up. |
+| Key pair | Reuse your SSH key | Used only for the first `ssh ubuntu@…`. |
+| Security group | Inbound: TCP 22 from **your IP only** | Port 8000 stays closed — ngrok in Step 4 handles ingress. |
+| IAM role | None | The drain reads/writes only your local DB. |
+| Tenancy | Default (shared) | Dedicated is 5× more expensive and pointless here. |
+| Purchase option | **Spot** (recommended) or On-demand | Spot is ~$0.30/h vs $1.006/h on-demand for `g5.xlarge`. Set max-price = on-demand price; interruption probability for g5.xlarge in us-east-1 is typically <5 %. The drain is crash-safe (idempotent on `reprocessed_at IS NULL`), so an interruption costs you ~10 min of redo. |
+
+**Pre-flight: vCPU service quotas (there are two, both default to 0).**
+New AWS accounts have separate on-demand and spot quotas — bumping one
+does *not* unlock the other. `g5.xlarge` needs 4 vCPUs. Request both at
+*Service Quotas → Amazon EC2*:
+
+- `Running On-Demand G and VT instances` → 4
+- `All G and VT Spot Instance Requests`  → 4
+
+Approval is usually 1–24 hours. If you skip the spot one and launch with
+`MarketType=spot`, you'll see `Max spot instance count exceeded` — either
+wait for the bump or drop the spot flag and run on-demand at ~$1.01/h.
+
+**Launch via AWS CLI:**
+
+```bash
+# Find the latest Deep Learning Base GPU AMI in your region
+AMI_ID=$(aws ec2 describe-images --owners amazon \
+  --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" \
+  --query 'Images | sort_by(@,&CreationDate) | [-1].ImageId' --output text)
+
+# Launch
+aws ec2 run-instances \
+  --instance-type g5.xlarge \
+  --image-id "$AMI_ID" \
+  --key-name my-key \
+  --security-group-ids sg-XXXXXXXX \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=80,VolumeType=gp3}' \
+  --instance-market-options 'MarketType=spot' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=lca-stage3}]'
+```
+
+Grab the public IPv4 from the response and SSH in:
+```bash
+ssh ubuntu@<public-ip>
+```
+
+Verify the GPU is visible before installing anything:
+```bash
+nvidia-smi   # should show 1× NVIDIA A10G with ~22 GB free
+```
+
+**Don't forget to terminate.** EBS volumes keep billing after stop;
+`aws ec2 terminate-instances --instance-ids i-...` is the bill-stopper.
+
+### Step 2 — Install vLLM and pull the model
+
+```bash
+# On the GPU box
+sudo apt-get update && sudo apt-get install -y python3.10 python3.10-venv
+python3.10 -m venv ~/vllm-venv
+source ~/vllm-venv/bin/activate
+pip install --upgrade pip
+pip install vllm                       # ~3 min — pulls torch + CUDA wheels
+pip install hf_transfer                # parallel HF downloads
+
+# If using a gated model (Llama 3.1):
+export HF_TOKEN=hf_...
+huggingface-cli login --token $HF_TOKEN
+
+# Pre-fetch weights so the first request isn't a 5-min download
+export HF_HUB_ENABLE_HF_TRANSFER=1
+huggingface-cli download meta-llama/Llama-3.1-8B-Instruct
+```
+
+For a free alternative, swap to `Qwen/Qwen2.5-7B-Instruct` — accuracy is
+within a few points on this task and no token is needed.
+
+### Step 3 — Start the vLLM OpenAI-compatible server
+
+Because we'll expose the endpoint over the public internet (via ngrok in
+Step 4), pick a random API key first and pass it to vLLM — that way only
+clients with the key can talk to your model.
+
+```bash
+# On the GPU box, in a tmux/screen session
+export VLLM_API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+echo "Save this key — you'll paste it on the laptop: $VLLM_API_KEY"
+
+python -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --host 0.0.0.0 --port 8000 \
+    --max-model-len 4096 \
+    --gpu-memory-utilization 0.92 \
+    --max-num-seqs 256 \
+    --enforce-eager \
+    --api-key "$VLLM_API_KEY"
+```
+
+Wait ~60 s for `INFO ... Application startup complete`. Key flags:
+- `--max-num-seqs 256` is the **continuous-batching cap** — vLLM will
+  pack up to 256 concurrent requests through the model in a single
+  forward pass. This is what makes throughput viable.
+- `--max-model-len 4096` cuts memory; our prompts are <500 tokens.
+- `--enforce-eager` skips the CUDA graph compile (~30 s saved, negligible
+  perf hit at our scale).
+- `--api-key` requires every request to send `Authorization: Bearer …`.
+
+Sanity-check from another shell on the box:
+```bash
+curl -H "Authorization: Bearer $VLLM_API_KEY" http://localhost:8000/v1/models
+```
+
+### Step 4 — Expose vLLM via a public tunnel (no port opened on your Mac)
+
+You're inverting the direction: the GPU box advertises a public URL, and
+your laptop just calls it. Nothing needs to listen on your Mac.
+
+**Option A — ngrok (recommended, 5-min setup):**
+
+On the GPU box:
+```bash
+# One-time install
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list
+sudo apt-get update && sudo apt-get install -y ngrok
+
+# One-time auth (free ngrok.com account → "Your Authtoken")
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+
+# In a second tmux/screen pane — keep this running for the whole drain
+ngrok http 8000
+```
+
+ngrok prints a public URL like `https://abc123.ngrok-free.app`. That's
+your endpoint; use it on the laptop in Step 5. The URL changes every time
+you restart ngrok unless you reserve a static domain (free tier supports
+one static domain per account: `ngrok http --domain your-name.ngrok.dev 8000`).
+
+**Option B — Cloudflare Tunnel (free, no time limit, no random URL):**
+
+```bash
+# On the GPU box
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared
+
+cloudflared tunnel --url http://localhost:8000
+```
+Prints a `https://<random>.trycloudflare.com` URL — same usage pattern.
+Better for long-running jobs since there's no session expiry, but
+slightly higher latency than ngrok.
+
+**Option C — Open the cloud security group on port 8000 to your IP only.**
+Skip the tunnel entirely. Faster setup but the endpoint is reachable by
+anyone scanning the cloud provider's IP range (the `--api-key` from
+Step 3 is still your line of defence).
+
+In all three cases nothing listens on your Mac.
+
+### Step 5 — Point the reclassify CLI at the remote endpoint
+
+On your **local machine**, in the repo root:
+
+```bash
+# .env on the local host
+LLM_BACKEND=openai-compatible
+LLM_BASE_URL=https://abc123.ngrok-free.app/v1  # the URL ngrok printed
+LLM_API_KEY=<paste the VLLM_API_KEY from Step 3>
+LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
+LLM_CONCURRENCY=128                             # client-side semaphore
+LLM_BATCH_SIZE=32                               # records fetched per DB roundtrip
+```
+
+Quick smoke-test before launching the full drain:
+```bash
+curl -H "Authorization: Bearer $LLM_API_KEY" "$LLM_BASE_URL/models"
+```
+
+`LLM_CONCURRENCY` is the number of in-flight HTTP requests; combined with
+vLLM's `--max-num-seqs 256` it determines effective throughput. 128 is a
+safe ceiling on a single A10G; try 64 first, watch the box's GPU
+utilisation (`nvidia-smi -l 1`), then raise if you see headroom.
+
+### Step 6 — Run the drain
+
+```bash
+# Dry-run on a small slice first
+pnpm quarantine:reclassify -- --limit 200
+
+# Full drain
+pnpm quarantine:reclassify
+```
+
+Internally the CLI:
+1. Reads `staging.quarantine_records WHERE reprocessed_at IS NULL` in
+   keyset-paginated batches of `LLM_BATCH_SIZE`.
+2. For each record, asks the LLM to pick from the top-K Stage 2 SOC
+   candidates (a constrained-choice prompt — no free-text hallucination).
+3. Dispatches up to `LLM_CONCURRENCY` requests concurrently via
+   `asyncio.gather` behind an `asyncio.Semaphore`.
+4. Writes back `lca_records.soc_code` (matched by `_nlp_id`), stamps
+   `staging.quarantine_records.reprocessed_at`.
+
+Crash-safe: the CLI is idempotent on `reprocessed_at IS NULL`, so killing
+it mid-run and resuming picks up at the last committed checkpoint.
+
+### Monitoring
+
+```bash
+# Watch progress (open queue depth):
+watch -n 30 'psql "$DATABASE_URL" -c \
+  "SELECT count(*) FROM staging.quarantine_records WHERE reprocessed_at IS NULL"'
+
+# On the GPU box:
+nvidia-smi -l 2           # should sit near 90-99% util
+watch -n 2 'curl -s http://localhost:8000/metrics | grep vllm:num_requests'
+```
+
+Expected steady state: ~10–20 records/sec on a single A10G with
+`--max-num-seqs 256`. 181 K records ≈ 3–5 h. Add an hour for warm-up,
+HTTP latency, and DB write-back.
+
+### Refresh analytics + teardown
+
+```bash
+# Local — recompute matviews so the dashboard reflects the drain
+pnpm analytics:refresh-views
+
+# Cloud — destroy the box (this is the bill counter)
+lambda-cloud instances terminate <instance-id>
+```
+
+### Cost ballpark
+
+| Provider / instance | $/hour | 5 h drain |
+|---|---:|---:|
+| Lambda Labs `gpu_1x_a10`        | $0.75 | $3.75 |
+| RunPod community A10G           | $0.39 | $1.95 |
+| GCP `g2-standard-8` (L4)        | $0.71 | $3.55 |
+| AWS `g5.xlarge` (A10G)          | $1.01 | $5.05 |
+
+A single drain run costs less than dinner. The expensive part is human
+review of the *quality* afterwards — not the GPU time.
+
+### Caveats
+
+- **Stage 3 quality gate.** The CLI still respects the existing short-title
+  routing rule (`SocClassifier`'s short-title gate): titles like `"X"` or
+  `"-"` bypass the LLM and stay in HITL, because an LLM will confidently
+  hallucinate on garbage input.
+- **Constrained choice, not generation.** The prompt restricts the LLM to
+  the top-K candidates from Stage 2. The LLM picks; it does not invent SOC
+  codes. This is the structural guard against hallucination.
+- **Network egress.** If you're behind a corporate VPN, Option B
+  (open port + IP allowlist) is usually easier than negotiating a reverse
+  tunnel through proxy filters.
+
+---
+
 ## Workspace Dependency Graph
 
 ```
@@ -496,8 +834,8 @@ nlp-engine (Python) ──▶ PostgreSQL 16 (soc_code, canonical_employer_id wri
                                                               merges unresolved)
 
   Browser ──▶ analytics-ui (Fastify, port 8081, public) ──▶ analytics.mv_* reads
-                                                             (4 persona pages,
-                                                              12 matviews + 1 view)
+                                                             (10 persona pages,
+                                                              22 matviews + 1 view)
 ```
 
 ---

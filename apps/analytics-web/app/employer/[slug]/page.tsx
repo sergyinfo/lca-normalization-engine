@@ -1,0 +1,272 @@
+import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import type { Metadata } from 'next';
+import { ArrowLeft, MapPin } from 'lucide-react';
+
+import {
+  getEmployer, getEmployerTopSocs, getEmployerYearly,
+  getEntitySummary, listAllEmployerSlugs,
+} from '@/lib/queries';
+import { fmt, fmtPct, fmtFy } from '@/lib/format';
+import { entityMetadata, organizationJsonLd } from '@/lib/seo';
+import { loadArticle } from '@/lib/article';
+import { SITE_URL } from '@/lib/site';
+
+import { EntityHero } from '@/components/EntityHero';
+import { Summary } from '@/components/Summary';
+import { Article } from '@/components/Article';
+import { AdSlot } from '@/components/AdSlot';
+import {
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
+} from '@/components/ui/card';
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
+import { LineChartClient } from '@/components/charts/LineChartClient';
+import { StackedBarSvg } from '@/components/charts/StackedBarSvg';
+
+export const dynamicParams = false;
+
+export function generateStaticParams() {
+  return listAllEmployerSlugs().map((slug) => ({ slug }));
+}
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ slug: string }> },
+): Promise<Metadata> {
+  const { slug } = await params;
+  const e = getEmployer(slug);
+  if (!e) return { title: 'Not found' };
+  return entityMetadata({
+    title: `${e.canonical_name} — H-1B sponsor profile`,
+    description: `H-1B sponsorship data for ${e.canonical_name}: ${e.filings.toLocaleString()} Labor Condition Applications filed, ${fmtPct(e.certified_pct)} certified, top occupations and yearly trend.`,
+    path: `/employer/${slug}`,
+  });
+}
+
+export default async function EmployerPage(
+  { params }: { params: Promise<{ slug: string }> },
+) {
+  const { slug } = await params;
+  const e = getEmployer(slug);
+  if (!e) notFound();
+
+  const [topSocs, yearly, summary, article] = await Promise.all([
+    Promise.resolve(getEmployerTopSocs(slug)),
+    Promise.resolve(getEmployerYearly(slug)),
+    Promise.resolve(getEntitySummary('employer', slug)),
+    loadArticle('employer', slug),
+  ]);
+
+  const socBars   = topSocs.map((s) => ({
+    label: s.soc_title ?? s.soc_code,
+    value: s.filings,
+  }));
+  const yearlyPts = yearly.map((y) => ({ label: `FY${y.year}`, value: y.filings }));
+
+  // Outcomes stacked bar — only if we have any of the four percentages.
+  const outcomeSlices = [
+    { label: 'Certified',      value: e.certified_pct ?? 0,     color: 'hsl(160 84% 39%)' },
+    { label: 'Cert-withdrawn', value: e.cert_withdrawn_pct ?? 0, color: 'hsl(38  92% 50%)' },
+    { label: 'Withdrawn',      value: e.withdrawn_pct ?? 0,     color: 'hsl(220 14% 70%)' },
+    { label: 'Denied',         value: e.denied_pct ?? 0,        color: 'hsl(0   84% 60%)' },
+  ].filter((s) => s.value > 0);
+  const hasOutcomes = outcomeSlices.length > 0;
+
+  const chips = [
+    ...(e.employer_state ? [{ label: e.employer_state }] : []),
+    { label: `Rank #${e.rank}`, variant: 'secondary' as const },
+    ...(e.fein ? [{ label: `FEIN ${e.fein}`, variant: 'outline' as const }] : []),
+  ];
+
+  return (
+    <>
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="pb-2">
+        <Link
+          href="/employer"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="size-3.5" />
+          All sponsors
+        </Link>
+      </nav>
+
+      <EntityHero
+        eyebrow="H-1B sponsor"
+        chips={chips}
+        title={e.canonical_name}
+        subtitle={
+          <>
+            US H-1B Labor Condition Application activity for{' '}
+            <strong className="text-foreground/90">{e.canonical_name}</strong>.{' '}
+            Filed <span className="tabular-nums font-medium">{fmt(e.filings)}</span> disclosures between{' '}
+            {fmtFy(e.first_year)} and {fmtFy(e.last_year)}
+            {e.employer_state ? (
+              <> from worksites with a {e.employer_state} headquarters indicator.</>
+            ) : '.'}
+          </>
+        }
+        kpis={[
+          { label: 'Total filings', value: fmt(e.filings),         sub: `Rank #${e.rank}`,       accent: true },
+          { label: 'Certified',     value: fmtPct(e.certified_pct), sub: 'unconditional approval' },
+          { label: 'Withdrawn',     value: fmtPct(e.withdrawn_pct), sub: 'incl. cert-withdrawn' },
+          { label: 'Denied',        value: fmtPct(e.denied_pct),    sub: 'rejection rate' },
+        ]}
+      />
+
+      <Summary summary={summary} />
+
+      {/* Outcomes stacked bar — compact, one-line view at the top. */}
+      {hasOutcomes ? (
+        <Card className="mt-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Outcome breakdown</CardTitle>
+            <CardDescription>
+              Share of {e.canonical_name}&rsquo;s LCAs by DOL case status.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <StackedBarSvg slices={outcomeSlices} />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <AdSlot name="employer-top" />
+
+      <div className="grid lg:grid-cols-2 gap-6 pt-2">
+        {/* ----- Top occupations sponsored -------------------------------- */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Top occupations sponsored</CardTitle>
+            <CardDescription>
+              SOC codes filed most by {e.canonical_name}. Click any row to open
+              the national salary guide.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            {topSocs.length > 0 ? (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10">#</TableHead>
+                      <TableHead>SOC</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead className="text-right">Filings</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {topSocs.map((s) => (
+                      <TableRow key={s.soc_code}>
+                        <TableCell className="text-muted-foreground tabular-nums">{s.rank}</TableCell>
+                        <TableCell className="font-mono text-xs">{s.soc_code}</TableCell>
+                        <TableCell>
+                          {s.soc_slug ? (
+                            <Link href={`/occupation/${s.soc_slug}`} className="font-medium hover:text-primary">
+                              {s.soc_title ?? '—'}
+                            </Link>
+                          ) : (
+                            <span>{s.soc_title ?? '—'}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(s.filings)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="border-t px-4 py-3">
+                  <HorizontalBarSvg
+                    data={socBars}
+                    labelWidth={180}
+                    gradient={['hsl(217 91% 55%)', 'hsl(190 95% 50%)']}
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="px-6 pb-6 text-sm text-muted-foreground">No occupation breakdown available.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ----- Filings by year ----------------------------------------- */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Filings by fiscal year</CardTitle>
+            <CardDescription>
+              Year-over-year H-1B filing volume — a hiring-demand signal,
+              not headcount.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-0 pb-0">
+            {yearly.length > 0 ? (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Year</TableHead>
+                      <TableHead className="text-right">Filings</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {yearly.map((y) => (
+                      <TableRow key={y.year}>
+                        <TableCell>FY{y.year}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(y.filings)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="border-t px-4 py-3">
+                  <LineChartClient data={yearlyPts} color="hsl(217 91% 55%)" height={220} />
+                </div>
+              </>
+            ) : (
+              <p className="px-6 pb-6 text-sm text-muted-foreground">No yearly breakdown available.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <AdSlot name="employer-mid" />
+
+      <Article article={article} />
+
+      {/* Secondary "explore more" rail at the bottom */}
+      <Card className="mt-8 bg-secondary/30 border-primary/20">
+        <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="size-9 rounded-md bg-background flex items-center justify-center text-primary">
+              <MapPin className="size-4" />
+            </div>
+            <div>
+              <div className="font-semibold">Explore the program more broadly</div>
+              <div className="text-sm text-muted-foreground">
+                Compare {e.canonical_name} against ranked leaderboards and
+                state-level views.
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/top-h1b-sponsors">Top 100 sponsors</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/cleanest-h1b-sponsors">Cleanest sponsors</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <script
+        type="application/ld+json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(organizationJsonLd(e, `${SITE_URL}/employer/${slug}`)),
+        }}
+      />
+    </>
+  );
+}

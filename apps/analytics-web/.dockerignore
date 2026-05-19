@@ -1,0 +1,13 @@
+node_modules
+.next
+.env
+.env.local
+.git
+.DS_Store
+
+# Build artefacts that should be re-created inside the image
+*.tsbuildinfo
+
+# Local key DB MUST NOT leak into the image — it lives on a volume.
+data/keys.db
+data/keys.db-*

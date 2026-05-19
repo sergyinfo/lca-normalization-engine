@@ -1,0 +1,103 @@
+<%- include('partials/header', { title, active }) %>
+
+<section class="persona-hero">
+  <h1>Student / Career Planner</h1>
+  <p>The career-trajectory angle: for the SOC you're aiming at, see entry → senior pay (PW_WAGE_LEVEL I→IV), the best-paying states, and which employers hire most.</p>
+  <ul class="questions">
+    <li>How does pay scale from entry to senior in this occupation?</li>
+    <li>Which states pay the most for this role?</li>
+    <li>Which employers file the most for this SOC — i.e. who's actually hiring?</li>
+    <li>How has the median wage drifted over time?</li>
+  </ul>
+</section>
+
+<form class="filters" method="get" action="/student">
+  <label>SOC / Target occupation
+    <select name="soc">
+      <% socOptions.forEach(o => { %>
+        <option value="<%= o.soc_code %>" <%= soc === o.soc_code ? 'selected' : '' %>>
+          <%= o.soc_code %> — <%= (o.soc_title || '').slice(0, 60) %> (<%= Number(o.filings).toLocaleString() %>)
+        </option>
+      <% }) %>
+    </select>
+  </label>
+  <button type="submit">Update</button>
+</form>
+
+<div class="panel-grid">
+  <%- include('partials/panel', {
+    title: 'Career ladder — entry (Level I) → senior (Level IV)',
+    subtitle: 'P25 / P50 / P75 across the four DOL prevailing-wage levels. The gap between I and IV = your career-growth runway.',
+    tag: 'ladder',
+    chartId: 'chartLadder',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Best-paying states for this SOC',
+    subtitle: 'Top 10 states by median offered wage (n ≥ 25 filings).',
+    tag: 'geography',
+    chartId: 'chartStates',
+    body: null,
+  }) %>
+
+  <%- include('partials/panel', {
+    title: 'Wage trend — median wage over time',
+    subtitle: 'How the median annual wage for this SOC has moved year by year.',
+    tag: 'trend',
+    chartId: 'chartTrend',
+    body: null,
+  }) %>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+  <header class="panel-head"><h2>Top employers for <%= soc %><%= selectedTitle ? ' — ' + selectedTitle.slice(0, 60) : '' %></h2><span class="tag">employers</span></header>
+  <p class="panel-sub muted small">Canonical employers — duplicate name spellings already merged.</p>
+  <table class="data">
+    <thead><tr><th>#</th><th>Canonical employer</th><th>State</th><th class="num">Filings</th></tr></thead>
+    <tbody>
+    <% employers.forEach((e, i) => { %>
+      <tr>
+        <td><%= i + 1 %></td>
+        <td><%= e.canonical_name %></td>
+        <td><%= e.employer_state || '—' %></td>
+        <td class="num"><%= Number(e.filings).toLocaleString() %></td>
+      </tr>
+    <% }) %>
+    </tbody>
+  </table>
+</section>
+
+<script>
+const ladderLabels = <%- JSON.stringify(ladder.map(l => 'Level ' + l.wage_level)) %>;
+const ladderP25 = <%- JSON.stringify(ladder.map(l => Number(l.p25))) %>;
+const ladderP50 = <%- JSON.stringify(ladder.map(l => Number(l.p50))) %>;
+const ladderP75 = <%- JSON.stringify(ladder.map(l => Number(l.p75))) %>;
+new Chart(document.getElementById('chartLadder'), {
+  type: 'bar',
+  data: { labels: ladderLabels, datasets: [
+    { label: 'P25', data: ladderP25, backgroundColor: 'rgba(219,39,119,0.35)' },
+    { label: 'Median', data: ladderP50, backgroundColor: '#db2777' },
+    { label: 'P75', data: ladderP75, backgroundColor: 'rgba(190,24,93,0.85)' },
+  ] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: c => c.dataset.label + ': $' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+
+const stateLabels = <%- JSON.stringify(states.map(s => s.state)) %>;
+const stateMedians = <%- JSON.stringify(states.map(s => Number(s.p50))) %>;
+new Chart(document.getElementById('chartStates'), {
+  type: 'bar',
+  data: { labels: stateLabels, datasets: [{ label: 'Median wage', data: stateMedians, backgroundColor: '#db2777' }] },
+  options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => '$' + Number(c.parsed.x).toLocaleString() } } }, scales: { x: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+
+const trendLabels = <%- JSON.stringify(trend.map(t => 'FY' + t.year)) %>;
+const trendValues = <%- JSON.stringify(trend.map(t => Number(t.median_wage))) %>;
+new Chart(document.getElementById('chartTrend'), {
+  type: 'line',
+  data: { labels: trendLabels, datasets: [{ data: trendValues, borderColor: '#db2777', backgroundColor: 'rgba(219,39,119,0.15)', fill: true, tension: 0.25, pointRadius: 4 }] },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => '$' + Number(c.parsed.y).toLocaleString() } } }, scales: { y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'k' } } } },
+});
+</script>
+
+<%- include('partials/footer') %>
