@@ -207,6 +207,182 @@ First-year cost is lower thanks to the CloudFront free tier (1 TB/mo) and Lambda
 
 ---
 
+## Tagging
+
+Every taggable resource in every stack gets a consistent set of tags
+applied via CDK tag propagation. This unlocks:
+
+- Cost Explorer grouping by project / component / environment
+- Resource Groups for "show me everything in this project"
+- IAM conditions that reference tags (e.g. the burst EC2's
+  `TerminateInstances` permission is scoped to `BurstWorker=true`)
+
+### The canonical tag set
+
+| Tag | Set at | Example values | Why |
+|---|---|---|---|
+| `Project` | App level (`bin/app.ts`) | `h1b-report` | Top-level project identifier; the one to use in Cost Explorer |
+| `ManagedBy` | App level | `cdk` | Distinguish from Terraform / hand-built resources in mixed accounts |
+| `Repository` | App level | `lca-normalization-engine` | Trace any resource back to source |
+| `Environment` | App level | `prod` / `staging` / `dev` | Read from `LCA_ENVIRONMENT` env var at synth time |
+| `Component` | Each stack | `shared` / `data-pipeline` / `serve` | Sub-system filtering inside the project |
+| `BurstWorker` | Burst EC2 only | `true` | Used by the IAM `TerminateInstances` condition; intentionally a separate key from `Project` so it can't be satisfied accidentally |
+| `Name` | Burst EC2 only | `lca-burst-worker` | Surface a friendly name in the EC2 console |
+
+### What gets tagged automatically
+
+`Tags.of(scope).add(...)` propagates through the entire construct tree, so
+**every taggable resource** in the named scope receives the tag — without
+having to remember to tag each construct individually. That includes:
+
+- S3 buckets, ECR repositories, Secrets Manager secrets, SSM parameters
+- Lambda functions + their log groups
+- EC2 launch templates, VPC + subnets + security groups, instances launched from those templates
+- Step Functions state machines, EventBridge rules, SNS topics
+- CloudFront distributions, IAM roles, CloudWatch log groups
+
+So every resource shows up in Cost Explorer when you group by `Project` or `Component`.
+
+### Activating tags for cost reporting
+
+Tags don't appear in Cost Explorer until you **activate** them as
+cost-allocation tags (one-time per AWS account):
+
+```bash
+# Activate the project tags for cost reporting
+aws ce update-cost-allocation-tags-status --cost-allocation-tags-status \
+  '[{"TagKey":"Project","Status":"Active"},
+    {"TagKey":"Component","Status":"Active"},
+    {"TagKey":"Environment","Status":"Active"},
+    {"TagKey":"ManagedBy","Status":"Active"}]'
+```
+
+Wait 24 hours; new cost data will be tagged from that point forward. (Historical cost can't be retroactively tagged — only new usage.)
+
+### Common queries
+
+```bash
+# Show every resource tagged Project=h1b-report (via Resource Groups)
+aws resourcegroupstaggingapi get-resources \
+  --tag-filters Key=Project,Values=h1b-report \
+  --query 'ResourceTagMappingList[].ResourceARN' --output table
+
+# Filter by component
+aws resourcegroupstaggingapi get-resources \
+  --tag-filters Key=Project,Values=h1b-report Key=Component,Values=serve
+
+# Just the burst EC2 (live or recently-terminated within retention window)
+aws ec2 describe-instances \
+  --filters Name=tag:BurstWorker,Values=true \
+  --query 'Reservations[].Instances[].[InstanceId,State.Name,LaunchTime]' \
+  --output table
+```
+
+### Cost Explorer in the console
+
+1. AWS Console → Billing → Cost Explorer
+2. **Group by** → `Tag` → `Project`
+3. **Filter** → `Tag` → `Project = h1b-report`
+4. (Optional) add a second group: `Component` to split serve / data-pipeline / shared costs
+5. Switch the time range to "last 30 days, daily" — the burst-pipeline cost spikes show up clearly on rebuild days
+
+### Overriding for dev / staging
+
+```bash
+LCA_ENVIRONMENT=staging pnpm deploy:all
+```
+
+Every resource in the staging deployment now has `Environment=staging`, so you can run dev/prod side-by-side in the same account and slice Cost Explorer cleanly.
+
+### Tag governance
+
+If you want to *enforce* tags at deploy time (block resources without
+required tags), wrap the App in an `Aspect`:
+
+```typescript
+// In bin/app.ts:
+import { Aspects } from 'aws-cdk-lib';
+import { TagsRequired } from './lib/aspects/tags-required.js';
+
+Aspects.of(app).add(new TagsRequired(['Project', 'Component']));
+```
+
+The aspect walks every node at synth time and fails the build if a
+required tag is missing. Useful once the project has more than one
+contributor. Not included by default — it's a one-line add when you need it.
+
+## Logging
+
+Every component of the stack streams to CloudWatch Logs. Retention is
+30 days everywhere, set via CDK (not via the agent's defaults) so
+adjusting it is a one-line code change.
+
+| Log group | Source | What's in it |
+|---|---|---|
+| `/aws/lambda/lca-analytics-web` | Serving Lambda | Every Next.js console.log/error from request handling |
+| `/aws/lambda/<DolChecker name>` | DOL checker Lambda | ETag comparisons, Step Fn triggers |
+| `/lca/burst/stepfunctions` | Step Functions | Every state transition (level=ALL, includes execution data) |
+| `/lca/burst/userdata` | Burst EC2 cloud-init | The pipeline's own stdout — `pnpm build:sqlite`, `docker compose`, `aws s3 cp`, … |
+| `/lca/burst/cloud-init` | Burst EC2 system logs | Amazon Linux's own cloud-init logs (boot, package install) |
+| `/lca/burst/docker` | Containers on burst EC2 | Postgres, Redis, ingest workers — every container's stdout/stderr via Docker's awslogs driver |
+
+### How it's wired
+
+- **Lambda functions** auto-stream stdout/stderr to their `/aws/lambda/<name>` group; the CDK construct sets retention.
+- **Step Functions** writes to its own group via the `logs: { destination, level: ALL }` config on the state machine. `tracingEnabled: true` also turns on X-Ray, which is free at this volume.
+- **EC2 burst instance** runs the [CloudWatch Agent](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Install-CloudWatch-Agent.html), installed as the *first* step of cloud-init so all subsequent script output is captured. The agent config is generated inline (see `data-pipeline-stack.ts`) and points at the three pre-created log groups.
+- **Docker containers on EC2** use the `awslogs` log driver, configured via `/etc/docker/daemon.json` before any container starts. Every container automatically gets a stream in `/lca/burst/docker` tagged with its name + ID.
+- **IAM**: the EC2 instance role has the `CloudWatchAgentServerPolicy` managed policy — that covers both the agent and the Docker awslogs driver.
+
+### Tailing logs from the CLI
+
+```bash
+# Serving Lambda — most useful day-to-day
+aws logs tail /aws/lambda/lca-analytics-web --follow
+
+# A specific burst run (instance terminated 10 min after run; logs persist)
+aws logs tail /lca/burst/userdata --follow --since 1h
+
+# Postgres + ingest container output from a recent run
+aws logs tail /lca/burst/docker --follow --since 1h
+
+# Step Functions execution trace
+aws logs tail /lca/burst/stepfunctions --follow --since 1h
+
+# DOL checker output — confirm it's actually running on schedule
+aws logs tail /aws/lambda/lca-DolChecker --since 1d
+```
+
+### Searching across groups (CloudWatch Insights)
+
+```sql
+-- Find every burst-EC2 run that failed in the last 7 days
+fields @timestamp, @message, @log
+| filter @log like /lca\/burst/
+| filter @message like /(?i)error|failed|fatal/
+| sort @timestamp desc
+| limit 100
+
+-- Slow Next.js requests (> 1s)
+fields @timestamp, @duration, @message
+| filter @log like /lca-analytics-web/
+| filter @duration > 1000
+| stats count() by bin(5m)
+```
+
+### Cost
+
+CloudWatch Logs ingestion is $0.50/GB. The whole pipeline generates well under 100 MB/month at this scale (most of it is per-build burst logs), so steady-state cost is **< $0.10/mo**. Retention at 30 days keeps storage costs negligible too.
+
+### Tuning
+
+| Want | How |
+|---|---|
+| Longer retention | Change `logs.RetentionDays.ONE_MONTH` in `data-pipeline-stack.ts` to e.g. `THREE_MONTHS` or `ONE_YEAR`; `cdk deploy LcaDataPipelineStack` |
+| Less Step Fn noise | Drop `level: sfn.LogLevel.ALL` back to `ERROR` |
+| Per-container streams instead of one shared | In `/etc/docker/daemon.json` (cloud-init), change `awslogs-group` to `"awslogs-group": "/lca/burst/{{.Name}}"` |
+| Alerts on errors | Add a `MetricFilter` + `Alarm` on each group — see [CloudWatch Logs metric filters](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/MonitoringLogData.html) |
+
 ## Operations
 
 | Task | How |

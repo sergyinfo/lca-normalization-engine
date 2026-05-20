@@ -16,15 +16,13 @@
  * if you need sub-second p99.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cf from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as ecr from 'aws-cdk-lib/aws-ecr';
 import type { LcaSharedStack } from './shared-stack.js';
 
 interface ServeStackProps extends StackProps {
@@ -35,6 +33,8 @@ export class LcaServeStack extends Stack {
   constructor(scope: Construct, id: string, props: ServeStackProps) {
     super(scope, id, props);
     const { shared } = props;
+
+    Tags.of(this).add('Component', 'serve');
 
     // ---------------------------------------------------------------------
     // S3 bucket holding static Next.js assets uploaded out-of-band by the

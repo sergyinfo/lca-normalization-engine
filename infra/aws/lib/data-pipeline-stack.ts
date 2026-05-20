@@ -19,7 +19,7 @@
  * unlikely, but the guard is there.
  */
 
-import { Stack, StackProps, Duration } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -31,7 +31,6 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LcaSharedStack } from './shared-stack.js';
@@ -47,12 +46,43 @@ export class LcaDataPipelineStack extends Stack {
     super(scope, id, props);
     const { shared } = props;
 
+    Tags.of(this).add('Component', 'data-pipeline');
+
     // ---------------------------------------------------------------------
     // SNS topic for build notifications (success + failure).
     // Subscribe operators (email/Slack/PagerDuty) out-of-band.
     // ---------------------------------------------------------------------
     const notifyTopic = new sns.Topic(this, 'BuildNotifications', {
       displayName: 'LCA build pipeline notifications',
+    });
+
+    // ---------------------------------------------------------------------
+    // Pre-create CloudWatch log groups so retention is IaC-managed (not
+    // left to the CloudWatch Agent's defaults). Every piece of the burst
+    // pipeline streams into one of these:
+    //
+    //   /lca/burst/userdata    ← cloud-init `userData.addCommands(...)` output
+    //   /lca/burst/cloud-init  ← Amazon Linux's own cloud-init logs
+    //   /lca/burst/docker      ← any container started on the EC2 (PG, ingest)
+    //
+    // The EC2 self-terminates at the end of the run, so without shipping
+    // these to CloudWatch the logs are LOST. CW Agent + Docker awslogs
+    // driver below do the shipping; these groups are the destinations.
+    // ---------------------------------------------------------------------
+    const userdataLogGroup = new logs.LogGroup(this, 'BurstUserdataLogs', {
+      logGroupName: '/lca/burst/userdata',
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const cloudInitLogGroup = new logs.LogGroup(this, 'BurstCloudInitLogs', {
+      logGroupName: '/lca/burst/cloud-init',
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const dockerLogGroup = new logs.LogGroup(this, 'BurstDockerLogs', {
+      logGroupName: '/lca/burst/docker',
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     // ---------------------------------------------------------------------
@@ -85,13 +115,24 @@ export class LcaDataPipelineStack extends Stack {
     ec2Role.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     );
+    // CloudWatch Agent + Docker awslogs driver need to create/write log
+    // streams against the pre-created groups above. The managed policy
+    // covers PutLogEvents / CreateLogStream / DescribeLogStreams /
+    // DescribeLogGroups for the agent's typical needs.
+    ec2Role.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy'),
+    );
     // Allow the instance to push a new Lambda image to ECR after building it.
     shared.lambdaImageRepo.grantPullPush(ec2Role);
-    // Allow self-terminate at the end of the run.
+    // Allow self-terminate at the end of the run. Scoped by the
+    // BurstWorker=true tag that runInstances explicitly stamps on the
+    // instance (see TagSpecifications below). A separate tag-key from
+    // the project-wide Project tag, so the IAM condition can't be
+    // satisfied by something tagged Project=h1b-report alone.
     ec2Role.addToPolicy(new iam.PolicyStatement({
       actions: ['ec2:TerminateInstances'],
       resources: ['*'],
-      conditions: { StringEquals: { 'ec2:ResourceTag/Project': 'lca-burst' } },
+      conditions: { StringEquals: { 'ec2:ResourceTag/BurstWorker': 'true' } },
     }));
     // Update the serving Lambda with the new image (lambda:UpdateFunctionCode).
     ec2Role.addToPolicy(new iam.PolicyStatement({
@@ -119,14 +160,61 @@ export class LcaDataPipelineStack extends Stack {
       `set -euxo pipefail`,
       `exec > >(tee /var/log/burst.log | logger -t burst -s 2>/dev/console) 2>&1`,
       ``,
-      `# Pull build params from EC2 instance metadata + Step Fn input`,
+      `# Pull build params from EC2 instance metadata`,
       `INSTANCE_ID=$(curl -sf http://169.254.169.254/latest/meta-data/instance-id)`,
       `REGION=$(curl -sf http://169.254.169.254/latest/meta-data/placement/region)`,
       ``,
-      `# Install Docker + Node 22 + git`,
+      `# ----- CloudWatch Agent: ship /var/log/burst.log + cloud-init.log -----`,
+      `# Install FIRST so the rest of this script's output is captured in CW.`,
+      `dnf install -y amazon-cloudwatch-agent`,
+      `mkdir -p /opt/aws/amazon-cloudwatch-agent/etc`,
+      `cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'JSON'`,
+      `{`,
+      `  "agent": { "metrics_collection_interval": 60, "run_as_user": "root" },`,
+      `  "logs": {`,
+      `    "logs_collected": {`,
+      `      "files": {`,
+      `        "collect_list": [`,
+      `          { "file_path": "/var/log/burst.log",`,
+      `            "log_group_name": "${userdataLogGroup.logGroupName}",`,
+      `            "log_stream_name": "{instance_id}",`,
+      `            "timestamp_format": "%b %d %H:%M:%S",`,
+      `            "timezone": "UTC" },`,
+      `          { "file_path": "/var/log/cloud-init-output.log",`,
+      `            "log_group_name": "${cloudInitLogGroup.logGroupName}",`,
+      `            "log_stream_name": "{instance_id}",`,
+      `            "timezone": "UTC" },`,
+      `          { "file_path": "/var/log/cloud-init.log",`,
+      `            "log_group_name": "${cloudInitLogGroup.logGroupName}",`,
+      `            "log_stream_name": "{instance_id}.cloud-init",`,
+      `            "timezone": "UTC" }`,
+      `        ]`,
+      `      }`,
+      `    }`,
+      `  }`,
+      `}`,
+      `JSON`,
+      `/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \\`,
+      `  -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s`,
+      ``,
+      `# ----- Docker + awslogs driver: ship every container's stdout to CW -----`,
       `dnf install -y docker git`,
+      `mkdir -p /etc/docker`,
+      `cat > /etc/docker/daemon.json <<JSON`,
+      `{`,
+      `  "log-driver": "awslogs",`,
+      `  "log-opts": {`,
+      `    "awslogs-region":       "$REGION",`,
+      `    "awslogs-group":        "${dockerLogGroup.logGroupName}",`,
+      `    "tag":                  "{{.Name}}/{{.ID}}",`,
+      `    "awslogs-create-stream": "true"`,
+      `  }`,
+      `}`,
+      `JSON`,
       `systemctl enable --now docker`,
       `usermod -a -G docker ec2-user`,
+      ``,
+      `# ----- Node 22 + pnpm -----`,
       `curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -`,
       `dnf install -y nodejs`,
       `npm install -g pnpm@9`,
@@ -253,7 +341,12 @@ export class LcaDataPipelineStack extends Stack {
         SubnetId: vpc.publicSubnets[0]!.subnetId,
         TagSpecifications: [{
           ResourceType: 'instance',
-          Tags: [{ Key: 'Project', Value: 'lca-burst' }],
+          // The IAM condition above checks BurstWorker=true; project-wide
+          // tags propagate from the launch template automatically.
+          Tags: [
+            { Key: 'BurstWorker', Value: 'true' },
+            { Key: 'Name',        Value: 'lca-burst-worker' },
+          ],
         }],
       },
       resultPath: '$.runResult',
@@ -281,10 +374,17 @@ export class LcaDataPipelineStack extends Stack {
       timeout: Duration.hours(4),
       logs: {
         destination: new logs.LogGroup(this, 'BuildPipelineLogs', {
+          logGroupName: '/lca/burst/stepfunctions',
           retention: logs.RetentionDays.ONE_MONTH,
+          removalPolicy: RemovalPolicy.DESTROY,
         }),
-        level: sfn.LogLevel.ERROR,
+        // ALL gives state-by-state transition records; useful for the
+        // first few months of operation. Bump to ERROR-only later if
+        // CloudWatch ingest cost becomes a concern (it won't at this scale).
+        level: sfn.LogLevel.ALL,
+        includeExecutionData: true,
       },
+      tracingEnabled: true,
     });
 
     // Wire the state machine ARN into the DOL checker now that it exists.

@@ -12,7 +12,7 @@
  * stacks can grant fine-grained IAM access to specific resources.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
@@ -34,6 +34,10 @@ export class LcaSharedStack extends Stack {
 
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    // Component tag — lets Cost Explorer / Resource Groups split costs and
+    // listings per sub-system within the project.
+    Tags.of(this).add('Component', 'shared');
 
     // ---- S3: lca.db artefacts (the build artefact that crosses stacks) ----
     this.lcaDbBucket = new s3.Bucket(this, 'LcaDbBucket', {
