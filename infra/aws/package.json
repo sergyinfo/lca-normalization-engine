@@ -7,11 +7,12 @@
     "build": "tsc",
     "synth": "cdk synth",
     "diff": "cdk diff",
-    "deploy:shared": "cdk deploy LcaSharedStack",
-    "deploy:data":   "cdk deploy LcaDataPipelineStack",
-    "deploy:serve":  "cdk deploy LcaServeStack",
-    "deploy:all":    "cdk deploy --all",
-    "destroy:all":   "cdk destroy --all"
+    "deploy:shared":  "cdk deploy LcaSharedStack",
+    "deploy:data":    "cdk deploy LcaDataPipelineStack",
+    "deploy:serve":   "cdk deploy LcaServeStack",
+    "deploy:budgets": "cdk deploy LcaBudgetsStack",
+    "deploy:all":     "cdk deploy --all",
+    "destroy:all":    "cdk destroy --all"
   },
   "devDependencies": {
     "aws-cdk": "^2.165.0",

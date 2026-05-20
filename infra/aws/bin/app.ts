@@ -18,6 +18,7 @@ import { App, Tags } from 'aws-cdk-lib';
 import { LcaSharedStack } from '../lib/shared-stack.js';
 import { LcaDataPipelineStack } from '../lib/data-pipeline-stack.js';
 import { LcaServeStack } from '../lib/serve-stack.js';
+import { LcaBudgetsStack } from '../lib/budgets-stack.js';
 
 const app = new App();
 
@@ -56,4 +57,11 @@ new LcaServeStack(app, 'LcaServeStack', {
   env,
   shared,
   description: 'Always-on serving: CloudFront + Lambda Container Image (Next.js) + S3 static origin.',
+});
+
+new LcaBudgetsStack(app, 'LcaBudgetsStack', {
+  env,
+  description: 'AWS Budgets + Cost Anomaly Detection. Email alerts via LCA_BILLING_EMAIL.',
+  // All thresholds also read from env vars; explicit props here as a
+  // safety net (see lib/budgets-stack.ts for the full list).
 });

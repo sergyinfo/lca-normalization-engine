@@ -60,6 +60,55 @@ pnpm install
 
 ---
 
+## First-time migration from a local environment
+
+If you've already ingested data locally and just want to host on AWS
+**without re-running the expensive ingest pipeline**, the flow is:
+
+1. Validate the CDK templates without spending money:
+   ```bash
+   pnpm install
+   pnpm synth
+   ```
+2. Bootstrap CDK in your target account/region (one-time):
+   ```bash
+   export CDK_DEFAULT_REGION=us-east-1
+   npx cdk bootstrap
+   ```
+3. Deploy the Shared stack only (creates empty buckets + ECR, no compute):
+   ```bash
+   pnpm deploy:shared
+   aws secretsmanager put-secret-value --secret-id lca/llm-api-key --secret-string "sk-..."
+   ```
+4. **Run the migration script** — uploads your local lca.db, builds + pushes the
+   Lambda image, dumps + uploads your local Postgres database:
+   ```bash
+   ./scripts/migrate-from-local.sh
+   ```
+5. Deploy the rest:
+   ```bash
+   pnpm deploy:serve   # ~15 min for CloudFront
+   pnpm deploy:data    # provisions burst pipeline, sits idle
+   ```
+6. Smoke-test the live CloudFront URL:
+   ```bash
+   CF_DOMAIN=$(aws cloudfront list-distributions \
+     --query 'DistributionList.Items[?Comment==`LCA analytics web — CloudFront distribution`].DomainName' \
+     --output text)
+   ../../scripts/smoke-test.sh "https://$CF_DOMAIN"
+   ```
+7. Activate cost-allocation tags, wait 24h, then deploy budgets (see §Tagging + §Billing).
+
+**No quarterly rebuild runs in step 5** — the data pipeline stack just
+sits idle until DOL publishes a new release. Your serving site uses the
+pre-built lca.db you uploaded in step 4.
+
+The Postgres dump on S3 lets future burst runs do *incremental* updates
+(restore dump → ingest new quarter → re-export) instead of bootstrapping
+from raw DOL XLSX files.
+
+---
+
 ## One-time setup
 
 ```bash
@@ -206,6 +255,140 @@ Conservative numbers for 300k visits/month + 4 builds/year:
 First-year cost is lower thanks to the CloudFront free tier (1 TB/mo) and Lambda free tier.
 
 ---
+
+## Billing alerts & budgets
+
+The `LcaBudgetsStack` ships **five budgets** plus **Cost Anomaly Detection**
+so a misconfigured loop or a runaway burst run can't quietly drain your
+account overnight.
+
+### What's protected
+
+| Budget | Default cap | Time unit | Filter | Notes |
+|---|---|---|---|---|
+| `lca-monthly-total` | **$20** | MONTHLY | `Project=h1b-report` | Catches the obvious "what happened?" case across the whole project |
+| `lca-monthly-serve` | $10 | MONTHLY | `Project + Component=serve` | CloudFront + Lambda + S3 — should sit at ~$3–6 |
+| `lca-monthly-data-pipeline` | $10 | MONTHLY | `Project + Component=data-pipeline` | Burst EC2 + Step Fn — should be $0 in months without a build |
+| `lca-quarterly-burst` | $50 | QUARTERLY | `Project + Component=data-pipeline` | One full build run should cost <$5; this catches a 10× anomaly |
+| `lca-annual-cap` | $150 | ANNUALLY | `Project=h1b-report` | Sanity ceiling for the whole project, full year |
+
+Each monthly/quarterly budget alerts at **50% / 80% / 100% of actual** plus
+**100% forecasted** (AWS projects month-end based on current trajectory and
+alerts early if the trajectory exceeds the cap). The annual cap uses a
+quieter ladder: 80% / 100% actual + 100% forecasted only.
+
+### Cost Anomaly Detection (free)
+
+On top of the fixed budgets, a CloudWatch-Cost-Explorer-side ML monitor
+watches for **spikes that don't trip a fixed threshold**. Example: your
+daily cost drifts from $0.50 to $5/day. That's a 10× jump but still under
+$20/month for half the month — the budget wouldn't fire. The anomaly
+monitor catches it within 24 hours.
+
+Configured threshold: **alert when an anomaly's total impact ≥ $5**. Tunable
+via `LCA_ANOMALY_THRESHOLD_USD`.
+
+### Where alerts go
+
+All alerts route through a dedicated **SNS topic** (`BillingAlertsTopic`,
+separate from build notifications) and to the email address set via
+`LCA_BILLING_EMAIL`. You can fan-out later by subscribing Slack, PagerDuty,
+or anything else to the SNS topic without touching the budgets themselves.
+
+```bash
+# Subscribe an email to the SNS topic (in addition to the direct budget email)
+aws sns subscribe \
+  --topic-arn $(aws sns list-topics \
+    --query 'Topics[?contains(TopicArn,`BillingAlertsTopic`)].TopicArn' --output text) \
+  --protocol email \
+  --notification-endpoint billing-ops@example.com
+
+# Subscribe a Slack webhook (via API Gateway → Lambda → Slack, or third-party)
+aws sns subscribe \
+  --topic-arn ... --protocol https --notification-endpoint https://hooks.slack.com/...
+```
+
+### Deploying
+
+```bash
+# Set the alert email before deploying
+export LCA_BILLING_EMAIL='you@example.com'
+
+# (Optional) override default thresholds
+export LCA_MONTHLY_BUDGET_USD=30
+export LCA_BURST_BUDGET_USD=80
+
+pnpm deploy:budgets
+```
+
+AWS sends a confirmation email to the address; click the "Confirm subscription" link before the first alert fires.
+
+### Prerequisite: activate cost-allocation tags
+
+Tag-filtered budgets (everything except a hypothetical "all-AWS" budget)
+need the underlying tags to be **activated as cost-allocation tags** in
+the Billing Console first. Until you do this, the tag filters return
+empty and the budget reports $0 — which silently disables them.
+
+```bash
+aws ce update-cost-allocation-tags-status --cost-allocation-tags-status \
+  '[{"TagKey":"Project","Status":"Active"},
+    {"TagKey":"Component","Status":"Active"},
+    {"TagKey":"Environment","Status":"Active"}]'
+```
+
+This takes 24 hours to propagate. Plan to deploy the budgets stack **after**
+the Shared/Data/Serve stacks have been deployed AND tags have been active
+for 24+ hours — otherwise the budgets will fire at 0% for a day.
+
+### Tuning the thresholds
+
+All thresholds are env-var driven so you don't have to edit code:
+
+| Env var | Default | What it caps |
+|---|---|---|
+| `LCA_MONTHLY_BUDGET_USD` | 20 | Whole project, per month |
+| `LCA_COMPONENT_BUDGET_USD` | 10 | Each of serve + data-pipeline, per month |
+| `LCA_BURST_BUDGET_USD` | 50 | Whole quarter of data-pipeline activity |
+| `LCA_ANNUAL_BUDGET_USD` | 150 | Whole project, full calendar year |
+| `LCA_ANOMALY_THRESHOLD_USD` | 5 | Anomaly Detection minimum dollar impact |
+| `LCA_BILLING_EMAIL` | _(none)_ | Recipient for direct + SNS-routed alerts |
+
+Set them inline:
+
+```bash
+LCA_MONTHLY_BUDGET_USD=50 LCA_BILLING_EMAIL=ops@example.com pnpm deploy:budgets
+```
+
+Or persist them in your shell profile / CI environment.
+
+### Going further: budget actions (not enabled by default)
+
+AWS Budgets supports **automatic actions** when a threshold trips: stop EC2
+instances, detach an IAM policy, etc. This is intentionally NOT enabled
+here because:
+
+- A misconfigured threshold could shut down your live website
+- For a thesis project, alert-first is the right default
+- Easy to add later via `CfnBudget.budget.actionsArn`
+
+If you want to add e.g. "stop the burst EC2 if monthly data-pipeline cost
+exceeds $30", that's ~20 lines added to `budgets-stack.ts`.
+
+### Verifying alerts work
+
+```bash
+# Confirm SNS topic exists with the right subscriptions
+aws sns list-subscriptions \
+  --query 'Subscriptions[?contains(TopicArn,`BillingAlertsTopic`)]'
+
+# List all budgets in the account (CDK-created + any pre-existing)
+aws budgets describe-budgets --account-id $(aws sts get-caller-identity --query Account --output text)
+
+# Force-test the anomaly monitor (no AWS API for "fire a test alert" —
+# easiest is to wait for a real anomaly, or temporarily lower the
+# threshold to $0.01 and trigger one)
+```
 
 ## Tagging
 
