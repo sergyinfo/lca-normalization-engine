@@ -20,6 +20,9 @@ export interface SiteKpis {
   first_year: number;
   last_year: number;
   median_wage: number;
+  /** Unix epoch seconds — when the lca.db snapshot was generated. Drives
+   *  sitemap lastModified and the "Updated" badge on entity pages. */
+  generated_at: number;
 }
 
 export interface EmployerRow {
@@ -170,7 +173,7 @@ export interface EntitySummaryRow {
 export function getSiteKpis(): SiteKpis {
   const row = queryOne<SiteKpis>(
     `SELECT total_records, canonical_employers, distinct_socs,
-            first_year, last_year, median_wage
+            first_year, last_year, median_wage, generated_at
        FROM site_kpis WHERE id = 1`,
   );
   if (!row) throw new Error('site_kpis missing from lca.db');

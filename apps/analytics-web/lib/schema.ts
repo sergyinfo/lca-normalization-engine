@@ -209,6 +209,24 @@ CREATE TABLE IF NOT EXISTS entity_summary (
   model        TEXT,
   PRIMARY KEY (kind, slug)
 );
+
+-- SEO: when a previously-included entity falls out of the top-N during a
+-- quarterly rebuild, its URL was indexed by search engines but the new
+-- build doesn't produce a static page for it. To preserve link equity and
+-- avoid 404s, we keep a row here and serve a 301 redirect (via
+-- next.config.ts).
+--
+-- Populated by scripts/build-sqlite.ts at build time: it reads the OLD
+-- lca.db (if any) for past entity slugs + past redirect sources, then for
+-- every historical slug not in the new build, ensures a redirect exists.
+-- If a slug rejoins the top-N, its old redirect row is NOT inserted, so
+-- the entity page resolves normally again.
+CREATE TABLE IF NOT EXISTS redirects (
+  source_path TEXT PRIMARY KEY,    -- e.g. "/employer/acme-corp"
+  target_path TEXT NOT NULL,       -- e.g. "/employer"
+  reason      TEXT NOT NULL,       -- "dropped-from-top-N", "renamed", etc.
+  added_at    INTEGER NOT NULL     -- unix epoch seconds
+);
 `;
 
 /** Types of entity pages the site renders. Used by sitemap + summary script. */

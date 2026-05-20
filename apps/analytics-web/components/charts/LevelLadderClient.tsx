@@ -6,6 +6,9 @@
  */
 
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, TOOLTIP_CURSOR_FILL,
+} from './recharts-shared';
 
 export interface LevelDatum {
   level: string;
@@ -25,12 +28,15 @@ export function LevelLadderClient({ data, height = 280 }: Props) {
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="level" fontSize={12} stroke="#64748b" />
-          <YAxis tickFormatter={fmt} fontSize={11} stroke="#64748b" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis dataKey="level" fontSize={12} stroke="var(--color-muted-foreground)" />
+          <YAxis tickFormatter={fmt} fontSize={11} stroke="var(--color-muted-foreground)" />
           <Tooltip
             formatter={(v: number, name: string) => ['$' + Number(v).toLocaleString(), name]}
-            contentStyle={{ fontSize: 12 }}
+            cursor={{ fill: TOOLTIP_CURSOR_FILL, opacity: 0.4 }}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Bar dataKey="p25" name="P25" fill="#93c5fd" radius={[3, 3, 0, 0]} />

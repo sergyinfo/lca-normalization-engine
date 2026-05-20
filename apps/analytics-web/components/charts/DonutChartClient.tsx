@@ -8,6 +8,9 @@
  */
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE,
+} from './recharts-shared';
 
 export interface DonutDatum {
   label: string;
@@ -60,7 +63,7 @@ export function DonutChartClient({
               innerRadius="62%"
               outerRadius="92%"
               paddingAngle={1.5}
-              stroke="white"
+              stroke="var(--color-card)"
               strokeWidth={2}
             >
               {data.map((d, i) => (
@@ -72,7 +75,9 @@ export function DonutChartClient({
                 const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0';
                 return [`${fmt(v)} (${pct}%)`, name];
               }}
-              contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+              contentStyle={TOOLTIP_CONTENT_STYLE}
+              labelStyle={TOOLTIP_LABEL_STYLE}
+              itemStyle={TOOLTIP_ITEM_STYLE}
             />
           </PieChart>
         </ResponsiveContainer>

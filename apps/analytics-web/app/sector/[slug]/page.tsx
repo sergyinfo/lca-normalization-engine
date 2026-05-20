@@ -6,7 +6,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   getSectorBySlug, getEntitySummary, listAllSectorSlugs,
   getSectorTopEmployers, getSectorTopOccupations,
-  getSectorTopStates, getSectorYearly, listTopSectors,
+  getSectorTopStates, getSectorYearly, listTopSectors, getSiteKpis,
 } from '@/lib/queries';
 import { fmt } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
@@ -100,6 +100,7 @@ export default async function SectorPage(
       <EntityHero
         eyebrow="NAICS industry sector"
         chips={chips}
+        updatedAt={getSiteKpis().generated_at}
         title={s.label}
         subtitle={
           <>

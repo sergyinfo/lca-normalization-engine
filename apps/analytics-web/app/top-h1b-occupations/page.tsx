@@ -75,9 +75,9 @@ export default function TopH1bOccupations() {
         href: `/occupation/${o.slug}`,
         primary: o.soc_title ?? o.soc_code,
         cells: [
-          { label: 'SOC', value: o.soc_code },
+          { label: 'SOC', value: o.soc_code, sortKey: 'soc', sortType: 'string', sortValue: o.soc_code },
           filingsCellWithBar(o.filings, maxFilings),
-          { label: 'Median wage', value: fmtUsd(o.p50_wage), numeric: true },
+          { label: 'Median wage', value: fmtUsd(o.p50_wage), numeric: true, sortKey: 'wage', sortType: 'number', sortValue: o.p50_wage },
         ],
       }))}
       methodology={

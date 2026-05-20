@@ -6,7 +6,7 @@ import { ArrowLeft } from 'lucide-react';
 import {
   getOccupationBySlug, getOccupationLevels, getOccupationTopStates,
   getOccupationTopEmployers, getOccupationYearly, getEntitySummary,
-  listAllOccupationSlugs, listTopOccupations,
+  listAllOccupationSlugs, listTopOccupations, getSiteKpis,
 } from '@/lib/queries';
 import { fmt, fmtUsd } from '@/lib/format';
 import { entityMetadata, occupationJsonLd } from '@/lib/seo';
@@ -100,6 +100,7 @@ export default async function OccupationPage(
       <EntityHero
         eyebrow="H-1B salary guide"
         chips={chips}
+        updatedAt={getSiteKpis().generated_at}
         title={o.soc_title ?? o.soc_code}
         subtitle={
           <>

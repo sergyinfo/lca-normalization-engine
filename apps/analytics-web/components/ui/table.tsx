@@ -2,8 +2,14 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * shadcn Table — semantic HTML table with Tailwind defaults. Compose as:
+ * shadcn Table — polished for analytics use. Defaults give every table on
+ * the site:
+ *   - Zebra striping (even rows tinted)
+ *   - Subtle header background + uppercase tracking
+ *   - Distinct blue-tinted hover state that works over both stripes
+ *   - Numeric cells (text-right) auto pick up tabular-nums
  *
+ * Compose as:
  *   <Table>
  *     <TableHeader><TableRow><TableHead>…</TableHead></TableRow></TableHeader>
  *     <TableBody>
@@ -27,14 +33,29 @@ Table.displayName = 'Table';
 
 const TableHeader = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...props }, ref) => (
-    <thead ref={ref} className={cn('[&_tr]:border-b', className)} {...props} />
+    <thead
+      ref={ref}
+      className={cn('bg-muted/40 border-b border-t', '[&_tr]:border-b-0', className)}
+      {...props}
+    />
   ),
 );
 TableHeader.displayName = 'TableHeader';
 
 const TableBody = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...props }, ref) => (
-    <tbody ref={ref} className={cn('[&_tr:last-child]:border-0', className)} {...props} />
+    <tbody
+      ref={ref}
+      className={cn(
+        '[&_tr:last-child]:border-0',
+        // Zebra: tint every other row. /60 is the sweet spot — clearly
+        // visible on white in light mode, clearly visible on near-black
+        // in dark mode (where muted resolves to a slate hue).
+        '[&_tr:nth-child(even)]:bg-muted/60',
+        className,
+      )}
+      {...props}
+    />
   ),
 );
 TableBody.displayName = 'TableBody';
@@ -55,7 +76,10 @@ const TableRow = React.forwardRef<HTMLTableRowElement, React.HTMLAttributes<HTML
     <tr
       ref={ref}
       className={cn(
-        'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted',
+        'border-b border-border/60 transition-colors',
+        // Blue-tinted hover — strong enough to read above the zebra stripe.
+        'hover:bg-primary/10',
+        'data-[state=selected]:bg-muted',
         className,
       )}
       {...props}
@@ -69,7 +93,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<
     <th
       ref={ref}
       className={cn(
-        'h-10 px-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-muted-foreground',
+        'h-10 px-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
         '[&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]',
         className,
       )}

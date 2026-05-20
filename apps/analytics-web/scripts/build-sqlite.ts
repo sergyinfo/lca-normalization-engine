@@ -35,14 +35,54 @@ import { slugify, stateNameFromCode, NAICS_LABELS,
 
 const DB_PATH = path.join(__scriptDir, '..', 'data', 'lca.db');
 
-const TOP_EMPLOYERS   = Number(process.env.TOP_EMPLOYERS   ?? 50);
-const TOP_OCCUPATIONS = Number(process.env.TOP_OCCUPATIONS ?? 30);
-const TOP_STATES      = Number(process.env.TOP_STATES      ?? 30);
+// Top-N caps. Bigger N → less quarter-over-quarter churn at the boundary
+// → fewer URLs that go from 200 to 301 (or worse, 404) between rebuilds.
+// State and sector are essentially fixed; bumping their caps is free.
+const TOP_EMPLOYERS   = Number(process.env.TOP_EMPLOYERS   ?? 200);
+const TOP_OCCUPATIONS = Number(process.env.TOP_OCCUPATIONS ?? 100);
+const TOP_STATES      = Number(process.env.TOP_STATES      ?? 60);
 const TOP_SECTORS     = Number(process.env.TOP_SECTORS     ?? 30);
+
+type Kind = 'employer' | 'occupation' | 'state' | 'sector';
+const KINDS: Kind[] = ['employer', 'occupation', 'state', 'sector'];
+
+interface PastState {
+  /** Slugs that had a static entity page in the previous build, by kind. */
+  slugs: Record<Kind, Set<string>>;
+  /** Existing redirect rows from the previous build (source → target). */
+  redirects: Map<string, string>;
+}
+
+/** Snapshot the previous lca.db before we destroy it, so we can compute
+ *  set-difference and persist 301 redirects for any dropped slug. */
+function snapshotPastState(dbPath: string): PastState {
+  const past: PastState = {
+    slugs: { employer: new Set(), occupation: new Set(), state: new Set(), sector: new Set() },
+    redirects: new Map(),
+  };
+  if (!existsSync(dbPath)) return past;
+  const old = new DatabaseSync(dbPath, { readOnly: true });
+  for (const kind of KINDS) {
+    try {
+      const rows = old.prepare(`SELECT slug FROM ${kind}`).all() as Array<{ slug: string }>;
+      for (const r of rows) past.slugs[kind].add(r.slug);
+    } catch { /* table may not exist on very old snapshots */ }
+  }
+  try {
+    const rows = old.prepare(`SELECT source_path, target_path FROM redirects`).all()
+      as Array<{ source_path: string; target_path: string }>;
+    for (const r of rows) past.redirects.set(r.source_path, r.target_path);
+  } catch { /* redirects table is new; absent on first run */ }
+  old.close();
+  return past;
+}
 
 async function main() {
   console.log(`[build-sqlite] Target: ${DB_PATH}`);
   console.log(`[build-sqlite] Top-N: employers=${TOP_EMPLOYERS}, occupations=${TOP_OCCUPATIONS}, states=${TOP_STATES}, sectors=${TOP_SECTORS}`);
+
+  const past = snapshotPastState(DB_PATH);
+  console.log(`[build-sqlite] Past state: ${past.slugs.employer.size}e + ${past.slugs.occupation.size}o + ${past.slugs.state.size}st + ${past.slugs.sector.size}sec slugs, ${past.redirects.size} existing redirects`);
 
   if (existsSync(DB_PATH)) {
     rmSync(DB_PATH);
@@ -500,6 +540,34 @@ async function main() {
     }
     console.log(`[build-sqlite]   state_yearly: ${stYears.length} rows`);
   }
+
+  /* -- SEO: 301 redirects for slugs that dropped out of the top-N -------- */
+  // For each kind, walk the union of (past entity slugs ∪ past redirect
+  // sources). If a historical slug is NOT present in the new build, ensure
+  // a redirect row exists. If it IS present (rejoined the top-N), no row →
+  // the entity page resolves normally again.
+  const insRedirect = db.prepare(`INSERT INTO redirects
+    (source_path, target_path, reason, added_at) VALUES (?, ?, ?, ?)`);
+
+  let redirectCount = 0;
+  for (const kind of KINDS) {
+    const newSlugs = new Set(
+      (db.prepare(`SELECT slug FROM ${kind}`).all() as Array<{ slug: string }>).map((r) => r.slug),
+    );
+    const everExisted = new Set(past.slugs[kind]);
+    const prefix = `/${kind}/`;
+    for (const src of past.redirects.keys()) {
+      if (src.startsWith(prefix)) everExisted.add(src.slice(prefix.length));
+    }
+    for (const slug of everExisted) {
+      if (newSlugs.has(slug)) continue;          // slug rejoined → no redirect
+      const sourcePath = `${prefix}${slug}`;
+      const targetPath = past.redirects.get(sourcePath) ?? `/${kind}`;
+      insRedirect.run(sourcePath, targetPath, 'dropped-from-top-N', now);
+      redirectCount++;
+    }
+  }
+  console.log(`[build-sqlite]   redirects: ${redirectCount} rows`);
 
   /* -- finalize ---------------------------------------------------------- */
   db.exec('ANALYZE');

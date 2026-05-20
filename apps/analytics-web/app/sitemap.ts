@@ -6,26 +6,30 @@
  * current top-N slice is. No external config — adding more entities to
  * lca.db automatically expands the sitemap.
  *
- * Sitemap size cap is 50k URLs / 50 MB per file. The launch slice is ~150
- * URLs, so we're nowhere near needing a sitemap index file.
+ * `lastModified` is stamped from `site_kpis.generated_at` (set when the
+ * SQLite snapshot was built), so Google sees a fresh signal on every
+ * quarterly rebuild and re-prioritises crawl for the changed surface.
+ *
+ * Sitemap size cap is 50k URLs / 50 MB per file. The launch slice is ~250
+ * URLs, well under the limit.
  */
 
 import type { MetadataRoute } from 'next';
 import {
   listAllEmployerSlugs, listAllOccupationSlugs,
-  listAllStateSlugs, listAllSectorSlugs,
+  listAllStateSlugs, listAllSectorSlugs, getSiteKpis,
 } from '@/lib/queries';
 import { SITE_URL } from '@/lib/site';
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  // Data refresh is quarterly; tell Google the entire surface was rebuilt
-  // at this build time. Per-entity lastmod would be more precise once we
-  // surface a generated_at column at the entity level.
-  const lastModified = new Date();
+  // Stamp from when lca.db was generated, not the time of sitemap render.
+  // Stays stable across container restarts; only bumps on data rebuild.
+  const kpis = getSiteKpis();
+  const lastModified = new Date(kpis.generated_at * 1000);
   const url = (path: string) => `${SITE_URL}${path}`;
 
   const fixed: MetadataRoute.Sitemap = [
-    { url: url('/'),                          lastModified, changeFrequency: 'weekly',  priority: 1.0 },
+    { url: url('/'),                          lastModified, changeFrequency: 'weekly',    priority: 1.0 },
     { url: url('/employer'),                  lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: url('/occupation'),                lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: url('/state'),                     lastModified, changeFrequency: 'monthly', priority: 0.8 },

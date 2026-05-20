@@ -6,6 +6,9 @@
  */
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, TOOLTIP_CURSOR_FILL,
+} from './recharts-shared';
 
 export interface BarDatum {
   label: string;
@@ -33,19 +36,25 @@ export function BarChartClient({
       <ResponsiveContainer>
         <BarChart data={data} layout={horizontal ? 'vertical' : 'horizontal'}
                   margin={{ top: 8, right: 8, bottom: 8, left: horizontal ? 100 : 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
           {horizontal ? (
             <>
-              <XAxis type="number" tickFormatter={fmt} fontSize={11} stroke="#64748b" />
-              <YAxis type="category" dataKey="label" fontSize={11} stroke="#64748b" width={120} />
+              <XAxis type="number" tickFormatter={fmt} fontSize={11} stroke="var(--color-muted-foreground)" />
+              <YAxis type="category" dataKey="label" fontSize={11} stroke="var(--color-muted-foreground)" width={120} />
             </>
           ) : (
             <>
-              <XAxis dataKey="label" fontSize={11} stroke="#64748b" interval={0} angle={-25} textAnchor="end" height={60} />
-              <YAxis tickFormatter={fmt} fontSize={11} stroke="#64748b" />
+              <XAxis dataKey="label" fontSize={11} stroke="var(--color-muted-foreground)" interval={0} angle={-25} textAnchor="end" height={60} />
+              <YAxis tickFormatter={fmt} fontSize={11} stroke="var(--color-muted-foreground)" />
             </>
           )}
-          <Tooltip formatter={(v: number) => [fmt(v), 'Value']} contentStyle={{ fontSize: 12 }} />
+          <Tooltip
+            formatter={(v: number) => [fmt(v), 'Value']}
+            cursor={{ fill: TOOLTIP_CURSOR_FILL, opacity: 0.4 }}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+          />
           <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>

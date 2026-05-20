@@ -29,7 +29,7 @@ export function Sparkline({
     return (
       <svg width={width} height={height} aria-hidden="true">
         <line x1={0} y1={height / 2} x2={width} y2={height / 2}
-              stroke="#cbd5e1" strokeWidth={1} strokeDasharray="2 2" />
+              stroke="var(--color-border)" strokeWidth={1} strokeDasharray="2 2" />
       </svg>
     );
   }

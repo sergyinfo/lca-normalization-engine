@@ -80,11 +80,11 @@ export default function HighestPayingH1bJobs() {
         href: `/occupation/${o.slug}`,
         primary: o.soc_title ?? o.soc_code,
         cells: [
-          { label: 'SOC',         value: o.soc_code },
-          { label: 'Median wage', value: fmtUsd(o.p50_wage), numeric: true },
-          { label: 'P25 wage',    value: fmtUsd(o.p25_wage), numeric: true },
-          { label: 'P75 wage',    value: fmtUsd(o.p75_wage), numeric: true },
-          { label: 'Filings',     value: fmt(o.filings),     numeric: true },
+          { label: 'SOC',         value: o.soc_code,          sortKey: 'soc',     sortType: 'string', sortValue: o.soc_code },
+          { label: 'Median wage', value: fmtUsd(o.p50_wage),  numeric: true, sortKey: 'p50',     sortType: 'number', sortValue: o.p50_wage },
+          { label: 'P25 wage',    value: fmtUsd(o.p25_wage),  numeric: true, sortKey: 'p25',     sortType: 'number', sortValue: o.p25_wage },
+          { label: 'P75 wage',    value: fmtUsd(o.p75_wage),  numeric: true, sortKey: 'p75',     sortType: 'number', sortValue: o.p75_wage },
+          { label: 'Filings',     value: fmt(o.filings),      numeric: true, sortKey: 'filings', sortType: 'number', sortValue: o.filings },
         ],
       }))}
       methodology={

@@ -20,6 +20,7 @@ import { SITE_URL } from '@/lib/site';
 import { AdSlot } from '@/components/AdSlot';
 import { Badge } from '@/components/ui/badge';
 import { MiniBar } from '@/components/charts/MiniBar';
+import { SortableTable } from '@/components/SortableTable';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
 } from '@/components/ui/card';
@@ -27,11 +28,23 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 
+export interface RankingCell {
+  label: string;
+  value: ReactNode;
+  numeric?: boolean;
+  /** Stable column key — required to make this column sortable. */
+  sortKey?: string;
+  /** Sort type. Defaults to 'string'. */
+  sortType?: 'number' | 'string';
+  /** Raw value for sorting (avoids parsing formatted strings). */
+  sortValue?: string | number | null;
+}
+
 export interface RankingRow {
   rank: number;
   href: string;         // internal URL, e.g. /employer/cognizant-...
   primary: string;      // entity name
-  cells: Array<{ label: string; value: ReactNode; numeric?: boolean }>;
+  cells: RankingCell[];
 }
 
 interface Props {
@@ -56,10 +69,6 @@ export function RankingPage({
   eyebrow, title, fiscalYear, intro, rows, methodology, adSlotName, back,
   preTableVisual,
 }: Props) {
-  // Derive column structure from the first row so each ranking page can
-  // pick its own columns without changing this component.
-  const columns = rows[0]?.cells.map((c) => c.label) ?? [];
-
   return (
     <>
       {back ? (
@@ -99,42 +108,47 @@ export function RankingPage({
           </CardTitle>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">#</TableHead>
-                <TableHead>Entity</TableHead>
-                {columns.map((c, i) => (
-                  <TableHead
-                    key={i}
-                    className={rows[0]!.cells[i].numeric ? 'text-right' : undefined}
-                  >
-                    {c}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={`${r.rank}-${r.href}`}>
-                  <TableCell className="text-muted-foreground tabular-nums">{r.rank}</TableCell>
-                  <TableCell>
-                    <Link href={r.href} className="font-medium hover:text-primary">
-                      {r.primary}
-                    </Link>
-                  </TableCell>
-                  {r.cells.map((c, i) => (
-                    <TableCell
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12" data-sort-key="rank" data-sort-type="number">#</TableHead>
+                  <TableHead data-sort-key="entity" data-sort-type="string">Entity</TableHead>
+                  {rows[0]?.cells.map((cell, i) => (
+                    <TableHead
                       key={i}
-                      className={c.numeric ? 'text-right tabular-nums' : undefined}
+                      className={cell.numeric ? 'text-right' : undefined}
+                      data-sort-key={cell.sortKey}
+                      data-sort-type={cell.sortType ?? (cell.numeric ? 'number' : 'string')}
                     >
-                      {c.value}
-                    </TableCell>
+                      {cell.label}
+                    </TableHead>
                   ))}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={`${r.rank}-${r.href}`}>
+                    <TableCell className="text-muted-foreground tabular-nums" data-sort-value={r.rank}>{r.rank}</TableCell>
+                    <TableCell data-sort-value={r.primary}>
+                      <Link href={r.href} className="font-medium hover:text-primary">
+                        {r.primary}
+                      </Link>
+                    </TableCell>
+                    {r.cells.map((c, i) => (
+                      <TableCell
+                        key={i}
+                        className={c.numeric ? 'text-right tabular-nums' : undefined}
+                        data-sort-value={c.sortValue ?? undefined}
+                      >
+                        {c.value}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </SortableTable>
         </CardContent>
       </Card>
 
@@ -164,8 +178,15 @@ export function RankingPage({
 }
 
 /** Helper for ranking pages that want a "N filings" numeric cell. */
-export function filingsCell(n: number | bigint | null) {
-  return { label: 'Filings', value: fmt(n), numeric: true };
+export function filingsCell(n: number | bigint | null): RankingCell {
+  return {
+    label: 'Filings',
+    value: fmt(n),
+    numeric: true,
+    sortKey: 'filings',
+    sortType: 'number',
+    sortValue: n == null ? null : Number(n),
+  };
 }
 
 /**
@@ -173,10 +194,13 @@ export function filingsCell(n: number | bigint | null) {
  * the number — makes #1 vs #N visually obvious at a glance. Pass the column
  * max from the caller so every row stays in proportion.
  */
-export function filingsCellWithBar(n: number | null, max: number) {
+export function filingsCellWithBar(n: number | null, max: number): RankingCell {
   return {
     label: 'Filings',
     numeric: true,
+    sortKey: 'filings',
+    sortType: 'number',
+    sortValue: n,
     value: (
       <span className="inline-flex items-center justify-end gap-2 w-full">
         <MiniBar value={n ?? 0} max={max} />

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Sparkline } from '@/components/charts/Sparkline';
 import { MiniBar } from '@/components/charts/MiniBar';
+import { SortableTable } from '@/components/SortableTable';
 
 export const metadata: Metadata = entityMetadata({
   title: 'H-1B Filings by Industry Sector',
@@ -33,8 +34,7 @@ export default function SectorIndex() {
         </h1>
         <p className="text-muted-foreground max-w-2xl">
           NAICS 2-digit sector breakdown of H-1B Labor Condition Applications.
-          Sector 54 (Professional, Scientific &amp; Technical Services)
-          dominates; smaller sectors fill out the long tail of the program.
+          Click any column header to sort.
         </p>
       </section>
 
@@ -43,46 +43,48 @@ export default function SectorIndex() {
           <CardTitle className="text-base font-semibold">{fmt(rows.length)} sectors</CardTitle>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">#</TableHead>
-                <TableHead className="w-20">NAICS</TableHead>
-                <TableHead>Sector</TableHead>
-                <TableHead className="text-right">Filings</TableHead>
-                <TableHead className="w-28">Trend FY{spark.years[0]}–{spark.years[spark.years.length - 1]}</TableHead>
-                <TableHead className="text-right">Employers</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((s) => {
-                const series = spark.byKey.get(s.naics2);
-                return (
-                  <TableRow key={s.naics2}>
-                    <TableCell className="text-muted-foreground tabular-nums">{s.rank}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      <Link href={`/sector/${s.slug}`} className="hover:text-primary">{s.naics2}</Link>
-                    </TableCell>
-                    <TableCell>
-                      <Link href={`/sector/${s.slug}`} className="font-medium hover:text-primary">
-                        {s.label}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <MiniBar value={s.filings} max={maxFilings} />
-                        <span className="tabular-nums">{fmt(s.filings)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {series ? <Sparkline values={series} /> : <span className="text-muted-foreground text-xs">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(s.employers)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12" data-sort-key="rank"  data-sort-type="number">#</TableHead>
+                  <TableHead className="w-20" data-sort-key="naics" data-sort-type="string">NAICS</TableHead>
+                  <TableHead             data-sort-key="label" data-sort-type="string">Sector</TableHead>
+                  <TableHead className="text-right" data-sort-key="filings" data-sort-type="number">Filings</TableHead>
+                  <TableHead className="w-28">Trend FY{spark.years[0]}–{spark.years[spark.years.length - 1]}</TableHead>
+                  <TableHead className="text-right" data-sort-key="employers" data-sort-type="number">Employers</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((s) => {
+                  const series = spark.byKey.get(s.naics2);
+                  return (
+                    <TableRow key={s.naics2}>
+                      <TableCell className="text-muted-foreground tabular-nums" data-sort-value={s.rank}>{s.rank}</TableCell>
+                      <TableCell className="font-mono text-xs" data-sort-value={s.naics2}>
+                        <Link href={`/sector/${s.slug}`} className="hover:text-primary">{s.naics2}</Link>
+                      </TableCell>
+                      <TableCell data-sort-value={s.label}>
+                        <Link href={`/sector/${s.slug}`} className="font-medium hover:text-primary">
+                          {s.label}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-right" data-sort-value={s.filings}>
+                        <div className="flex items-center justify-end gap-2">
+                          <MiniBar value={s.filings} max={maxFilings} />
+                          <span className="tabular-nums">{fmt(s.filings)}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {series ? <Sparkline values={series} /> : <span className="text-muted-foreground text-xs">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums" data-sort-value={s.employers}>{fmt(s.employers)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </SortableTable>
         </CardContent>
       </Card>
     </>

@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Enable the `dark:` utility variant when the <html> element (or any ancestor)
+   has the `dark` class. next-themes adds this class automatically when the
+   user picks "dark" or when the system preference is dark. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* shadcn-style theme tokens. We're on the slate base palette. The
    @theme block exposes these as Tailwind utility colors (bg-background,
    text-foreground, border-border, etc.). */
@@ -54,6 +59,44 @@
   --radius-sm: calc(var(--radius) - 4px);
 }
 
+/* Dark-mode overrides. We swap the underlying CSS variables; every
+   `bg-background` / `text-foreground` / `border-border` utility in the
+   app picks up the new value automatically without touching any class. */
+.dark {
+  --color-background: hsl(222 47% 7%);
+  --color-foreground: hsl(210 40% 98%);
+
+  --color-card: hsl(222 47% 11%);
+  --color-card-foreground: hsl(210 40% 98%);
+
+  --color-popover: hsl(222 47% 11%);
+  --color-popover-foreground: hsl(210 40% 98%);
+
+  --color-primary: hsl(217 91% 60%);
+  --color-primary-foreground: hsl(222 47% 11%);
+
+  --color-secondary: hsl(217 32% 17%);
+  --color-secondary-foreground: hsl(210 40% 98%);
+
+  --color-muted: hsl(217 32% 17%);
+  --color-muted-foreground: hsl(215 20% 65%);
+
+  --color-accent: hsl(217 32% 17%);
+  --color-accent-foreground: hsl(210 40% 98%);
+
+  --color-destructive: hsl(0 62% 50%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+
+  --color-border: hsl(217 32% 22%);
+  --color-input: hsl(217 32% 22%);
+  --color-ring: hsl(217 91% 60%);
+
+  --color-positive: hsl(160 84% 45%);
+  --color-positive-bg: hsl(160 50% 12%);
+  --color-negative: hsl(0 84% 60%);
+  --color-negative-bg: hsl(0 50% 12%);
+}
+
 @layer base {
   * { border-color: var(--color-border); }
 
@@ -79,15 +122,20 @@
   margin: 14px 0 22px;
   box-shadow: 0 1px 2px hsl(217 30% 80% / 0.3);
 }
+.dark .summary {
+  background: linear-gradient(135deg, hsl(217 60% 14%) 0%, hsl(190 60% 12%) 100%);
+  border-left-color: hsl(217 91% 60%);
+  box-shadow: none;
+}
 .summary p { margin: 0.5em 0; }
 .summary p:first-child { margin-top: 0; }
 .summary p:last-child  { margin-bottom: 0; }
 
 /* Ad slot placeholder — overlaid by real AdSense ins tag when configured */
 .ad-slot {
-  background: hsl(210 40% 96.1%);
-  color: hsl(215.4 16.3% 46.9%);
-  border: 1px dashed hsl(214.3 31.8% 80%);
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+  border: 1px dashed var(--color-border);
   border-radius: 6px;
   text-align: center;
   padding: 24px;
@@ -98,7 +146,8 @@
 /* MDX article body — light prose styling until we add a real Tailwind
    typography plugin. */
 .article {
-  background: white;
+  background: var(--color-card);
+  color: var(--color-card-foreground);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 24px 28px;
@@ -106,4 +155,8 @@
 }
 .article h2 { margin-top: 0; font-size: 1.25rem; font-weight: 600; }
 .article p  { margin: 0.75em 0; }
-.article a  { color: hsl(217 91% 60%); text-decoration: underline; text-underline-offset: 2px; }
+.article a  {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

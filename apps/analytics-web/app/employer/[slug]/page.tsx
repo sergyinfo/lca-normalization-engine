@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import {
   getEmployer, getEmployerTopSocs, getEmployerYearly,
-  getEntitySummary, listAllEmployerSlugs, listTopEmployers,
+  getEntitySummary, listAllEmployerSlugs, listTopEmployers, getSiteKpis,
 } from '@/lib/queries';
 import { fmt, fmtPct, fmtFy } from '@/lib/format';
 import { entityMetadata, organizationJsonLd } from '@/lib/seo';
@@ -98,6 +98,7 @@ export default async function EmployerPage(
       <EntityHero
         eyebrow="H-1B sponsor"
         chips={chips}
+        updatedAt={getSiteKpis().generated_at}
         title={e.canonical_name}
         subtitle={
           <>

@@ -10,6 +10,9 @@ import {
   Area, ComposedChart, CartesianGrid, Legend, Line,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE,
+} from './recharts-shared';
 
 export interface AreaBandDatum {
   label: string;
@@ -42,15 +45,17 @@ export function AreaBandChartClient({
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <ComposedChart data={enriched} margin={{ top: 12, right: 16, bottom: 8, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="label" fontSize={11} stroke="#64748b" />
-          <YAxis tickFormatter={fmt} fontSize={11} stroke="#64748b" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis dataKey="label" fontSize={11} stroke="var(--color-muted-foreground)" />
+          <YAxis tickFormatter={fmt} fontSize={11} stroke="var(--color-muted-foreground)" />
           <Tooltip
             formatter={(v: number | [number, number], name: string) => {
               if (Array.isArray(v)) return [`${fmtTip(v[0])} – ${fmtTip(v[1])}`, 'P25–P75'];
               return [fmtTip(v), name];
             }}
-            contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           <Area

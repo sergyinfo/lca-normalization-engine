@@ -42,7 +42,6 @@ export function HorizontalBarSvg({
     return <p className="text-sm text-muted-foreground py-6 text-center">No data.</p>;
   }
   const max = Math.max(...data.map((d) => d.value), 1);
-  const trackBg = 'hsl(210 16% 95%)';
   const bg = `linear-gradient(90deg, ${gradient[0]} 0%, ${gradient[1]} 100%)`;
   return (
     <div className="w-full">
@@ -53,12 +52,12 @@ export function HorizontalBarSvg({
           <div
             key={i}
             className="group flex items-center gap-3 rounded-sm px-1 -mx-1
-                       transition-colors hover:bg-slate-50"
+                       transition-colors hover:bg-muted/40"
             style={{ height: rowHeight }}
           >
             {/* Label */}
             <div
-              className="text-xs text-right text-slate-700 truncate shrink-0"
+              className="text-xs text-right text-foreground/85 truncate shrink-0"
               style={{ width: labelWidth }}
               title={d.label}
             >
@@ -68,8 +67,8 @@ export function HorizontalBarSvg({
             {/* Bar track + fill + tooltip anchor */}
             <div className="flex-1 min-w-0 relative">
               <div
-                className="rounded-full"
-                style={{ background: trackBg, height: 10 }}
+                className="rounded-full bg-muted"
+                style={{ height: 10 }}
               />
               <div
                 className="absolute top-0 left-0 rounded-full shadow-sm
@@ -101,7 +100,7 @@ export function HorizontalBarSvg({
 
             {/* Value */}
             <div
-              className="text-xs font-semibold tabular-nums text-slate-700 shrink-0 text-right"
+              className="text-xs font-semibold tabular-nums text-foreground/85 shrink-0 text-right"
               style={{ minWidth: 96 }}
             >
               {fmtVal(d.value, valueFormat)}

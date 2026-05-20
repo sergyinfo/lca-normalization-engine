@@ -7,6 +7,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
@@ -25,12 +26,23 @@ interface Props {
   title: string;
   subtitle?: ReactNode;
   kpis?: KpiTile[];
+  /**
+   * Optional "data last refreshed at" timestamp (unix seconds). Renders a
+   * small chip near the title. Visible to users and to crawlers — the latter
+   * read it as a freshness signal alongside the sitemap's lastmod.
+   */
+  updatedAt?: number;
 }
 
-export function EntityHero({ eyebrow, chips, title, subtitle, kpis }: Props) {
+function formatUpdated(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+export function EntityHero({ eyebrow, chips, title, subtitle, kpis, updatedAt }: Props) {
   return (
     <section className="space-y-5 pb-8">
-      {(eyebrow || chips?.length) ? (
+      {(eyebrow || chips?.length || updatedAt) ? (
         <div className="flex flex-wrap items-center gap-2">
           {eyebrow ? (
             <Badge variant="secondary" className="rounded-full uppercase tracking-wider text-[10px] font-semibold">
@@ -40,6 +52,12 @@ export function EntityHero({ eyebrow, chips, title, subtitle, kpis }: Props) {
           {chips?.map((c, i) => (
             <Badge key={i} variant={c.variant ?? 'outline'} className="rounded-full">{c.label}</Badge>
           ))}
+          {updatedAt ? (
+            <Badge variant="outline" className="rounded-full gap-1 text-muted-foreground" title={`Data refreshed ${new Date(updatedAt * 1000).toISOString()}`}>
+              <RefreshCw className="size-3" />
+              Updated {formatUpdated(updatedAt)}
+            </Badge>
+          ) : null}
         </div>
       ) : null}
 

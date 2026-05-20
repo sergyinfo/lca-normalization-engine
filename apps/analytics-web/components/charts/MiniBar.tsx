@@ -27,7 +27,7 @@ export function MiniBar({
       style={{ display: 'inline-block', verticalAlign: 'middle' }}
     >
       <rect x={0} y={0} width={width} height={height} rx={height / 2}
-            fill="hsl(210 16% 90%)" />
+            fill="var(--color-muted)" />
       <rect x={0} y={0} width={w} height={height} rx={height / 2} fill={color} />
     </svg>
   );

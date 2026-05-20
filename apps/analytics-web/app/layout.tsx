@@ -10,6 +10,8 @@ import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { ADSENSE_CLIENT_ID } from '@/lib/adsense';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { ThemeProvider } from '@/components/ThemeProvider';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -40,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={cn(GeistSans.variable, GeistMono.variable)}>
+    <html lang="en" className={cn(GeistSans.variable, GeistMono.variable)} suppressHydrationWarning>
       <head>
         {ADSENSE_CLIENT_ID ? (
           <Script
@@ -53,11 +55,13 @@ export default function RootLayout({
         ) : null}
       </head>
       <body className="font-sans antialiased min-h-screen flex flex-col bg-background text-foreground">
-        <SiteHeader />
-        <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8 md:py-12">
-          {children}
-        </main>
-        <SiteFooter />
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <SiteHeader />
+          <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8 md:py-12">
+            {children}
+          </main>
+          <SiteFooter />
+        </ThemeProvider>
       </body>
     </html>
   );
@@ -101,6 +105,7 @@ function SiteHeader() {
             className="h-9 pl-8"
           />
         </form>
+        <ThemeToggle />
       </div>
     </header>
   );

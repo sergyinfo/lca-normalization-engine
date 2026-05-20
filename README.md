@@ -4,6 +4,10 @@ A high-load monorepo for ingesting, validating, and normalizing **12 million+** 
 LCA (Labor Condition Application) records from the US Department of Labor (DOL), with an
 ongoing production pipeline for quarterly updates.
 
+> **Deploying or refreshing the public site (h1b.report)?** See [**DEPLOY.md**](DEPLOY.md)
+> for the full production playbook — lifecycles, build pipeline, deployment topologies,
+> incident runbook, and CI/CD reference configs.
+
 ---
 
 ## Architecture Overview

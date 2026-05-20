@@ -7,6 +7,9 @@
  */
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE, TOOLTIP_CURSOR_FILL,
+} from './recharts-shared';
 
 export interface HomeWageDatum {
   label: string;
@@ -25,19 +28,22 @@ export function HomeWageChartClient({ data }: { data: HomeWageDatum[] }) {
           layout="vertical"
           margin={{ top: 4, right: 24, bottom: 4, left: 12 }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-          <XAxis type="number" tickFormatter={fmtAxis} fontSize={11} stroke="#94a3b8" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
+          <XAxis type="number" tickFormatter={fmtAxis} fontSize={11} stroke="var(--color-muted-foreground)" />
           <YAxis
             type="category"
             dataKey="label"
             fontSize={12}
-            stroke="#475569"
+            stroke="var(--color-muted-foreground)"
             width={210}
-            tick={{ fill: '#334155' }}
+            tick={{ fill: 'var(--color-foreground)' }}
           />
           <Tooltip
             formatter={(v: number) => [fmtTip(v), 'Median wage']}
-            contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+            cursor={{ fill: TOOLTIP_CURSOR_FILL, opacity: 0.4 }}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           <defs>
             <linearGradient id="homewage-grad" x1="0" y1="0" x2="1" y2="0">

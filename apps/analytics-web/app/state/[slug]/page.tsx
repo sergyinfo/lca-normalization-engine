@@ -99,6 +99,7 @@ export default async function StatePage(
       <EntityHero
         eyebrow="US state"
         chips={chips}
+        updatedAt={kpis.generated_at}
         title={`H-1B sponsorship in ${s.name}`}
         subtitle={
           <>

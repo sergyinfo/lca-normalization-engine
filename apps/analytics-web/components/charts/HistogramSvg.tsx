@@ -54,7 +54,7 @@ export function HistogramSvg({
         {/* Median marker — dashed line, positioned as % from bottom so it
             works for both fixed and flex heights. */}
         <div
-          className="absolute left-0 right-0 border-t border-dashed border-slate-300 pointer-events-none"
+          className="absolute left-0 right-0 border-t border-dashed border-border pointer-events-none"
           style={{ bottom: `${medianPct}%` }}
         >
           <span className="absolute -top-3 right-0 text-[10px] text-muted-foreground bg-card px-1">

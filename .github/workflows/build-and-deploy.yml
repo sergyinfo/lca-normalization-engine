@@ -1,0 +1,198 @@
+# Build-and-deploy pipeline for the analytics-web app.
+#
+# Triggers:
+#   - push to main → typecheck + build image + deploy
+#   - workflow_dispatch with refresh_data=true → also rebuild lca.db + summaries
+#
+# Secrets required (Settings → Secrets and variables → Actions):
+#   - PG_PASSWORD, PGDUMP_URL  (only when refresh_data=true)
+#   - ANTHROPIC_API_KEY         (only when refresh_data=true)
+#   - PROD_HOST, PROD_USER, PROD_SSH_KEY (deploy target)
+#
+# See DEPLOY.md Appendix B for setup notes.
+
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/analytics-web/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/build-and-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: 'Rebuild lca.db from Postgres'
+        type: boolean
+        default: false
+      regenerate_summaries:
+        description: 'Re-run LLM summaries (~$1)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  typecheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter analytics-web typecheck
+
+  # ---------------------------------------------------------------------------
+  # Optional: rebuild lca.db from a Postgres dump uploaded to S3/R2.
+  # Skipped on plain pushes; only runs when refresh_data input is true.
+  build-data:
+    needs: typecheck
+    if: ${{ inputs.refresh_data == true }}
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lca_user
+          POSTGRES_PASSWORD: ${{ secrets.PG_PASSWORD }}
+          POSTGRES_DB: lca_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Restore Postgres dump
+        env:
+          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
+          PGDUMP_URL: ${{ secrets.PGDUMP_URL }}
+        run: |
+          curl -fsSL "$PGDUMP_URL" -o /tmp/lca.pgdump
+          pg_restore --no-owner --no-acl --clean --if-exists \
+            -h localhost -U lca_user -d lca_db /tmp/lca.pgdump
+
+      - name: Build lca.db
+        env:
+          DATABASE_URL: postgresql://lca_user:${{ secrets.PG_PASSWORD }}@localhost:5432/lca_db
+        run: pnpm --filter analytics-web build:sqlite
+
+      - name: Regenerate LLM summaries
+        if: ${{ inputs.regenerate_summaries == true }}
+        env:
+          LLM_PROVIDER: anthropic
+          LLM_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_CONCURRENCY: '4'
+        run: pnpm --filter analytics-web build:summaries
+
+      - name: Upload artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lca-db
+          path: apps/analytics-web/data/lca.db
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  build-image:
+    needs: typecheck
+    # Run even when build-data is skipped.
+    if: ${{ always() && needs.typecheck.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download fresh lca.db (if data refresh ran)
+        uses: actions/download-artifact@v4
+        if: ${{ inputs.refresh_data == true }}
+        with:
+          name: lca-db
+          path: apps/analytics-web/data/
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "stamp=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/analytics-web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/analytics-web:latest
+            ghcr.io/${{ github.repository }}/analytics-web:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/analytics-web:${{ steps.tags.outputs.stamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: build-image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/lca
+
+            REPO="ghcr.io/${{ github.repository }}/analytics-web"
+
+            # Tag the currently-running image as :rollback so we can recover.
+            if docker image inspect "${REPO}:latest" >/dev/null 2>&1; then
+              docker tag "${REPO}:latest" "${REPO}:rollback"
+            fi
+
+            docker pull "${REPO}:latest"
+            docker compose up -d analytics-web
+
+            # Smoke test
+            sleep 5
+            for path in / /employer /occupation /sitemap.xml; do
+              code=$(curl -fsS -o /dev/null -w "%{http_code}" "http://localhost:3000$path")
+              echo "$path → $code"
+              [ "$code" = "200" ] || exit 1
+            done
+
+      - name: Purge Cloudflare cache
+        if: ${{ secrets.CF_ZONE_ID != '' }}
+        run: |
+          curl -fsS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CF_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}'

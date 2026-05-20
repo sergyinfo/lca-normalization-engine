@@ -60,11 +60,11 @@ export default function CleanestH1bSponsors() {
         href: `/employer/${e.slug}`,
         primary: e.canonical_name,
         cells: [
-          { label: 'State',       value: e.employer_state ?? '—' },
-          { label: 'Filings',     value: fmt(e.filings),         numeric: true },
-          { label: 'Certified %', value: fmtPct(e.certified_pct, 2), numeric: true },
-          { label: 'Withdrawn %', value: fmtPct(e.withdrawn_pct, 2), numeric: true },
-          { label: 'Denied %',    value: fmtPct(e.denied_pct, 2),    numeric: true },
+          { label: 'State',       value: e.employer_state ?? '—',     sortKey: 'state',     sortType: 'string', sortValue: e.employer_state ?? '' },
+          { label: 'Filings',     value: fmt(e.filings),               numeric: true, sortKey: 'filings',   sortType: 'number', sortValue: e.filings },
+          { label: 'Certified %', value: fmtPct(e.certified_pct, 2),   numeric: true, sortKey: 'cert',      sortType: 'number', sortValue: e.certified_pct },
+          { label: 'Withdrawn %', value: fmtPct(e.withdrawn_pct, 2),   numeric: true, sortKey: 'withdrawn', sortType: 'number', sortValue: e.withdrawn_pct },
+          { label: 'Denied %',    value: fmtPct(e.denied_pct, 2),      numeric: true, sortKey: 'denied',    sortType: 'number', sortValue: e.denied_pct },
         ],
       }))}
       methodology={

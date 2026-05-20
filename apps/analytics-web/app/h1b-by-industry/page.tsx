@@ -59,9 +59,9 @@ export default function H1bByIndustry() {
         href: `/sector/${s.slug}`,
         primary: s.label,
         cells: [
-          { label: 'NAICS',     value: s.naics2 },
+          { label: 'NAICS',    value: s.naics2,        sortKey: 'naics',     sortType: 'string', sortValue: s.naics2 },
           filingsCellWithBar(s.filings, maxFilings),
-          { label: 'Sponsors',  value: fmt(s.employers), numeric: true },
+          { label: 'Sponsors', value: fmt(s.employers), numeric: true, sortKey: 'employers', sortType: 'number', sortValue: s.employers },
         ],
       }))}
       methodology={

@@ -5,6 +5,9 @@
  */
 
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE, TOOLTIP_ITEM_STYLE,
+} from './recharts-shared';
 
 export interface LineDatum {
   label: string;
@@ -31,10 +34,15 @@ export function LineChartClient({
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <AreaChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis dataKey="label" fontSize={11} stroke="#64748b" />
-          <YAxis tickFormatter={fmt} fontSize={11} stroke="#64748b" />
-          <Tooltip formatter={(v: number) => [fmt(v), 'Value']} contentStyle={{ fontSize: 12 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis dataKey="label" fontSize={11} stroke="var(--color-muted-foreground)" />
+          <YAxis tickFormatter={fmt} fontSize={11} stroke="var(--color-muted-foreground)" />
+          <Tooltip
+            formatter={(v: number) => [fmt(v), 'Value']}
+            contentStyle={TOOLTIP_CONTENT_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
+          />
           <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2}
                 fill={color} fillOpacity={0.12} connectNulls />
         </AreaChart>

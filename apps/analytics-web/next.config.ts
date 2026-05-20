@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Standalone output gives us a self-contained .next/standalone directory
@@ -16,6 +18,43 @@ import { fileURLToPath } from 'node:url';
  */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONOREPO_ROOT = path.join(__dirname, '..', '..');
+const LCA_DB_PATH   = path.join(__dirname, 'data', 'lca.db');
+
+/**
+ * Pull the SEO redirect list from SQLite at build time. Next.js calls this
+ * during `next build` and bakes the rules into the framework, so there is
+ * no SQLite read in the runtime hot path — 301s are served by the edge.
+ *
+ * Defensive: tolerates a missing lca.db or a missing redirects table
+ * (very-old snapshots) so the build never fails over this.
+ */
+async function loadRedirects() {
+  if (!existsSync(LCA_DB_PATH)) {
+    console.warn('[next.config] No lca.db at build time — skipping redirects');
+    return [];
+  }
+  try {
+    const db = new DatabaseSync(LCA_DB_PATH, { readOnly: true });
+    let rows: Array<{ source_path: string; target_path: string }> = [];
+    try {
+      rows = db.prepare('SELECT source_path, target_path FROM redirects').all() as typeof rows;
+    } catch {
+      // Table may not exist on snapshots predating the SEO redirect layer.
+    }
+    db.close();
+    if (rows.length > 0) {
+      console.log(`[next.config] Loaded ${rows.length} redirect rules from lca.db`);
+    }
+    return rows.map((r) => ({
+      source: r.source_path,
+      destination: r.target_path,
+      permanent: true,           // 301 Moved Permanently — preserves link equity
+    }));
+  } catch (err) {
+    console.warn('[next.config] Failed to load redirects:', err);
+    return [];
+  }
+}
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -25,6 +64,7 @@ const nextConfig: NextConfig = {
   experimental: {
     mdxRs: true,
   },
+  redirects: loadRedirects,
 };
 
 export default nextConfig;
