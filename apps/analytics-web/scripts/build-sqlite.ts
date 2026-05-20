@@ -20,7 +20,7 @@
 import { config as dotenvConfig } from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rmSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 // Load the monorepo root .env (where DATABASE_URL lives) before any
@@ -34,6 +34,38 @@ import { slugify, stateNameFromCode, NAICS_LABELS,
   toOccupationSlug, toStateSlug, toSectorSlug } from '../lib/slugify.ts';
 
 const DB_PATH = path.join(__scriptDir, '..', 'data', 'lca.db');
+const ARCHIVES_DIR = path.join(__scriptDir, '..', 'data', 'archives');
+
+/** YYYY-qN label derived from a unix timestamp (calendar quarter). */
+function quarterLabel(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const q = Math.floor(d.getUTCMonth() / 3) + 1;
+  return `${d.getUTCFullYear()}-q${q}`;
+}
+
+/** Newest-first list of "YYYY-qN" archive labels present on disk. */
+function listArchiveLabels(): string[] {
+  if (!existsSync(ARCHIVES_DIR)) return [];
+  return readdirSync(ARCHIVES_DIR)
+    .filter((f) => /^\d{4}-q[1-4]\.lca\.db$/.test(f))
+    .map((f) => f.replace(/\.lca\.db$/, ''))
+    .sort()
+    .reverse();
+}
+
+/** Find the newest archive containing the slug, returning its label. */
+function findArchiveWithSlug(kind: Kind, slug: string): string | null {
+  for (const label of listArchiveLabels()) {
+    const archivePath = path.join(ARCHIVES_DIR, `${label}.lca.db`);
+    try {
+      const db = new DatabaseSync(archivePath, { readOnly: true });
+      const row = db.prepare(`SELECT 1 FROM ${kind} WHERE slug = ? LIMIT 1`).get(slug);
+      db.close();
+      if (row) return label;
+    } catch { /* archive may not have this table; skip */ }
+  }
+  return null;
+}
 
 // Top-N caps. Bigger N → less quarter-over-quarter churn at the boundary
 // → fewer URLs that go from 200 to 301 (or worse, 404) between rebuilds.
@@ -562,17 +594,37 @@ async function main() {
     for (const slug of everExisted) {
       if (newSlugs.has(slug)) continue;          // slug rejoined → no redirect
       const sourcePath = `${prefix}${slug}`;
-      const targetPath = past.redirects.get(sourcePath) ?? `/${kind}`;
-      insRedirect.run(sourcePath, targetPath, 'dropped-from-top-N', now);
+      // Prefer redirecting to the most recent archive that still has this
+      // slug (an actual page with the entity's data). Fall back to the
+      // parent list page if no archive has it.
+      const archiveLabel = findArchiveWithSlug(kind, slug);
+      const targetPath = archiveLabel
+        ? `/archive/${archiveLabel}/${kind}/${slug}`
+        : (past.redirects.get(sourcePath) ?? `/${kind}`);
+      const reason = archiveLabel ? `archived-in-${archiveLabel}` : 'dropped-from-top-N';
+      insRedirect.run(sourcePath, targetPath, reason, now);
       redirectCount++;
     }
   }
   console.log(`[build-sqlite]   redirects: ${redirectCount} rows`);
 
+  /* -- Snapshot: copy the fresh lca.db into data/archives/YYYY-qN ------- */
+  // Done LAST so the archive is byte-identical to what we just built.
+  // Same-quarter rebuilds overwrite the current quarter's archive.
+  const label = quarterLabel(now);
+  if (!existsSync(ARCHIVES_DIR)) mkdirSync(ARCHIVES_DIR, { recursive: true });
+  const archivePath = path.join(ARCHIVES_DIR, `${label}.lca.db`);
+  // db.close() runs in the finalize step below, but the file on disk is
+  // already complete at this point because every INSERT has flushed.
+
   /* -- finalize ---------------------------------------------------------- */
   db.exec('ANALYZE');
   db.close();
   await closePool();
+
+  // Now that the file is closed and flushed, copy to archives/.
+  copyFileSync(DB_PATH, archivePath);
+  console.log(`[build-sqlite]   archived as: ${label}.lca.db`);
 
   const stat = await import('node:fs').then((m) => m.statSync(DB_PATH));
   console.log(`[build-sqlite] Done. ${(stat.size / 1024 / 1024).toFixed(1)} MB → ${DB_PATH}`);

@@ -247,7 +247,55 @@ DELETE FROM api_key WHERE label = 'acme-corp';
 UPDATE api_key SET revoked_at = unixepoch() WHERE label = 'acme-corp';
 ```
 
-### 3.5 MDX article overlay lifecycle
+### 3.5 Archive snapshot lifecycle
+
+Every quarterly rebuild also produces a **frozen snapshot** at
+`data/archives/<YYYY-qN>.lca.db`, identical byte-for-byte to that
+quarter's `data/lca.db`. These power the read-only archive routes at
+`/archive/<label>/...` and let dropped entities keep a working backlink.
+
+```
+Quarterly rebuild
+    │
+    ├─► data/lca.db                                ← live, served by /
+    │
+    └─► data/archives/2026-q1.lca.db               ← frozen copy of this build
+        data/archives/2025-q4.lca.db               ← previous quarter (untouched)
+        data/archives/2025-q3.lca.db               ← older still (untouched)
+        ...
+```
+
+How they're used:
+
+1. **At rebuild time**, `scripts/build-sqlite.ts` copies the new `lca.db`
+   to `data/archives/<label>.lca.db`. Same-quarter rebuilds overwrite.
+2. **At redirect time**, when an entity drops from the top-N, the build
+   script walks archives newest-first looking for one that still has the
+   slug. If found, the 301 target becomes
+   `/archive/<label>/<kind>/<slug>` (a working page) instead of the
+   parent list (a dead-end UX).
+3. **At runtime**, the `/archive/<label>/...` routes use
+   `withArchiveDb(label, fn)` to scope SQLite reads to the archive file.
+   Existing query helpers (`getEmployer`, `getOccupationBySlug`, etc.)
+   work unchanged thanks to AsyncLocalStorage.
+4. **SEO**: every archive page emits
+   `<meta name="robots" content="noindex, follow">` and
+   `<link rel="canonical" href="/{kind}/{slug}">` pointing at the live
+   equivalent (if the entity still exists there). Archives are reachable
+   for users and link equity, but never compete with the live site for
+   ranking.
+
+Pruning old archives is optional and operational, not functional:
+
+```bash
+# Keep only the last 8 quarters (~2 years)
+ls -1t apps/analytics-web/data/archives/*.lca.db | tail -n +9 | xargs rm -f
+```
+
+Archive files are small (~0.4 MB each), so retention costs are trivial.
+Keep at least 4 quarters for redirect target quality.
+
+### 3.6 MDX article overlay lifecycle
 
 Editorial content (per-entity articles) lives as MDX files in `apps/analytics-web/content/`, organised by entity kind and slug:
 
@@ -402,7 +450,33 @@ Set Page Rules:
 
 At this stage your origin VPS sees only the dynamic routes; everything else is served from Cloudflare's edge.
 
-### 5.3 Zero-downtime via blue/green
+### 5.3 AWS-native (event-driven, scale-to-zero burst pipeline)
+
+For the cloud-architecture-forward variant: **CDK templates live in
+[`infra/aws/`](infra/aws/README.md)**. Three stacks:
+
+1. **Shared** — S3 (lca.db versioned + PG snapshots + ingest scratch), ECR, Secrets Manager
+2. **Data pipeline** — EventBridge schedule → Lambda DOL-checker → Step Functions → ephemeral EC2 c6i.2xlarge that ingests, builds, pushes new Lambda image, self-terminates
+3. **Serve** — Lambda Container Image (Next.js standalone via AWS Lambda Web Adapter) + CloudFront + S3 static origin
+
+```
+EventBridge (6h) → Lambda check ─► Step Fn ─► EC2 burst (~8h) ─► lca.db in S3
+                                                              ─► Lambda image in ECR
+                                                              ─► UpdateFunctionCode
+
+Internet → CloudFront → Lambda (dynamic routes) + S3 (pre-rendered HTML)
+```
+
+**Cost**: ~$3–6/mo steady-state + ~$25/yr burst. Cold-start latency ~500ms–1s on first hit after idle.
+
+Use this when:
+- The cloud architecture is part of what you're demonstrating
+- Burst data ops should be hands-off (auto-trigger on DOL change)
+- You want IaC end-to-end
+
+Full setup walkthrough + cost breakdown in [`infra/aws/README.md`](infra/aws/README.md).
+
+### 5.4 Zero-downtime via blue/green
 
 For zero HTTP downtime during deploys, run two containers and swap traffic:
 
@@ -552,6 +626,28 @@ curl -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
 ```
 
 Better: include the build hash in `<link rel="canonical">` or rely on Cloudflare's auto-invalidation when the underlying file hash changes. Next.js fingerprints all static assets by default; HTML pages can be invalidated via `Cache-Tag` headers + Cloudflare Workers.
+
+### Routine: Prune old archives
+
+Quarterly archives in `data/archives/` accumulate over time. Each one is
+~0.4 MB so pruning isn't urgent, but for a clean shipping artefact you
+can keep only the most recent N quarters:
+
+```bash
+# Keep the last 8 quarters (~2 years)
+ls -1t apps/analytics-web/data/archives/*.lca.db | tail -n +9 | xargs rm -f
+
+# Rebuild so the dropout redirect logic forgets archives that no longer
+# exist as targets.
+pnpm --filter analytics-web build:sqlite
+docker compose build analytics-web
+docker compose up -d analytics-web
+```
+
+Archives older than 4 quarters provide diminishing SEO value as
+redirect targets — most external links pointing at dropped slugs
+predate the public launch, so backlink preservation is mostly
+forward-looking.
 
 ### Maintenance: Disk fill-up
 

@@ -1,0 +1,58 @@
+# Lambda Container Image for the Next.js standalone build.
+#
+# Strategy: ship the existing standalone server unchanged and let AWS
+# Lambda Web Adapter (LWA) bridge between API Gateway / Function URL
+# events and the local HTTP server. No Next.js adapter, no Vercel-only
+# code paths, no SSR-runtime fork.
+#
+# Image size budget: keep under 250 MB compressed (Lambda limit is 10 GB,
+# but smaller images cold-start faster). Currently ~140 MB.
+
+# ---------- deps -----------------------------------------------------------
+FROM node:22-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /repo
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/analytics-web/package.json ./apps/analytics-web/
+COPY packages ./packages
+RUN corepack enable && pnpm install --frozen-lockfile
+
+# ---------- builder --------------------------------------------------------
+FROM node:22-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /repo
+COPY --from=deps /repo/node_modules ./node_modules
+COPY --from=deps /repo/apps/analytics-web/node_modules ./apps/analytics-web/node_modules
+COPY . .
+WORKDIR /repo/apps/analytics-web
+RUN corepack enable pnpm && pnpm build
+
+# ---------- runner (Lambda image) -----------------------------------------
+# AWS Lambda Web Adapter — pulls the binary from a tiny base image, copies
+# it into the function's /opt directory so Lambda auto-loads it.
+FROM public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 AS lwa
+
+FROM node:22-alpine AS runner
+RUN apk add --no-cache libc6-compat
+WORKDIR /var/task
+
+# Lambda Web Adapter integration
+COPY --from=lwa /lambda-adapter /opt/extensions/lambda-adapter
+ENV PORT=8080
+ENV AWS_LWA_INVOKE_MODE=response_stream
+ENV AWS_LWA_PASS_THROUGH_PATH=/_lambda/passthrough
+
+# Next.js standalone output + static assets + the SQLite snapshot
+COPY --from=builder /repo/apps/analytics-web/.next/standalone        ./
+COPY --from=builder /repo/apps/analytics-web/.next/static            ./apps/analytics-web/.next/static
+COPY --from=builder /repo/apps/analytics-web/public                  ./apps/analytics-web/public
+COPY --from=builder /repo/apps/analytics-web/data/lca.db             ./apps/analytics-web/data/lca.db
+
+# Lambda needs a writable /tmp; everything else is read-only.
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# LWA invokes `node server.js` on the configured PORT; Next standalone's
+# entry is apps/analytics-web/server.js when invoked from the monorepo root.
+CMD ["node", "apps/analytics-web/server.js"]

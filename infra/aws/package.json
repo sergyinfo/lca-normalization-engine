@@ -1,0 +1,25 @@
+{
+  "name": "@lca/aws-infra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy:shared": "cdk deploy LcaSharedStack",
+    "deploy:data":   "cdk deploy LcaDataPipelineStack",
+    "deploy:serve":  "cdk deploy LcaServeStack",
+    "deploy:all":    "cdk deploy --all",
+    "destroy:all":   "cdk destroy --all"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.165.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.165.0",
+    "constructs": "^10.4.2"
+  }
+}
