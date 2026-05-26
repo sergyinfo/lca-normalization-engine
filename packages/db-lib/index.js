@@ -128,6 +128,13 @@ export async function bulkCopyJsonb({ table, column = 'data', columns, rows, cli
  * @param {pg.PoolClient|pg.Pool} [conn] - defaults to pool
  */
 export async function ensureSchema(conn = pool) {
+  // Extensions first — every index/column below depends on at least one.
+  // pg_trgm  → GIN trigram index on canonical_employers (Layer 2 resolver).
+  // vector   → employer_embeddings.vector(384)            (Layer 3 resolver).
+  // btree_gin / btree_gist are not used here but cheap if pre-installed.
+  await conn.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
+  await conn.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
+
   await conn.query(`
     CREATE TABLE IF NOT EXISTS lca_records (
       id            BIGSERIAL,
@@ -238,9 +245,8 @@ export async function ensureSchema(conn = pool) {
       ON canonical_employers USING GIN (canonical_name gin_trgm_ops);
   `);
 
-  await conn.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
-
   // Embedding dim must match the Stage 2 sentence-transformer.
+  // (`vector` extension is created at the top of this function.)
   // all-MiniLM-L6-v2 → 384.
   await conn.query(`
     CREATE TABLE IF NOT EXISTS employer_embeddings (
