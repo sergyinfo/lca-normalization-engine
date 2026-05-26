@@ -1,0 +1,128 @@
+# Smoke tests for the Python NLP engine (entity resolution + SOC classifier).
+#
+# Two jobs:
+#   1. wiring-smoke — no Postgres, no model. Catches import / signature /
+#      env-parsing regressions. Fast (~30s with pip cache).
+#   2. embed-smoke  — full integration: spins up pgvector/pgvector:pg16,
+#      applies the schema via `cli-tool db:init`, downloads the
+#      sentence-transformer (cached via HF), runs smoke_embed.py
+#      end-to-end.
+#
+# Both run on push to main and on PRs touching the nlp-engine package or
+# this workflow file.
+
+name: nlp-engine smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/nlp-engine/**'
+      - 'packages/db-lib/**'
+      - 'apps/cli-tool/**'
+      - '.github/workflows/nlp-engine-smoke.yml'
+  pull_request:
+    paths:
+      - 'packages/nlp-engine/**'
+      - 'packages/db-lib/**'
+      - 'apps/cli-tool/**'
+      - '.github/workflows/nlp-engine-smoke.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: nlp-engine-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  wiring-smoke:
+    name: Wiring smoke (no infra)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'packages/nlp-engine/pyproject.toml'
+
+      - name: Install nlp-engine (CPU torch index for speed)
+        run: |
+          pip install --upgrade pip
+          # CPU-only torch wheels are ~200 MB vs ~2 GB for the default CUDA build.
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+            -e packages/nlp-engine
+
+      - name: Smoke — wiring (no DB, no model)
+        run: python packages/nlp-engine/scripts/smoke_wiring.py
+
+  # ---------------------------------------------------------------------------
+  embed-smoke:
+    name: Embed smoke (Postgres + pgvector + ST model)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: wiring-smoke
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: lca_user
+          POSTGRES_PASSWORD: lca_pass
+          POSTGRES_DB: lca_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U lca_user -d lca_db"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql://lca_user:lca_pass@localhost:5432/lca_db
+      NLP_DEVICE: cpu
+      HF_HUB_DISABLE_PROGRESS_BARS: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node toolchain — needed to run `cli-tool db:init`, which applies the
+      # full Postgres schema (canonical_employers, employer_embeddings, …).
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'packages/nlp-engine/pyproject.toml'
+
+      # Cache the sentence-transformer weights between runs (~80 MB).
+      # Hash on a stable marker so cache key only changes when the model does.
+      - name: Cache HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-all-MiniLM-L6-v2-v1
+          restore-keys: |
+            hf-${{ runner.os }}-all-MiniLM-L6-v2-
+
+      - name: Apply Postgres schema (db-lib ensureSchema)
+        run: node apps/cli-tool/index.js db:init
+
+      - name: Install nlp-engine (CPU torch index for speed)
+        run: |
+          pip install --upgrade pip
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+            -e packages/nlp-engine
+
+      - name: Smoke — embed (real DB, real model)
+        run: python packages/nlp-engine/scripts/smoke_embed.py

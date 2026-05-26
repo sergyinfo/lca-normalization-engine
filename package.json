@@ -20,6 +20,8 @@
     "canonical:backfill": "packages/nlp-engine/.venv/bin/backfill-canonical-ids",
     "canonical:backfill-full": "packages/nlp-engine/.venv/bin/backfill-canonical-full",
     "employers:embed": "packages/nlp-engine/.venv/bin/embed-employers",
+    "smoke:wiring": "packages/nlp-engine/.venv/bin/python packages/nlp-engine/scripts/smoke_wiring.py",
+    "smoke:embed": "packages/nlp-engine/.venv/bin/python packages/nlp-engine/scripts/smoke_embed.py",
     "ingestor:start": "pnpm --filter ingestor run start",
     "ingestor:dev": "pnpm --filter ingestor run dev",
     "harvester:start": "pnpm --filter harvester run start",

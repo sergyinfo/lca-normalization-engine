@@ -57,6 +57,8 @@ class NlpWorker:
         concurrency: int = 2,
         stage2_model: str = DEFAULT_STAGE2_MODEL,
         stage2_threshold: float = DEFAULT_STAGE2_THRESHOLD,
+        auto_embed: bool = True,
+        auto_embed_max_rows: int = 1000,
     ) -> None:
         self.redis_url = redis_url
         self._db_url = db_url
@@ -76,6 +78,12 @@ class NlpWorker:
         self.deduplicator.connect()
         self._db_conn: Optional[psycopg.Connection] = None  # type: ignore[type-arg]
         self._running = True
+        # Post-batch HNSW vector sweep. Picks up canonicals created by this
+        # worker (Layer 1 FEIN insert), by the operator-ui resolve flow, and
+        # by the offline backfill CLIs — no manual `employers:embed` run
+        # needed for Layer 3 to see new entries.
+        self._auto_embed = auto_embed
+        self._auto_embed_max_rows = auto_embed_max_rows
 
     def _connect_db(self) -> None:
         try:
@@ -88,6 +96,19 @@ class NlpWorker:
         self._connect_db()
         redis = await aioredis.from_url(self.redis_url, decode_responses=True)
         log.info("nlp_worker.started", concurrency=self.concurrency, queue=QUEUE_KEY)
+
+        # Drain any backlog left by operator-ui resolves or offline backfills
+        # before we start processing. The advisory lock makes this a no-op for
+        # all but the first worker in a horizontally-scaled deployment.
+        if self._auto_embed:
+            try:
+                drained = self.deduplicator.embed_pending(
+                    max_rows=max(self._auto_embed_max_rows, 5000),
+                )
+                if drained:
+                    log.info("nlp_worker.embed_backlog_drained", embedded=drained)
+            except Exception:
+                log.exception("nlp_worker.embed_backlog_failed")
 
         sem = asyncio.Semaphore(self.concurrency)
 
@@ -162,6 +183,12 @@ class NlpWorker:
         if unresolved:
             self._write_unresolved(unresolved)
 
+        embedded = 0
+        if self._auto_embed:
+            embedded = self.deduplicator.embed_pending(
+                max_rows=self._auto_embed_max_rows,
+            )
+
         classified = sum(1 for r, _ in results if not r.requires_review)
         quarantined = sum(1 for r, _ in results if r.requires_review)
         log.info(
@@ -170,6 +197,7 @@ class NlpWorker:
             classified=classified,
             quarantined=quarantined,
             unresolved=len(unresolved),
+            embedded=embedded,
         )
 
     def _write_results(self, results: list[tuple[SocResult, str]]) -> None:
@@ -299,6 +327,10 @@ def main() -> None:
     concurrency = int(os.environ.get("NLP_WORKER_CONCURRENCY", "2"))
     stage2_model = os.environ.get("NLP_STAGE2_MODEL", DEFAULT_STAGE2_MODEL)
     stage2_threshold = float(os.environ.get("NLP_STAGE2_THRESHOLD", DEFAULT_STAGE2_THRESHOLD))
+    auto_embed = os.environ.get("NLP_AUTO_EMBED", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+    auto_embed_max_rows = int(os.environ.get("NLP_AUTO_EMBED_MAX_ROWS", "1000"))
 
     worker = NlpWorker(
         redis_url=redis_url,
@@ -306,6 +338,8 @@ def main() -> None:
         concurrency=concurrency,
         stage2_model=stage2_model,
         stage2_threshold=stage2_threshold,
+        auto_embed=auto_embed,
+        auto_embed_max_rows=auto_embed_max_rows,
     )
 
     loop = asyncio.get_event_loop()

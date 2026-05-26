@@ -316,6 +316,132 @@ class CompanyDeduplicator:
         )
 
     # ------------------------------------------------------------------
+    # Incremental embedding sweep (used by NLP worker post-batch)
+    # ------------------------------------------------------------------
+
+    # Mirrors the `embed-employers` CLI but reuses the worker's in-memory
+    # encoder so we don't pay the model-load cost on every batch. Idempotent:
+    # the LEFT JOIN + ON CONFLICT keep concurrent or repeated runs safe.
+    _EMBED_FETCH_SQL = """
+        SELECT ce.id, ce.canonical_name
+        FROM canonical_employers ce
+        LEFT JOIN employer_embeddings ee ON ee.employer_id = ce.id
+        WHERE ee.employer_id IS NULL
+          AND ce.canonical_name IS NOT NULL
+          AND length(btrim(ce.canonical_name)) > 0
+        ORDER BY ce.id
+        LIMIT %s
+    """
+
+    _EMBED_INSERT_SQL = """
+        INSERT INTO employer_embeddings (employer_id, embedding, model_version)
+        VALUES (%s, %s::vector, %s)
+        ON CONFLICT (employer_id) DO NOTHING
+    """
+
+    # 64-bit int — ascii "LCAEMBED". Globally unique to this sweep so it never
+    # collides with other code that might also take advisory locks.
+    _EMBED_ADVISORY_LOCK_KEY = 0x4C4341454D424544
+
+    def embed_pending(
+        self,
+        max_rows: int = 1000,
+        batch_size: int = 256,
+    ) -> int:
+        """Embed any canonical_employers that don't yet have a vector.
+
+        Returns the number of rows newly embedded. Safe to call after every
+        NLP batch — when there's nothing to embed the SELECT returns 0 rows
+        and the call is effectively a no-op.
+
+        Concurrent workers: protected by a non-blocking Postgres advisory
+        lock. If another worker is already sweeping, this call returns 0
+        instead of blocking or double-encoding.
+        """
+        if self._db_conn is None:
+            return 0
+        encoder = self._ensure_encoder()
+        if encoder is None:
+            return 0
+
+        try:
+            with self._db_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_try_advisory_lock(%s)",
+                    (self._EMBED_ADVISORY_LOCK_KEY,),
+                )
+                got_lock = cur.fetchone()[0]
+                if not got_lock:
+                    self._db_conn.commit()
+                    return 0
+
+                try:
+                    cur.execute(self._EMBED_FETCH_SQL, (max_rows,))
+                    todo = [
+                        (str(eid), name)
+                        for eid, name in cur.fetchall()
+                        if name and name.strip()
+                    ]
+                    if not todo:
+                        return 0
+
+                    model = os.environ.get(
+                        "NLP_STAGE2_MODEL",
+                        "sentence-transformers/all-MiniLM-L6-v2",
+                    )
+                    model_short = model.rsplit("/", 1)[-1]
+
+                    n_written = 0
+                    for start in range(0, len(todo), batch_size):
+                        chunk = todo[start : start + batch_size]
+                        ids = [eid for eid, _ in chunk]
+                        names = [name for _, name in chunk]
+                        vecs = encoder.encode(
+                            names,
+                            batch_size=batch_size,
+                            normalize_embeddings=True,
+                            show_progress_bar=False,
+                        )
+                        rows = [
+                            (
+                                eid,
+                                "[" + ",".join(f"{x:.6f}" for x in v) + "]",
+                                model_short,
+                            )
+                            for eid, v in zip(ids, vecs)
+                        ]
+                        cur.executemany(self._EMBED_INSERT_SQL, rows)
+                        n_written += len(rows)
+
+                    log.info(
+                        "entity_resolution.embed_pending",
+                        written=n_written,
+                        model=model_short,
+                    )
+                    return n_written
+                finally:
+                    cur.execute(
+                        "SELECT pg_advisory_unlock(%s)",
+                        (self._EMBED_ADVISORY_LOCK_KEY,),
+                    )
+                    self._db_conn.commit()
+        except psycopg.OperationalError:
+            log.warning("entity_resolution.db_reconnect", layer="embed_pending")
+            try:
+                self._db_conn.rollback()
+            except Exception:
+                pass
+            self.connect()
+            return 0
+        except Exception:
+            log.exception("entity_resolution.embed_pending_failed")
+            try:
+                self._db_conn.rollback()
+            except Exception:
+                pass
+            return 0
+
+    # ------------------------------------------------------------------
     # Legacy batch API (kept for CLI compat)
     # ------------------------------------------------------------------
 
