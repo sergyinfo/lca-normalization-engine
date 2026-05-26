@@ -28,6 +28,7 @@ import {
 import { LevelLadderClient } from '@/components/charts/LevelLadderClient';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
+import { PageMinimap } from '@/components/PageMinimap';
 
 export const dynamicParams = false;
 
@@ -97,6 +98,9 @@ export default async function OccupationPage(
         </Link>
       </nav>
 
+      <PageMinimap />
+
+      <section data-section-id="hero" data-section-label="Overview">
       <EntityHero
         eyebrow="H-1B salary guide"
         chips={chips}
@@ -118,14 +122,21 @@ export default async function OccupationPage(
           { label: 'Filings',     value: fmt(o.filings),     sub: `Rank #${o.rank}` },
         ]}
       />
+      </section>
 
-      <Summary summary={summary} />
+      <section data-section-id="summary" data-section-label="Summary">
+        <Summary summary={summary} />
+      </section>
 
       <AdSlot name="occupation-top" />
 
       <div className="grid lg:grid-cols-2 gap-6 pt-2">
         {/* ----- Career ladder ------------------------------------------- */}
-        <Card className="lg:col-span-2">
+        <Card
+          className="lg:col-span-2"
+          data-section-id="ladder"
+          data-section-label="Wage ladder"
+        >
           <CardHeader>
             <CardTitle>Wage by DOL prevailing-wage level</CardTitle>
             <CardDescription>
@@ -168,7 +179,7 @@ export default async function OccupationPage(
         </Card>
 
         {/* ----- Top hiring states --------------------------------------- */}
-        <Card>
+        <Card data-section-id="top-states" data-section-label="Top hiring states">
           <CardHeader>
             <CardTitle>Top hiring states</CardTitle>
             <CardDescription>
@@ -218,7 +229,7 @@ export default async function OccupationPage(
         </Card>
 
         {/* ----- Top sponsoring employers ------------------------------- */}
-        <Card>
+        <Card data-section-id="top-employers" data-section-label="Top sponsors">
           <CardHeader>
             <CardTitle>Top sponsoring employers</CardTitle>
             <CardDescription>Who actually files most for this role.</CardDescription>
@@ -261,7 +272,11 @@ export default async function OccupationPage(
         </Card>
 
         {/* ----- Yearly median wage ------------------------------------- */}
-        <Card className="lg:col-span-2">
+        <Card
+          className="lg:col-span-2"
+          data-section-id="yearly"
+          data-section-label="Yearly trend"
+        >
           <CardHeader>
             <CardTitle>Median wage by fiscal year</CardTitle>
             <CardDescription>
@@ -284,9 +299,17 @@ export default async function OccupationPage(
 
       <AdSlot name="occupation-mid" />
 
-      <Article article={article} />
+      {article ? (
+        <section data-section-id="article" data-section-label="Article">
+          <Article article={article} />
+        </section>
+      ) : null}
 
-      <div className="mt-8 space-y-4">
+      <div
+        className="mt-8 space-y-4"
+        data-section-id="compare"
+        data-section-label="Compare & see also"
+      >
         <ComparePicker
           kind="occupation"
           selfSlug={slug}

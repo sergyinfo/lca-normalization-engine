@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { StackedBarSvg } from '@/components/charts/StackedBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
+import { PageMinimap } from '@/components/PageMinimap';
 
 // Pre-render top-10 × top-10 pairs at build time. Other pairs render on demand.
 export const dynamicParams = true;
@@ -97,8 +98,14 @@ export default async function CompareEmployersPage(
         </p>
       </section>
 
+      <PageMinimap />
+
       {/* Entity cards — two columns of names + states + ranks */}
-      <div className="grid md:grid-cols-2 gap-4 pb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 pb-6"
+        data-section-id="entities"
+        data-section-label="Entities"
+      >
         {entities.map((e, i) => (
           <Card key={e.slug} className={i === 0 ? 'border-primary/30' : 'border-violet-300/40'}>
             <CardContent className="p-5">
@@ -124,7 +131,11 @@ export default async function CompareEmployersPage(
       </div>
 
       {/* KPI comparison */}
-      <Card className="mb-6">
+      <Card
+        className="mb-6"
+        data-section-id="metrics"
+        data-section-label="Key metrics"
+      >
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Key metrics</CardTitle>
           <CardDescription>
@@ -193,7 +204,11 @@ export default async function CompareEmployersPage(
       </Card>
 
       {/* Outcomes — stacked bar each */}
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="outcomes"
+        data-section-label="Outcomes"
+      >
         {entities.map((e) => (
           <Card key={e.slug}>
             <CardHeader className="pb-3">
@@ -211,7 +226,11 @@ export default async function CompareEmployersPage(
 
       {/* Yearly trend — overlay */}
       {(aYearly.length > 0 || bYearly.length > 0) ? (
-        <Card className="mb-6">
+        <Card
+          className="mb-6"
+          data-section-id="yearly"
+          data-section-label="Yearly trend"
+        >
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Yearly filing volume</CardTitle>
             <CardDescription>
@@ -228,7 +247,11 @@ export default async function CompareEmployersPage(
       ) : null}
 
       {/* Top occupations side by side */}
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-occupations"
+        data-section-label="Top occupations"
+      >
         {[{ ent: a, socs: aTopSocs }, { ent: b, socs: bTopSocs }].map(({ ent, socs }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -261,6 +284,7 @@ export default async function CompareEmployersPage(
       </div>
 
       {/* Swap picker — change either side without leaving the comparison */}
+      <div data-section-id="swap" data-section-label="Swap entities">
       <CompareSwapper
         kind="employer"
         current={{
@@ -275,6 +299,7 @@ export default async function CompareEmployersPage(
             hint: p.employer_state ?? undefined,
           }))}
       />
+      </div>
 
       {/* Bottom links */}
       <Card className="mt-4 bg-muted/20">

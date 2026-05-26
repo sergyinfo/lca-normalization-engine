@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { LineChartClient } from '@/components/charts/LineChartClient';
+import { PageMinimap } from '@/components/PageMinimap';
 
 export const dynamicParams = true;
 
@@ -97,7 +98,13 @@ export default async function CompareSectorsPage(
         </p>
       </section>
 
-      <div className="grid md:grid-cols-2 gap-4 pb-6">
+      <PageMinimap />
+
+      <div
+        className="grid md:grid-cols-2 gap-4 pb-6"
+        data-section-id="entities"
+        data-section-label="Entities"
+      >
         {entities.map((e, i) => (
           <Card key={e.slug} className={i === 0 ? 'border-primary/30' : 'border-violet-300/40'}>
             <CardContent className="p-5">
@@ -116,7 +123,11 @@ export default async function CompareSectorsPage(
         ))}
       </div>
 
-      <Card className="mb-6">
+      <Card
+        className="mb-6"
+        data-section-id="metrics"
+        data-section-label="Key metrics"
+      >
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Key metrics</CardTitle>
           <CardDescription>Filings / employer is a concentration hint — higher means a few sponsors do most of the filing.</CardDescription>
@@ -152,7 +163,11 @@ export default async function CompareSectorsPage(
       </Card>
 
       {(aYearly.length > 0 || bYearly.length > 0) ? (
-        <Card className="mb-6">
+        <Card
+          className="mb-6"
+          data-section-id="yearly"
+          data-section-label="Yearly trend"
+        >
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Filings by fiscal year</CardTitle>
             <CardDescription>Year-over-year H-1B demand within each sector.</CardDescription>
@@ -166,7 +181,11 @@ export default async function CompareSectorsPage(
         </Card>
       ) : null}
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-sponsors"
+        data-section-label="Top sponsors"
+      >
         {[{ ent: a, emps: aEmps }, { ent: b, emps: bEmps }].map(({ ent, emps }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -191,7 +210,11 @@ export default async function CompareSectorsPage(
         ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-occupations"
+        data-section-label="Top occupations"
+      >
         {[{ ent: a, socs: aSocs }, { ent: b, socs: bSocs }].map(({ ent, socs }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -219,7 +242,11 @@ export default async function CompareSectorsPage(
         ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-states"
+        data-section-label="Top states"
+      >
         {[{ ent: a, states: aStates }, { ent: b, states: bStates }].map(({ ent, states }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -246,6 +273,7 @@ export default async function CompareSectorsPage(
         ))}
       </div>
 
+      <div data-section-id="swap" data-section-label="Swap entities">
       <CompareSwapper
         kind="sector"
         current={{
@@ -260,6 +288,7 @@ export default async function CompareSectorsPage(
             hint: `NAICS ${p.naics2}`,
           }))}
       />
+      </div>
 
       <Card className="mt-4 bg-muted/20">
         <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

@@ -20,13 +20,11 @@ import { SITE_URL } from '@/lib/site';
 import { AdSlot } from '@/components/AdSlot';
 import { Badge } from '@/components/ui/badge';
 import { MiniBar } from '@/components/charts/MiniBar';
-import { SortableTable } from '@/components/SortableTable';
+import { PageMinimap } from '@/components/PageMinimap';
+import { PaginatedRankingTable } from '@/components/PaginatedRankingTable';
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
 } from '@/components/ui/card';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
 
 export interface RankingCell {
   label: string;
@@ -83,8 +81,14 @@ export function RankingPage({
         </nav>
       ) : null}
 
+      <PageMinimap />
+
       {/* Hero */}
-      <section className="space-y-4 pb-6">
+      <section
+        className="space-y-4 pb-6"
+        data-section-id="hero"
+        data-section-label="Overview"
+      >
         <Badge variant="secondary" className="rounded-full gap-1.5">
           <Trophy className="size-3" />
           {eyebrow} · FY{fiscalYear}
@@ -98,62 +102,24 @@ export function RankingPage({
 
       <AdSlot name={adSlotName} />
 
-      {preTableVisual ? <div className="pt-2">{preTableVisual}</div> : null}
+      {preTableVisual ? (
+        <div
+          className="pt-2"
+          data-section-id="visual"
+          data-section-label="Visual summary"
+        >
+          {preTableVisual}
+        </div>
+      ) : null}
 
-      {/* Ranked table */}
-      <Card className="mt-2">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">
-            {fmt(rows.length)} ranked entries
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12" data-sort-key="rank" data-sort-type="number">#</TableHead>
-                  <TableHead data-sort-key="entity" data-sort-type="string">Entity</TableHead>
-                  {rows[0]?.cells.map((cell, i) => (
-                    <TableHead
-                      key={i}
-                      className={cell.numeric ? 'text-right' : undefined}
-                      data-sort-key={cell.sortKey}
-                      data-sort-type={cell.sortType ?? (cell.numeric ? 'number' : 'string')}
-                    >
-                      {cell.label}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={`${r.rank}-${r.href}`}>
-                    <TableCell className="text-muted-foreground tabular-nums" data-sort-value={r.rank}>{r.rank}</TableCell>
-                    <TableCell data-sort-value={r.primary}>
-                      <Link href={r.href} className="font-medium hover:text-primary">
-                        {r.primary}
-                      </Link>
-                    </TableCell>
-                    {r.cells.map((c, i) => (
-                      <TableCell
-                        key={i}
-                        className={c.numeric ? 'text-right tabular-nums' : undefined}
-                        data-sort-value={c.sortValue ?? undefined}
-                      >
-                        {c.value}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </SortableTable>
-        </CardContent>
-      </Card>
+      <PaginatedRankingTable rows={rows} />
 
       {/* Methodology */}
-      <Card className="mt-6 bg-muted/30">
+      <Card
+        className="mt-6 bg-muted/30"
+        data-section-id="methodology"
+        data-section-label="Methodology"
+      >
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Methodology

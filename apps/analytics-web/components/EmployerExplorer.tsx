@@ -25,6 +25,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { PageMinimap } from '@/components/PageMinimap';
 import { fmt, fmtPct } from '@/lib/format';
 
 export interface EmployerExplorerRow {
@@ -151,10 +152,14 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
 
   return (
     <div className="space-y-6">
-      <EntityKpiStrip kpis={kpis} entityLabel="Sponsors tracked" />
+      <PageMinimap />
+
+      <section data-section-id="kpis" data-section-label="KPIs">
+        <EntityKpiStrip kpis={kpis} entityLabel="Sponsors tracked" />
+      </section>
 
       {moverRows.length > 0 ? (
-        <Card>
+        <Card data-section-id="movers" data-section-label="Biggest movers">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">
               Biggest share movers, FY{years[years.length - 2]} → FY{years[years.length - 1]}
@@ -171,7 +176,7 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
         </Card>
       ) : null}
 
-      <Card>
+      <Card data-section-id="table" data-section-label="Sponsors table">
         <CardHeader className="pb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base font-semibold">
             {fmt(tableRows.length)} sponsor{tableRows.length === 1 ? '' : 's'}

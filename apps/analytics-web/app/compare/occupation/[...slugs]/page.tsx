@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { LineChartClient } from '@/components/charts/LineChartClient';
+import { PageMinimap } from '@/components/PageMinimap';
 
 export const dynamicParams = true;
 
@@ -93,7 +94,13 @@ export default async function CompareOccupationsPage(
         </p>
       </section>
 
-      <div className="grid md:grid-cols-2 gap-4 pb-6">
+      <PageMinimap />
+
+      <div
+        className="grid md:grid-cols-2 gap-4 pb-6"
+        data-section-id="entities"
+        data-section-label="Entities"
+      >
         {entities.map((e, i) => (
           <Card key={e.slug} className={i === 0 ? 'border-primary/30' : 'border-violet-300/40'}>
             <CardContent className="p-5">
@@ -112,7 +119,11 @@ export default async function CompareOccupationsPage(
         ))}
       </div>
 
-      <Card className="mb-6">
+      <Card
+        className="mb-6"
+        data-section-id="metrics"
+        data-section-label="Key metrics"
+      >
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Key metrics</CardTitle>
           <CardDescription>Wage figures are offered annual wage; volume is total LCA count.</CardDescription>
@@ -148,7 +159,11 @@ export default async function CompareOccupationsPage(
       </Card>
 
       {(aYearly.length > 0 || bYearly.length > 0) ? (
-        <Card className="mb-6">
+        <Card
+          className="mb-6"
+          data-section-id="yearly"
+          data-section-label="Yearly wage"
+        >
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Median wage by year</CardTitle>
             <CardDescription>Year-over-year drift of the typical offered wage.</CardDescription>
@@ -162,7 +177,11 @@ export default async function CompareOccupationsPage(
         </Card>
       ) : null}
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-states"
+        data-section-label="Top states"
+      >
         {[{ ent: a, title: aTitle, states: aStates }, { ent: b, title: bTitle, states: bStates }].map(({ ent, title, states }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -190,7 +209,11 @@ export default async function CompareOccupationsPage(
         ))}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4 mb-6">
+      <div
+        className="grid md:grid-cols-2 gap-4 mb-6"
+        data-section-id="top-sponsors"
+        data-section-label="Top sponsors"
+      >
         {[{ ent: a, title: aTitle, emps: aEmps }, { ent: b, title: bTitle, emps: bEmps }].map(({ ent, title, emps }) => (
           <Card key={ent.slug}>
             <CardHeader className="pb-3">
@@ -215,6 +238,7 @@ export default async function CompareOccupationsPage(
         ))}
       </div>
 
+      <div data-section-id="swap" data-section-label="Swap entities">
       <CompareSwapper
         kind="occupation"
         current={{
@@ -229,6 +253,7 @@ export default async function CompareOccupationsPage(
             hint: p.soc_code,
           }))}
       />
+      </div>
 
       <Card className="mt-4 bg-muted/20">
         <CardContent className="p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

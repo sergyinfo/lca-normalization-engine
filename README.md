@@ -400,11 +400,13 @@ snapshot of the canonicalised corpus and never touches Postgres at runtime.
 | Layer | What | Where |
 |---|---|---|
 | Routes | ~250 prerendered pages | `/`, `/employer/[slug]`, `/occupation/[slug]`, `/state/[slug]`, `/sector/[slug]`, six leaderboards, four compare routes, six archive routes, `/api/v1/*`, `/api/docs` |
-| Index pages | KPI strip + biggest-share-movers Recharts bar + search-as-you-type + sortable table | All four entity types share `*Explorer.tsx` client wrappers backed by `EntityKpiStrip` + `BiggestMoversChart` |
+| Index pages | KPI strip + biggest-share-movers Recharts bar + search-as-you-type + numbered pagination + sortable table | All four entity types share `*Explorer.tsx` client wrappers backed by `EntityKpiStrip` + `BiggestMoversChart` + `Pagination` |
 | `/state` extras | Interactive Albers choropleth, Census region chips, abs ↔ per-100k toggle | `components/charts/UsChoropleth.tsx`, `lib/us-{states-geo,regions,workforce}.ts` |
+| Page minimap | Left-edge pill of color-coded section blocks (8-hue palette, height ∝ section size) + viewport overlay that glides on a 220 ms ease-out-quint curve. Hover scales blocks rightward into the content; active block glows + label sits to the right of the rail. On every detail / compare / index / ranking page (18 routes, hidden under `xl:`). | `components/PageMinimap.tsx` + `data-section-id` / `data-section-label` tags on sections |
 | Data layer | `node:sqlite` (built-in, no native compile) + scoped `AsyncLocalStorage` for archive snapshots | `lib/{db,queries,schema,archive}.ts` |
-| Build pipeline | Pulls top-N from `analytics.*` matviews → writes `data/lca.db` + `data/archives/<YYYY-qN>.lca.db` + computes 301 redirects for dropped slugs | `scripts/build-sqlite.ts` |
+| Build pipeline | Pulls top-N from `analytics.*` matviews → writes `data/lca.db` + `data/archives/<YYYY-qN>.lca.db` + computes 301 redirects for dropped slugs + backfills "tail employers" referenced by cross-refs so deep-link slugs always resolve | `scripts/build-sqlite.ts` |
 | Theming | Tailwind 4 + shadcn/ui + Geist + dark mode (next-themes) with CSS-variable theming so every chart tooltip flips correctly | `app/globals.css`, `components/charts/recharts-shared.ts` |
+| SEO canonicals | `metadataBase` + per-route `entityMetadata({ path })`. Archives canonical to live + `noindex`. `/search?q=…` is `noindex, follow`. Compare pages fold `A/B` and `B/A` onto the alphabetically-sorted canonical. Pagination naturally strips `?page=N` because metadata is route-static. | `lib/seo.ts`, `app/layout.tsx` |
 
 Quarterly rebuild on the VPS path is one command:
 

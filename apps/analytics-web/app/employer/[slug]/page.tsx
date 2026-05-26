@@ -27,6 +27,7 @@ import {
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 import { StackedBarSvg } from '@/components/charts/StackedBarSvg';
+import { PageMinimap } from '@/components/PageMinimap';
 
 export const dynamicParams = false;
 
@@ -97,6 +98,9 @@ export default async function EmployerPage(
         </Link>
       </nav>
 
+      <PageMinimap />
+
+      <section data-section-id="hero" data-section-label="Overview">
       <EntityHero
         eyebrow="H-1B sponsor"
         chips={chips}
@@ -120,12 +124,19 @@ export default async function EmployerPage(
           { label: 'Denied',        value: fmtPct(e.denied_pct),    sub: 'rejection rate' },
         ]}
       />
+      </section>
 
-      <Summary summary={summary} />
+      <section data-section-id="summary" data-section-label="Summary">
+        <Summary summary={summary} />
+      </section>
 
       {/* Outcomes stacked bar — compact, one-line view at the top. */}
       {hasOutcomes ? (
-        <Card className="mt-2">
+        <Card
+          className="mt-2"
+          data-section-id="outcomes"
+          data-section-label="Outcomes"
+        >
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Outcome breakdown</CardTitle>
             <CardDescription>
@@ -140,7 +151,11 @@ export default async function EmployerPage(
 
       <AdSlot name="employer-top" />
 
-      <div className="grid lg:grid-cols-2 gap-6 pt-2">
+      <div
+        className="grid lg:grid-cols-2 gap-6 pt-2"
+        data-section-id="breakdown"
+        data-section-label="Top SOCs & yearly"
+      >
         {/* ----- Top occupations sponsored -------------------------------- */}
         <Card>
           <CardHeader>
@@ -236,10 +251,18 @@ export default async function EmployerPage(
 
       <AdSlot name="employer-mid" />
 
-      <Article article={article} />
+      {article ? (
+        <section data-section-id="article" data-section-label="Article">
+          <Article article={article} />
+        </section>
+      ) : null}
 
       {/* Real compare CTA — pick a peer, see side-by-side. */}
-      <div className="mt-8 space-y-4">
+      <div
+        className="mt-8 space-y-4"
+        data-section-id="compare"
+        data-section-label="Compare & see also"
+      >
         <ComparePicker
           kind="employer"
           selfSlug={slug}

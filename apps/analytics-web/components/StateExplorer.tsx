@@ -27,6 +27,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { PageMinimap } from '@/components/PageMinimap';
 import { fmt } from '@/lib/format';
 import { REGIONS, regionOf, type Region } from '@/lib/us-regions';
 import { perCapita, WORKFORCE_K } from '@/lib/us-workforce';
@@ -198,10 +199,18 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
 
   return (
     <div className="space-y-6">
-      <EntityKpiStrip kpis={kpis} entityLabel="States tracked" />
+      <PageMinimap />
+
+      <section data-section-id="kpis" data-section-label="KPIs">
+        <EntityKpiStrip kpis={kpis} entityLabel="States tracked" />
+      </section>
 
       {/* Region chips + metric toggle */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div
+        className="flex flex-wrap items-center justify-between gap-3"
+        data-section-id="filters"
+        data-section-label="Region & metric"
+      >
         <div className="flex flex-wrap items-center gap-2">
           {REGION_OPTIONS.map((opt) => {
             const isActive = region === opt;
@@ -245,7 +254,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
       </div>
 
       {/* Map */}
-      <Card>
+      <Card data-section-id="map" data-section-label="Choropleth map">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">
             Filings intensity {region !== 'All' && <span className="text-muted-foreground font-normal">· {region}</span>}
@@ -264,7 +273,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
 
       {/* Biggest movers */}
       {moverRows.length > 0 ? (
-        <Card>
+        <Card data-section-id="movers" data-section-label="Biggest movers">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">
               Biggest share movers, FY{years[years.length - 2]} → FY{years[years.length - 1]}
@@ -281,7 +290,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
       ) : null}
 
       {/* Table */}
-      <Card>
+      <Card data-section-id="table" data-section-label="States table">
         <CardHeader className="pb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base font-semibold">
             {fmt(tableRows.length)} state{tableRows.length === 1 ? '' : 's'}

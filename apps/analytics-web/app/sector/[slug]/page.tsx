@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/table';
 import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
 import { LineChartClient } from '@/components/charts/LineChartClient';
+import { PageMinimap } from '@/components/PageMinimap';
 
 export const dynamicParams = false;
 
@@ -97,6 +98,9 @@ export default async function SectorPage(
         </Link>
       </nav>
 
+      <PageMinimap />
+
+      <section data-section-id="hero" data-section-label="Overview">
       <EntityHero
         eyebrow="NAICS industry sector"
         chips={chips}
@@ -123,14 +127,21 @@ export default async function SectorPage(
           }] : []),
         ]}
       />
+      </section>
 
-      <Summary summary={summary} />
+      <section data-section-id="summary" data-section-label="Summary">
+        <Summary summary={summary} />
+      </section>
 
       <AdSlot name="sector-top" />
 
       {/* Yearly trend — single full-width chart at the top of the analytics block */}
       {yearlyPts.length > 0 ? (
-        <Card className="mt-2">
+        <Card
+          className="mt-2"
+          data-section-id="yearly"
+          data-section-label="Yearly trend"
+        >
           <CardHeader>
             <CardTitle>Filings by fiscal year</CardTitle>
             <CardDescription>
@@ -145,7 +156,7 @@ export default async function SectorPage(
 
       <div className="grid lg:grid-cols-2 gap-6 pt-6">
         {/* ----- Top sponsoring employers ------------------------------- */}
-        <Card>
+        <Card data-section-id="top-employers" data-section-label="Top sponsors">
           <CardHeader>
             <CardTitle>Top sponsoring employers</CardTitle>
             <CardDescription>
@@ -190,7 +201,7 @@ export default async function SectorPage(
         </Card>
 
         {/* ----- Top occupations ---------------------------------------- */}
-        <Card>
+        <Card data-section-id="top-occupations" data-section-label="Top occupations">
           <CardHeader>
             <CardTitle>Top occupations sponsored</CardTitle>
             <CardDescription>
@@ -239,7 +250,11 @@ export default async function SectorPage(
         </Card>
 
         {/* ----- Top hiring states -------------------------------------- */}
-        <Card className="lg:col-span-2">
+        <Card
+          className="lg:col-span-2"
+          data-section-id="top-states"
+          data-section-label="Top states"
+        >
           <CardHeader>
             <CardTitle>Top hiring states</CardTitle>
             <CardDescription>
@@ -288,9 +303,17 @@ export default async function SectorPage(
 
       <AdSlot name="sector-mid" />
 
-      <Article article={article} />
+      {article ? (
+        <section data-section-id="article" data-section-label="Article">
+          <Article article={article} />
+        </section>
+      ) : null}
 
-      <div className="mt-8 space-y-4">
+      <div
+        className="mt-8 space-y-4"
+        data-section-id="compare"
+        data-section-label="Compare & see also"
+      >
         <ComparePicker
           kind="sector"
           selfSlug={slug}
