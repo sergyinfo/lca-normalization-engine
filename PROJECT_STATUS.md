@@ -1,6 +1,6 @@
 # Project Status Report
 
-**Date:** 2026-05-20 (updated: public-facing **Analytics 2.0** website shipped end-to-end — `apps/analytics-web` Next.js 15 app, 200+ pre-rendered entity pages, full AWS-native CDK deployment with burst pipeline + scale-to-zero, billing alerts, archive snapshots, SEO redirect handling. Pipeline data layer unchanged from the 2026-05-12 snapshot below.)
+**Date:** 2026-05-26 (updated: interactive **entity explorer** pattern rolled out to all four index pages — KPI strip, biggest-share-movers chart, search-as-you-type, sortable table. `/state` adds a US choropleth (USPS labels + hover-driven side panel), Census-region chips, and a per-100k-workers toggle. Auto-embed sweep wired into the NLP worker and nlp-engine smoke tests added to CI on 2026-05-25. Production playbook now refuses to release if `analytics_views.sql` declares a matview that's missing from Postgres. — 2026-05-20 baseline: public-facing **Analytics 2.0** website shipped end-to-end — `apps/analytics-web` Next.js 15 app, 200+ pre-rendered entity pages, full AWS-native CDK deployment with burst pipeline + scale-to-zero, billing alerts, archive snapshots, SEO redirect handling. Pipeline data layer unchanged from the 2026-05-12 snapshot below.)
 
 ---
 
@@ -298,7 +298,7 @@ Run `quarantine:reclassify` on a rented A10G/L4 against the 181,839 open
 quarantine records (expected wall time ~5–10 h on a single GPU vs
 ~250 h on Mac CPU). Drives quarantine residue to near zero.
 
-### Step 6 — Tests + CI/CD ⚠️ *(partially done 2026-05-20 → 2026-05-25)*
+### Step 6 — Tests + CI/CD ⚠️ *(partially done 2026-05-20 → 2026-05-26)*
 
 Two GitHub Actions workflows:
 
@@ -323,18 +323,40 @@ Two GitHub Actions workflows:
 Both scripts are runnable locally too: `pnpm smoke:wiring` /
 `pnpm smoke:embed`.
 
+**Schema self-install fix (2026-05-26).** First green run of
+`embed-smoke` in CI revealed that `db-lib::ensureSchema` was creating
+the `gin_trgm_ops` trigram index without first running `CREATE EXTENSION
+pg_trgm`. The local development DB had the extension installed by hand
+months ago, so the bug never surfaced. Now `ensureSchema` declares both
+`pg_trgm` and `vector` at the top of its body so a fresh Postgres
+(`pgvector/pgvector:pg16` in CI) bootstraps cleanly with no operator
+intervention. Verified against a throwaway DB that had zero extensions
+installed.
+
 **Still missing:** unit tests for the classifier, entity resolver,
 Pydantic models, ingestor. Web app has no automated test suite (manual
 smoke test in `scripts/smoke-test.sh` exercises 21 routes). The
 ingestor / harvester have no CI yet.
 
-### Step 7 — Public Analytics Website + Production Infrastructure ✅ *(done 2026-05-14 → 2026-05-20)*
+### Step 7 — Public Analytics Website + Production Infrastructure ✅ *(done 2026-05-14 → 2026-05-20, expanded 2026-05-26)*
 
 Shipped as `apps/analytics-web` — a full-stack Next.js 15 production
 site for **h1b.report**. ~200 pre-rendered entity pages over a static
 SQLite snapshot of the canonicalised corpus, three deployment topologies
 (single VPS / VPS + CDN / full AWS-native), quarterly auto-rebuild
 pipeline.
+
+**2026-05-26 follow-up — entity-explorer pattern across all four index
+pages.** `/employer`, `/occupation`, `/state`, `/sector` now share the
+same interactive shell: KPI strip at the top, biggest-share-movers
+Recharts diverging bar chart, search-as-you-type, and a sortable table.
+`/state` adds three state-only extras on top of the shared base: a US
+choropleth (USPS labels at centroids, leader-line callouts for the
+tiny eastern states, hover-driven side panel with rank + sparkline +
+top sponsor), Census-region chips (Northeast / South / Midwest / West /
+Territories) that filter both the map dim-state and the table, and an
+"Absolute filings" ↔ "Per 100k workers" metric toggle backed by a
+hand-curated BLS LAUS workforce table.
 
 #### What got built
 
@@ -350,8 +372,10 @@ pipeline.
 | **SEO redirect handling** | `redirects` table + `next.config.ts redirects()` | When an entity drops from the top-N during a rebuild, build script searches archives newest-first for a target. 301-redirects the old slug → most recent archive that still has the entity. Falls back to parent list if no archive has it. Built into the framework at build time via Next.js redirects config. |
 | **Sitemap + freshness signals** | `app/sitemap.ts`, `app/robots.ts`, EntityHero `updatedAt` | Sitemap stamps `lastModified` from `site_kpis.generated_at` so Google sees fresh signal each rebuild. EntityHero shows an "Updated MMM YYYY" badge near the title. |
 | **Dark mode** | `next-themes`, `components/ThemeProvider.tsx`, `ThemeToggle.tsx`, `globals.css` `.dark` palette | Two-state toggle (light ↔ dark) driven by resolvedTheme so every click flips what the user sees. localStorage persistence. No-flash via inline script before first paint. Every chart's tooltip/grid/track colours flip via CSS variables. |
-| **Charts (11 components)** | `components/charts/` | HorizontalBarSvg (HTML/CSS, hover tooltips), HistogramSvg (sorted Pareto for long-tail data), Sparkline (SSR SVG), MiniBar (SSR SVG), StackedBarSvg (HTML/CSS), UsChoropleth (SSR SVG, Albers-projected, log-scaled fill, clickable + tooltipped), DonutChartClient (Recharts with vertical legend), LineChartClient, BarChartClient, LevelLadderClient, AreaBandChartClient, HomeWageChartClient. All themed via shared `recharts-shared.ts` tokens. |
-| **US choropleth on /state** | `components/charts/UsChoropleth.tsx`, `lib/us-states-geo.ts`, `scripts/build-us-geo.ts` | Server-rendered SVG choropleth of the 50 states + DC. Paths baked at build time from `us-atlas/states-albers-10m.json` (Albers USA grid, 975×610) via `d3-geo` + `topojson-client` (devDeps only — zero runtime cost). Each state is a clickable `<a href="/state/<slug>">` with a native `<title>` tooltip. Log-scaled fill via `color-mix(in oklab, ...)` handles the California outlier without flattening the long tail. |
+| **Charts (13 components)** | `components/charts/` | HorizontalBarSvg (HTML/CSS, hover tooltips), HistogramSvg (sorted Pareto for long-tail data), Sparkline (SSR SVG), MiniBar (SSR SVG), StackedBarSvg (HTML/CSS), UsChoropleth (interactive, Albers-projected, labelled, hover-panelled), BiggestMoversChart (Recharts diverging horizontal bar, themed +/- via `--color-primary`/`--color-destructive`), DonutChartClient (Recharts with vertical legend), LineChartClient, BarChartClient, LevelLadderClient, AreaBandChartClient, HomeWageChartClient. All themed via shared `recharts-shared.ts` tokens. |
+| **US choropleth on /state** | `components/charts/UsChoropleth.tsx`, `lib/us-states-geo.ts`, `scripts/build-us-geo.ts` | Interactive SVG choropleth of the 50 states + DC. Paths + centroid label anchors baked at build time from `us-atlas/states-albers-10m.json` (Albers USA grid, 975×610) via `d3-geo` + `topojson-client` (devDeps only — zero runtime cost). USPS labels at centroids with leader-line callouts for the nine tiny eastern states (CT/RI/NJ/DE/MD/DC/NH/VT/MA). Hover/focus a state → its path gets a primary-color stroke, neighbours dim to 55 %. Side panel (right column on desktop, bottom on mobile) shows the hovered state's rank / filings / % of national / yearly sparkline / top sponsor / "View details" CTA. Default panel content is rank #1 so the page is informative even before mouse-move. Log-scaled fill via `color-mix(in oklab, ...)` handles the California outlier without flattening the long tail. |
+| **Entity explorer pattern** | `components/{StateExplorer,SectorExplorer,OccupationExplorer,EmployerExplorer}.tsx`, `components/EntityKpiStrip.tsx`, `components/charts/BiggestMoversChart.tsx` | Shared client wrapper for all four index pages. Owns local UI state (search, plus region + metric for `/state`), derives a KPI strip (total filings / entities tracked / top-5 concentration / biggest YoY share mover with up/down trend icon), a biggest-share-movers chart (top-12 by \|Δpp\|, sorted desc → asc, +/- colored via theme tokens), and the existing sortable table filtered live by free-text search. Movers logic uses a per-page floor (≥ 1k filings for sectors, 2k for sponsors, 5k for occupations) so rare niche codes can't dominate the headline by flipping 100 % of nothing. Employers use a synthetic ticker label (first whitespace-token uppercased, max 12 chars) for the chart y-axis since they have no 2-letter code. |
+| **/state region + per-capita layer** | `components/StateExplorer.tsx`, `lib/us-regions.ts`, `lib/us-workforce.ts` | State-only extras on top of the shared explorer. Census-region chips (Northeast / South / Midwest / West / Territories) filter both the table and the choropleth (non-region states dim to 0-value fill). Per-capita toggle switches the map's value from absolute filings to filings-per-100k-workers using a hand-curated BLS LAUS state workforce table baked into `lib/us-workforce.ts` (refresh annually). Per-capita view exposes pockets (DC, NJ, MA) hidden by California/Texas volume. |
 | **Tables** | `components/ui/table.tsx`, `components/SortableTable.tsx` | shadcn primitives polished with zebra striping (`bg-muted/60` even rows), blue-tinted hover, themed headers. Client-side sort wrapper reads `data-sort-key` + `data-sort-value` attributes and re-appends tbody DOM — no data-driven refactor at call sites. |
 | **LLM summaries** | `lib/llm/provider.ts`, `lib/llm/{stub,anthropic,openai,local}.ts`, `scripts/generate-summaries.ts` | Provider-agnostic abstraction. 141 entity summaries (1 site + 50 employer + 30 occupation + 30 state + 30 sector). Skip-if-unchanged via SHA-256 `data_hash`. Cost ~$1 with Claude Sonnet, ~$0.05 with GPT-4o-mini, free with reused vLLM GPU. Currently shipping stub placeholders pending API key configuration. |
 | **MDX article overlay** | `content/{employer,occupation,state,sector}/<slug>.mdx`, `lib/article.ts` | Per-entity editorial content rendered below the LLM summary. Optional; entity page works without one. Pure code commits, no data-pipeline step. |
@@ -444,7 +468,7 @@ Operational quality:
 | **Reclassify-quarantine** | `.../reclassify_quarantine.py` | LLM-on-residual drain. Now also calls `resolve_fein` inline so quarantine drains never leave `canonical_employer_id` unset. |
 | **Operator HITL UI** | `apps/operator-ui` | New: Fastify + EJS web app on port 8080. Walks all three review queues with list / inspect / accept / override / merge / reject actions. Single shared password (`OPERATOR_PASSWORD`) + signed-cookie session (`SESSION_SECRET`). Reuses `@lca/db-lib` pool. Unresolved-employer merges run a transactional `lca_records` backfill. Ships as Docker Compose service `operator-ui`. |
 | **Internal analytics dashboard** | `apps/analytics-ui` | Fastify + EJS + Chart.js web app on port 8081, no auth. Ten persona pages over the canonicalised corpus, backed by 22 matviews + 1 plain view in `analytics.*` schema (~55 MB total). Page paint 16-552 ms cold / 7-117 ms warm. Bootstrap once via `pnpm analytics:bootstrap-views`; refresh after data changes via `pnpm analytics:refresh-views`. Full walkthrough in `project_notes/analytics_ui.md`. |
-| **Public website (Analytics 2.0)** | `apps/analytics-web` | New (2026-05-14 → 2026-05-20): Next.js 15 + Tailwind 4 + shadcn/ui + Geist + dark mode. ~250 prerendered routes (4 entity types × top-N + 6 ranking + 6 archive + 4 compare + home + search + API docs). Reads a baked-in SQLite snapshot, never touches Postgres at runtime. Standalone Docker output for VPS or Lambda. Built quarterly from `analytics.*` matviews via `pnpm --filter analytics-web build:sqlite`. Full feature list in §Step 7. |
+| **Public website (Analytics 2.0)** | `apps/analytics-web` | Shipped 2026-05-14 → 2026-05-20, **entity-explorer pattern + interactive choropleth added 2026-05-26**: Next.js 15 + Tailwind 4 + shadcn/ui + Geist + dark mode. ~250 prerendered routes (4 entity types × top-N + 6 ranking + 6 archive + 4 compare + home + search + API docs). All four index pages (`/employer`, `/occupation`, `/state`, `/sector`) share a KPI strip + biggest-share-movers chart + live search + sortable table. `/state` adds an interactive Albers choropleth (USPS labels, leader callouts, hover-driven side panel), Census region chips, and an absolute-vs-per-100k toggle. Reads a baked-in SQLite snapshot, never touches Postgres at runtime. Standalone Docker output for VPS or Lambda. Built quarterly from `analytics.*` matviews via `pnpm --filter analytics-web build:sqlite`. Full feature list in §Step 7. |
 | **SQLite snapshot builder** | `apps/analytics-web/scripts/build-sqlite.ts` | Idempotent: reads top-N from Postgres matviews, writes a fresh `data/lca.db` (~0.4 MB), copies to `data/archives/<YYYY-qN>.lca.db`, computes 301 redirects for entities that dropped out since last build, disambiguates same-canonical-name entities (Amazon WA vs Amazon VA), persists new canonicals' embeddings. Skip-if-unchanged via `data_hash`. |
 | **LLM summary generator** | `apps/analytics-web/scripts/generate-summaries.ts`, `lib/llm/*` | Provider-agnostic LLM abstraction (stub/anthropic/openai/local). Generates 141 entity summaries with SHA-256 skip-if-unchanged. ~$1 with Claude Sonnet, ~$0.05 with GPT-4o-mini. Currently shipping stub placeholders; populate `LLM_API_KEY` to swap in real prose. |
 | **B2B Data API** | `apps/analytics-web/app/api/v1/*`, `apps/analytics-web/lib/keys-db.ts`, `lib/api/auth.ts` | Bearer + X-API-Key auth, SHA-256 hashed keys (`lcak_` prefix) in a separate `keys.db` volume-mount SQLite, in-memory rolling 24h rate limiter with three tiers (free 100, pro 10k, enterprise 1M req/day), API docs page at `/api/docs`. |

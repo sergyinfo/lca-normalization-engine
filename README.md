@@ -28,14 +28,22 @@ lca-normalization-engine/
 │   ├── operator-ui/     # Fastify + EJS web app (port 8080): walks the three HITL queues
 │   │                    #   (requires_review records, staging.quarantine_records,
 │   │                    #    staging.unresolved_employers) — accept/override/merge/reject
-│   └── analytics-ui/    # Fastify + EJS + Chart.js (port 8081): public read-only dashboard
-│                        #   over the canonicalised corpus. Ten persona pages backed by
-│                        #   22 materialized views in analytics.* schema.
+│   ├── analytics-ui/    # Fastify + EJS + Chart.js (port 8081): internal persona dashboard
+│   │                    #   over the canonicalised corpus. Ten persona pages backed by
+│   │                    #   22 materialized views in analytics.* schema.
+│   └── analytics-web/   # Next.js 15 (port 3000): public website served at h1b.report.
+│                        #   ~250 prerendered routes; 4 entity index pages share an "explorer"
+│                        #   shell (KPI strip + biggest-movers chart + search + sortable table),
+│                        #   /state adds an interactive US choropleth. Reads a baked-in 0.4 MB
+│                        #   SQLite snapshot — never touches Postgres at runtime.
 │
 ├── infra/
-│   └── postgres/        # init.sql (extensions: pg_trgm, pgvector, btree_gin)
+│   ├── postgres/        # init.sql (extensions: pg_trgm, pgvector, btree_gin)
+│   └── aws/             # AWS CDK (4 stacks): Shared / DataPipeline / Serve / Budgets
 │
-└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestion-worker, operator-ui, analytics-ui
+├── scripts/             # release.sh (canonical rebuild) + smoke-test.sh (21-route check)
+├── .github/workflows/   # build-and-deploy.yml (analytics-web) + nlp-engine-smoke.yml (Python CI)
+└── docker-compose.yml   # Local stack: db, redis, nlp-worker, ingestor, operator-ui, analytics-ui, analytics-web
 ```
 
 ### Data Flow
@@ -380,6 +388,36 @@ DATABASE_URL=...  pnpm analytics:refresh-views
 See [`apps/analytics-ui/README.md`](apps/analytics-ui/README.md) for the
 files layout and [`project_notes/analytics_ui.md`](project_notes/analytics_ui.md)
 for a full data walkthrough (worked examples per persona + analysis).
+
+---
+
+## Public Site (Analytics Web — h1b.report)
+
+`apps/analytics-web` is the production-facing Next.js 15 site for **h1b.report**.
+Architecturally decoupled from the pipeline: it reads a baked-in 0.4 MB SQLite
+snapshot of the canonicalised corpus and never touches Postgres at runtime.
+
+| Layer | What | Where |
+|---|---|---|
+| Routes | ~250 prerendered pages | `/`, `/employer/[slug]`, `/occupation/[slug]`, `/state/[slug]`, `/sector/[slug]`, six leaderboards, four compare routes, six archive routes, `/api/v1/*`, `/api/docs` |
+| Index pages | KPI strip + biggest-share-movers Recharts bar + search-as-you-type + sortable table | All four entity types share `*Explorer.tsx` client wrappers backed by `EntityKpiStrip` + `BiggestMoversChart` |
+| `/state` extras | Interactive Albers choropleth, Census region chips, abs ↔ per-100k toggle | `components/charts/UsChoropleth.tsx`, `lib/us-{states-geo,regions,workforce}.ts` |
+| Data layer | `node:sqlite` (built-in, no native compile) + scoped `AsyncLocalStorage` for archive snapshots | `lib/{db,queries,schema,archive}.ts` |
+| Build pipeline | Pulls top-N from `analytics.*` matviews → writes `data/lca.db` + `data/archives/<YYYY-qN>.lca.db` + computes 301 redirects for dropped slugs | `scripts/build-sqlite.ts` |
+| Theming | Tailwind 4 + shadcn/ui + Geist + dark mode (next-themes) with CSS-variable theming so every chart tooltip flips correctly | `app/globals.css`, `components/charts/recharts-shared.ts` |
+
+Quarterly rebuild on the VPS path is one command:
+
+```bash
+./scripts/release.sh           # full rebuild + deploy (~5 min)
+./scripts/release.sh --code-only       # code-only deploy
+./scripts/release.sh --rebuild-views   # also DROP+CREATE every matview (slow)
+```
+
+`release.sh` refuses to deploy when `analytics_views.sql` declares a matview that's
+missing from Postgres — it points the operator at `--rebuild-views` instead of
+shipping a broken `build:sqlite` step. See [`DEPLOY.md`](DEPLOY.md) for full playbook
+(lifecycles, three deployment topologies, incident runbook, CI/CD reference configs).
 
 ---
 

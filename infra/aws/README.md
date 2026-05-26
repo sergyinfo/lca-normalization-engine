@@ -1,11 +1,12 @@
 # AWS-native deployment (CDK)
 
 This directory holds the CDK templates that deploy the analytics web app
-and its data pipeline to AWS. Three independent stacks, deployed in order:
+and its data pipeline to AWS. Four independent stacks, deployed in order:
 
 1. **`LcaSharedStack`** — S3 buckets, Secrets Manager entries, ECR repo
 2. **`LcaDataPipelineStack`** — burst data ops (EventBridge → Step Fn → EC2)
 3. **`LcaServeStack`** — CloudFront + Lambda Container Image + S3 static
+4. **`LcaBudgetsStack`** — five AWS Budgets + Cost Anomaly Detection + SNS (env-tunable; deploy 24 h after cost-allocation tags activate so tag-filtered budgets don't silently report $0)
 
 Together they implement the architecture sketched in [`../../DEPLOY.md`](../../DEPLOY.md#52-vps--cloudflare-cdn-recommended-once-traffic-ramps) but on AWS-native primitives, with scale-to-zero on the data side.
 
