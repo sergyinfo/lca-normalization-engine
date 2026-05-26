@@ -30,6 +30,7 @@ import { Pagination, usePagination } from '@/components/Pagination';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt } from '@/lib/format';
 import { REGIONS, regionOf, type Region } from '@/lib/us-regions';
+import { US_STATES_GEO } from '@/lib/us-states-geo';
 import { perCapita, WORKFORCE_K } from '@/lib/us-workforce';
 
 export interface StateExplorerRow {
@@ -64,11 +65,19 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
   const onMetricChange = (m: Metric) => { setMetric(m); resetPage(); };
 
   // ---- region region-counts for chip badges -----------------------------
+  // Counted against states that are *renderable on the choropleth* — i.e.
+  // appear in `US_STATES_GEO`. Territories (PR/GU/VI/AS/MP) live in the DB
+  // but us-atlas doesn't include their geometry, so a chip for them would
+  // dim the entire map without lighting anything up. The filter below hides
+  // any region whose count is 0 in the geo-restricted view.
   const counts = useMemo(() => {
+    const geoCodes = new Set(US_STATES_GEO.map((s) => s.code));
     const out: Record<RegionFilter, number> = {
-      All: rows.length, Northeast: 0, South: 0, Midwest: 0, West: 0, Territories: 0,
+      All: 0, Northeast: 0, South: 0, Midwest: 0, West: 0, Territories: 0,
     };
     for (const r of rows) {
+      if (!geoCodes.has(r.code)) continue;
+      out.All += 1;
       const reg = regionOf(r.code);
       if (reg) out[reg] += 1;
     }
@@ -149,18 +158,25 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
     };
   }, [rows, region, years]);
 
-  // ---- Biggest movers chart data: top-12 by |Δ| across ALL states ------
+  // ---- Biggest movers chart: top-12 by |Δ share| within the current region.
+  // Both the share numerator (state filings) and denominator (regional total)
+  // come from the same in-region subset, so the chart stays consistent with
+  // the KPI strip and choropleth above it. When "All" is selected, the
+  // denominator is national filings.
   const moverRows: MoverRow[] = useMemo(() => {
     if (years.length < 2) return [];
     const lastIdx = years.length - 1;
     const prevIdx = lastIdx - 1;
+    const scoped = region === 'All'
+      ? rows
+      : rows.filter((r) => regionOf(r.code) === region);
     let totalLast = 0, totalPrev = 0;
-    for (const r of rows) {
+    for (const r of scoped) {
       totalLast += r.yearly[lastIdx] ?? 0;
       totalPrev += r.yearly[prevIdx] ?? 0;
     }
     if (totalLast === 0 || totalPrev === 0) return [];
-    const movers: MoverRow[] = rows
+    return scoped
       .map((r) => {
         const last = r.yearly[lastIdx] ?? 0;
         const prev = r.yearly[prevIdx] ?? 0;
@@ -172,8 +188,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
       .filter((m): m is MoverRow => m !== null)
       .sort((a, b) => Math.abs(b.deltaPct) - Math.abs(a.deltaPct))
       .slice(0, 12);
-    return movers;
-  }, [rows, years]);
+  }, [rows, years, region]);
 
   // ---- Table rows: filter by region + search ---------------------------
   const tableRows = useMemo(() => {
@@ -212,14 +227,14 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
         data-section-label="Region & metric"
       >
         <div className="flex flex-wrap items-center gap-2">
-          {REGION_OPTIONS.map((opt) => {
+          {REGION_OPTIONS.filter((opt) => opt === 'All' || counts[opt] > 0).map((opt) => {
             const isActive = region === opt;
             return (
               <button
                 key={opt}
                 type="button"
                 onClick={() => onRegionChange(opt)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium cursor-pointer transition-colors ${
                   isActive
                     ? 'bg-primary text-primary-foreground'
                     : 'border bg-card text-foreground hover:bg-muted'
@@ -241,7 +256,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
               type="button"
               onClick={() => onMetricChange(m)}
               aria-pressed={metric === m}
-              className={`rounded px-2.5 py-1 transition-colors ${
+              className={`rounded px-2.5 py-1 cursor-pointer transition-colors ${
                 metric === m
                   ? 'bg-primary text-primary-foreground font-medium'
                   : 'text-muted-foreground hover:text-foreground'
@@ -277,10 +292,14 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">
               Biggest share movers, FY{years[years.length - 2]} → FY{years[years.length - 1]}
+              {region !== 'All' && (
+                <span className="text-muted-foreground font-normal"> · {region}</span>
+              )}
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Year-over-year change in each state&rsquo;s share of national H-1B filings
-              (in percentage points). Positive bars = gained share; negative = lost.
+              Year-over-year change in each state&rsquo;s share of{' '}
+              {region === 'All' ? 'national' : `the ${region} region's`}{' '}
+              H-1B filings (in percentage points). Positive bars = gained share; negative = lost.
             </p>
           </CardHeader>
           <CardContent className="pt-0">

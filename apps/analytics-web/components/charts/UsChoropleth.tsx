@@ -91,7 +91,12 @@ export function UsChoropleth({
   const logMax = Math.log1p(max || 1);
   const intensity = (v: number) => (logMax > 0 ? Math.log1p(v) / logMax : 0);
 
-  const defaultCode = data[0]?.code ?? null;
+  // Default panel state — first datum with a non-zero value. When the host
+  // page filters by region and no in-region state has data (e.g. clicking
+  // "Territories" when no territory appears in the top-N states), defaultCode
+  // is null and the side panel shows its empty-state prompt instead of
+  // pretending whatever's rank #1 in the full set is active.
+  const defaultCode = data.find((d) => d.value > 0)?.code ?? null;
   const [hovered, setHovered] = useState<string | null>(null);
   const activeCode = hovered ?? defaultCode;
   const active = activeCode ? byCode.get(activeCode) ?? null : null;

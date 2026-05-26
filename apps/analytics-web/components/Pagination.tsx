@@ -12,7 +12,7 @@
  * in the parent component (see `usePagination` below for the standard
  * wiring).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
 export interface PaginationProps {
@@ -61,8 +61,8 @@ export function usePagination(pageSize: number) {
     if (page <= 1) url.searchParams.delete('page');
     else url.searchParams.set('page', String(page));
     window.history.pushState({}, '', url);
-    // Scroll back to the top of the table on page flip.
-    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    // Scrolling lives in the Pagination component (it knows where its own
+    // table card is); keep this hook DOM-free.
   }, []);
 
   // Honour back/forward navigation.
@@ -98,6 +98,26 @@ export function Pagination({
   current, total, onChange, itemCount, pageSize, itemNoun = 'item',
 }: PaginationProps) {
   const pages = useMemo(() => buildPageList(current, total), [current, total]);
+  const navRef = useRef<HTMLElement | null>(null);
+
+  // Scroll the table card into view on page change, NOT the document top.
+  // Find the nearest card ancestor (either by `[data-section-id]` if the
+  // host page set one, or by the shadcn Card's rounded-lg + border classes
+  // as a fallback). Scroll its top to the viewport top with a 16 px margin
+  // so the user sees the new page's first rows immediately.
+  const handleChange = useCallback((page: number) => {
+    onChange(page);
+    if (typeof window === 'undefined' || !navRef.current) return;
+    requestAnimationFrame(() => {
+      const container =
+        navRef.current?.closest<HTMLElement>('[data-section-id]')
+        ?? navRef.current?.parentElement?.closest<HTMLElement>('div, section')
+        ?? null;
+      if (!container) return;
+      const top = container.getBoundingClientRect().top + window.scrollY - 16;
+      window.scrollTo({ top, behavior: 'smooth' });
+    });
+  }, [onChange]);
 
   if (total <= 1) return null;
 
@@ -106,6 +126,7 @@ export function Pagination({
 
   return (
     <nav
+      ref={navRef}
       aria-label="Pagination"
       className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t bg-card/50"
     >
@@ -117,13 +138,13 @@ export function Pagination({
       <div className="flex items-center gap-1">
         <PaginationButton
           aria-label="First page" disabled={current === 1}
-          onClick={() => onChange(1)}
+          onClick={() => handleChange(1)}
         >
           <ChevronsLeft className="size-4" />
         </PaginationButton>
         <PaginationButton
           aria-label="Previous page" disabled={current === 1}
-          onClick={() => onChange(current - 1)}
+          onClick={() => handleChange(current - 1)}
         >
           <ChevronLeft className="size-4" />
         </PaginationButton>
@@ -143,7 +164,7 @@ export function Pagination({
               aria-label={`Page ${p}`}
               aria-current={p === current ? 'page' : undefined}
               active={p === current}
-              onClick={() => onChange(p)}
+              onClick={() => handleChange(p)}
             >
               {p}
             </PaginationButton>
@@ -152,13 +173,13 @@ export function Pagination({
 
         <PaginationButton
           aria-label="Next page" disabled={current === total}
-          onClick={() => onChange(current + 1)}
+          onClick={() => handleChange(current + 1)}
         >
           <ChevronRight className="size-4" />
         </PaginationButton>
         <PaginationButton
           aria-label="Last page" disabled={current === total}
-          onClick={() => onChange(total)}
+          onClick={() => handleChange(total)}
         >
           <ChevronsRight className="size-4" />
         </PaginationButton>
@@ -176,10 +197,10 @@ function PaginationButton({
       disabled={disabled}
       onClick={onClick}
       className={
-        `min-w-8 h-8 px-2 inline-flex items-center justify-center rounded-md text-xs font-medium tabular-nums transition-colors ` +
+        `min-w-8 h-8 px-2 inline-flex items-center justify-center rounded-md text-xs font-medium tabular-nums transition-colors cursor-pointer disabled:cursor-not-allowed ` +
         (active
           ? 'bg-primary text-primary-foreground'
-          : 'border bg-background text-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-background')
+          : 'border bg-background text-foreground hover:bg-muted disabled:opacity-40 disabled:hover:bg-background')
       }
       {...rest}
     >
