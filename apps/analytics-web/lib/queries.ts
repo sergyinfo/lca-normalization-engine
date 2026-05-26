@@ -38,7 +38,10 @@ export interface EmployerRow {
   denied_pct: number | null;
   first_year: number | null;
   last_year: number | null;
-  rank: number;
+  /** Global rank by filing volume. NULL for tail employers — those only
+   *  surfaced via cross-references from /state /occupation /sector pages,
+   *  not in the public /employer index. */
+  rank: number | null;
 }
 
 export interface EmployerTopSocRow {
@@ -185,18 +188,28 @@ export function getSiteKpis(): SiteKpis {
 /* -------------------------------------------------------------------------- */
 
 export function listTopEmployers(limit = 50): EmployerRow[] {
-  return queryAll<EmployerRow>(`SELECT * FROM employer ORDER BY rank ASC LIMIT ?`, limit);
+  // rank IS NULL = tail employer (cross-referenced from /state/<x> etc. but
+  // not in the global top-N). Tails get static pages but stay out of the
+  // public /employer index, biggest-movers chart, and KPI denominators.
+  return queryAll<EmployerRow>(
+    `SELECT * FROM employer WHERE rank IS NOT NULL ORDER BY rank ASC LIMIT ?`,
+    limit,
+  );
 }
 
 export function listAllEmployerSlugs(): string[] {
-  return queryAll<{ slug: string }>(`SELECT slug FROM employer ORDER BY rank ASC`)
-    .map((r) => r.slug);
+  // Include tail employers (rank IS NULL) — they need static pages so the
+  // cross-ref links from state/occupation/sector pages resolve.
+  return queryAll<{ slug: string }>(
+    `SELECT slug FROM employer ORDER BY rank IS NULL ASC, rank ASC`,
+  ).map((r) => r.slug);
 }
 
 export function listCleanestEmployers(limit = 100, minFilings = 500): EmployerRow[] {
+  // Curated leaderboard — tail employers excluded by rank IS NOT NULL.
   return queryAll<EmployerRow>(
     `SELECT * FROM employer
-       WHERE filings >= ? AND certified_pct IS NOT NULL
+       WHERE rank IS NOT NULL AND filings >= ? AND certified_pct IS NOT NULL
        ORDER BY certified_pct DESC, filings DESC
        LIMIT ?`,
     minFilings, limit,

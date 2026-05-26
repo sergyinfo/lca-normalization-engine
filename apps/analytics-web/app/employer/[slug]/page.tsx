@@ -78,7 +78,9 @@ export default async function EmployerPage(
 
   const chips = [
     ...(e.employer_state ? [{ label: e.employer_state }] : []),
-    { label: `Rank #${e.rank}`, variant: 'secondary' as const },
+    ...(e.rank != null
+      ? [{ label: `Rank #${e.rank}`, variant: 'secondary' as const }]
+      : []),
     ...(e.fein ? [{ label: `FEIN ${e.fein}`, variant: 'outline' as const }] : []),
   ];
 
@@ -112,7 +114,7 @@ export default async function EmployerPage(
           </>
         }
         kpis={[
-          { label: 'Total filings', value: fmt(e.filings),         sub: `Rank #${e.rank}`,       accent: true },
+          { label: 'Total filings', value: fmt(e.filings),         sub: e.rank != null ? `Rank #${e.rank}` : 'Outside top-N',       accent: true },
           { label: 'Certified',     value: fmtPct(e.certified_pct), sub: 'unconditional approval' },
           { label: 'Withdrawn',     value: fmtPct(e.withdrawn_pct), sub: 'incl. cert-withdrawn' },
           { label: 'Denied',        value: fmtPct(e.denied_pct),    sub: 'rejection rate' },

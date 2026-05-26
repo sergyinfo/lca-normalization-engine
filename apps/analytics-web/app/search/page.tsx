@@ -10,12 +10,25 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
-export const metadata: Metadata = entityMetadata({
-  title: 'Search',
-  description:
-    'Search H-1B sponsors, occupations, US states, and NAICS sectors covered in the dataset.',
-  path: '/search',
-});
+// Dynamic metadata: empty-form `/search` is indexable, but query variants
+// (`/search?q=foo`) emit `noindex, follow` so Google doesn't burn crawl
+// budget on user-generated search-result permutations. Canonical always
+// strips the query — deep links keep working, but only the empty form
+// gets indexed.
+export async function generateMetadata(
+  { searchParams }: { searchParams: Promise<{ q?: string }> },
+): Promise<Metadata> {
+  const params = await searchParams;
+  const hasQuery = (params?.q ?? '').trim().length >= 2;
+  const base = entityMetadata({
+    title: hasQuery ? `Search — ${params.q}` : 'Search',
+    description:
+      'Search H-1B sponsors, occupations, US states, and NAICS sectors covered in the dataset.',
+    path: '/search',
+  });
+  if (hasQuery) base.robots = { index: false, follow: true };
+  return base;
+}
 
 export default async function SearchPage(
   { searchParams }: { searchParams: Promise<{ q?: string }> },

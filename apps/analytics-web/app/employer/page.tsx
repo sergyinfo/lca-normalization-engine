@@ -27,7 +27,7 @@ export default function EmployerIndex() {
     filings: e.filings,
     certified_pct: e.certified_pct,
     denied_pct: e.denied_pct,
-    rank: e.rank,
+    rank: e.rank!,  // listTopEmployers filters by rank IS NOT NULL
     yearly: spark.byKey.get(e.slug) ?? [],
   }));
 

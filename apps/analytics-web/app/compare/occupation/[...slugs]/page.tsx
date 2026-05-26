@@ -40,10 +40,12 @@ export async function generateMetadata(
   if (!a || !b) return { title: 'Not found' };
   const aT = a.soc_title ?? a.soc_code;
   const bT = b.soc_title ?? b.soc_code;
+  // Canonical points at the sorted pair so /A/B and /B/A fold together.
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
   return entityMetadata({
     title: `${aT} vs ${bT} — H-1B Salary Comparison`,
     description: `Median H-1B prevailing wage and demand: ${aT} (${fmtUsd(a.p50_wage)}) vs ${bT} (${fmtUsd(b.p50_wage)}). P25/P75, top states, top employers, yearly wage trend.`,
-    path: `/compare/occupation/${aSlug}/${bSlug}`,
+    path: `/compare/occupation/${c0}/${c1}`,
   });
 }
 

@@ -26,6 +26,7 @@ import { UsChoropleth, type UsChoroplethDatum } from '@/components/charts/UsChor
 import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMoversChart';
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
+import { Pagination, usePagination } from '@/components/Pagination';
 import { fmt } from '@/lib/format';
 import { REGIONS, regionOf, type Region } from '@/lib/us-regions';
 import { perCapita, WORKFORCE_K } from '@/lib/us-workforce';
@@ -55,6 +56,11 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
   const [region, setRegion] = useState<RegionFilter>('All');
   const [metric, setMetric] = useState<Metric>('absolute');
   const [search, setSearch] = useState('');
+  const { current: currentPage, pageSize, goToPage } = usePagination(50);
+  const resetPage = () => { if (currentPage !== 1) goToPage(1); };
+  const onSearchChange = (v: string) => { setSearch(v); resetPage(); };
+  const onRegionChange = (r: RegionFilter) => { setRegion(r); resetPage(); };
+  const onMetricChange = (m: Metric) => { setMetric(m); resetPage(); };
 
   // ---- region region-counts for chip badges -----------------------------
   const counts = useMemo(() => {
@@ -185,6 +191,11 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
   const yearStart = years[0];
   const yearEnd = years[years.length - 1];
 
+  const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
+
   return (
     <div className="space-y-6">
       <EntityKpiStrip kpis={kpis} entityLabel="States tracked" />
@@ -198,7 +209,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
               <button
                 key={opt}
                 type="button"
-                onClick={() => setRegion(opt)}
+                onClick={() => onRegionChange(opt)}
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                   isActive
                     ? 'bg-primary text-primary-foreground'
@@ -219,7 +230,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
             <button
               key={m}
               type="button"
-              onClick={() => setMetric(m)}
+              onClick={() => onMetricChange(m)}
               aria-pressed={metric === m}
               className={`rounded px-2.5 py-1 transition-colors ${
                 metric === m
@@ -282,7 +293,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
               type="search"
               placeholder="Filter states…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => onSearchChange(e.target.value)}
               className="w-full rounded-md border bg-background h-9 pl-8 pr-3 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               aria-label="Filter states by code or name"
             />
@@ -311,7 +322,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
                       No states match — try clearing the filters.
                     </TableCell>
                   </TableRow>
-                ) : tableRows.map((s) => {
+                ) : pagedRows.map((s) => {
                   const series = s.yearly;
                   const pc = perCapita(s.filings, s.code);
                   return (
@@ -350,6 +361,14 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
+          <Pagination
+            current={safePage}
+            total={totalPages}
+            onChange={goToPage}
+            itemCount={tableRows.length}
+            pageSize={pageSize}
+            itemNoun="state"
+          />
         </CardContent>
       </Card>
     </div>

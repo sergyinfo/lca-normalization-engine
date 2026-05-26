@@ -38,10 +38,12 @@ export async function generateMetadata(
   const a = getStateBySlug(aSlug);
   const b = getStateBySlug(bSlug);
   if (!a || !b) return { title: 'Not found' };
+  // Canonical points at the sorted pair so /A/B and /B/A fold together.
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
   return entityMetadata({
     title: `${a.name} vs ${b.name} — H-1B State Comparison`,
     description: `Side-by-side H-1B sponsorship comparison for ${a.name} (${fmt(a.filings)} filings) and ${b.name} (${fmt(b.filings)} filings). Top sponsors, top occupations, yearly trend.`,
-    path: `/compare/state/${aSlug}/${bSlug}`,
+    path: `/compare/state/${c0}/${c1}`,
   });
 }
 

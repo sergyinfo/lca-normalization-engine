@@ -76,7 +76,7 @@ export default function TopH1bSponsors() {
         </div>
       }
       rows={employers.map((e) => ({
-        rank: e.rank,
+        rank: e.rank!,  // listTopEmployers filters rank IS NOT NULL
         href: `/employer/${e.slug}`,
         primary: e.canonical_name,
         cells: [

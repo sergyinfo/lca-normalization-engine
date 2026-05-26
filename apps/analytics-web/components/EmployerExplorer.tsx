@@ -24,6 +24,7 @@ import { MiniBar } from '@/components/charts/MiniBar';
 import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMoversChart';
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
+import { Pagination, usePagination } from '@/components/Pagination';
 import { fmt, fmtPct } from '@/lib/format';
 
 export interface EmployerExplorerRow {
@@ -49,6 +50,11 @@ function shortCode(name: string): string {
 
 export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
   const [search, setSearch] = useState('');
+  const { current: currentPage, pageSize, goToPage } = usePagination(50);
+  const onSearchChange = (v: string) => {
+    setSearch(v);
+    if (currentPage !== 1) goToPage(1);
+  };
 
   const kpis: EntityKpiData = useMemo(() => {
     const total = rows.reduce((s, r) => s + r.filings, 0);
@@ -138,6 +144,11 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
   const yearStart = years[0];
   const yearEnd = years[years.length - 1];
 
+  const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
+
   return (
     <div className="space-y-6">
       <EntityKpiStrip kpis={kpis} entityLabel="Sponsors tracked" />
@@ -171,7 +182,7 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
               type="search"
               placeholder="Filter by name or state code…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => onSearchChange(e.target.value)}
               className="w-full rounded-md border bg-background h-9 pl-8 pr-3 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               aria-label="Filter sponsors by company name or state code"
             />
@@ -198,7 +209,7 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
                       No sponsors match — try clearing the search.
                     </TableCell>
                   </TableRow>
-                ) : tableRows.map((e) => {
+                ) : pagedRows.map((e) => {
                   const series = e.yearly;
                   return (
                     <TableRow key={e.slug}>
@@ -234,6 +245,14 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
+          <Pagination
+            current={safePage}
+            total={totalPages}
+            onChange={goToPage}
+            itemCount={tableRows.length}
+            pageSize={pageSize}
+            itemNoun="sponsor"
+          />
         </CardContent>
       </Card>
     </div>

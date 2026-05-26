@@ -200,6 +200,14 @@ async function main() {
   const slugsSeen = new Map<string, number>();
   const canonicalToSlug = new Map<string, string>();
   const canonicalToDisplay = new Map<string, string>();
+  // Canonical-ids referenced by state/occupation/sector_top_employer that
+  // are NOT in the global top-N. We backfill them into `employer` at the
+  // end with rank=NULL so the cross-ref links resolve to a real page
+  // (otherwise users get 404s when clicking from /state/<x> → /employer/<y>).
+  const tailEmployerIds = new Set<string>();
+  const noteTail = (id: string) => {
+    if (id && !canonicalToSlug.has(id)) tailEmployerIds.add(id);
+  };
   const insertEmp = db.prepare(`INSERT INTO employer
     (slug, canonical_id, canonical_name, employer_state, fein, filings,
      certified_pct, withdrawn_pct, cert_withdrawn_pct, denied_pct,
@@ -346,6 +354,7 @@ async function main() {
     const insOccEmp = db.prepare(`INSERT OR IGNORE INTO occupation_top_employer
       (soc_code, employer_slug, canonical_name, filings, rank) VALUES (?, ?, ?, ?, ?)`);
     for (const r of occEmps) {
+      noteTail(r.canonical_id);
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
       const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
@@ -397,6 +406,7 @@ async function main() {
     const insStEmp = db.prepare(`INSERT OR IGNORE INTO state_top_employer
       (state_code, employer_slug, canonical_name, filings, share_pct, rank) VALUES (?, ?, ?, ?, ?, ?)`);
     for (const r of stEmps) {
+      noteTail(r.canonical_id);
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
       const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
@@ -491,6 +501,7 @@ async function main() {
       (naics2, employer_slug, canonical_name, filings, rank) VALUES (?, ?, ?, ?, ?)`);
     for (const r of secEmps) {
       if (!r.canonical_name) continue;
+      noteTail(r.canonical_id);
       const slug = canonicalToSlug.get(r.canonical_id)
         ?? (slugify(r.canonical_name) || `employer-${r.canonical_id}`);
       const name = canonicalToDisplay.get(r.canonical_id) ?? r.canonical_name;
@@ -570,6 +581,128 @@ async function main() {
       insStYear.run(r.state.toUpperCase(), Number(r.year), Number(r.filings));
     }
     console.log(`[build-sqlite]   state_yearly: ${stYears.length} rows`);
+  }
+
+  /* -- tail employers (referenced by cross-refs but not in global top-N) -- */
+  // Cross-ref tables (state/occupation/sector_top_employer) can link to
+  // employers that aren't in the global top-N. Without a row in `employer`
+  // those `/employer/<slug>` links 404. Backfill them here with the same
+  // outcomes data + rank=NULL so they don't show up in /employer index but
+  // do generate static params + render their detail page.
+  if (tailEmployerIds.size > 0) {
+    const tailIds = Array.from(tailEmployerIds);
+    const { rows: tailRows } = await pg.query<{
+      id: string; canonical_name: string; employer_state: string | null;
+      fein: string | null; filings: string;
+      certified_pct: string | null; withdrawn_pct: string | null;
+      cert_withdrawn_pct: string | null; denied_pct: string | null;
+    }>(`
+      SELECT eo.id::text, eo.canonical_name, eo.employer_state, eo.fein,
+             eo.filings::text, eo.certified_pct::text, eo.withdrawn_pct::text,
+             eo.cert_withdrawn_pct::text, eo.denied_pct::text
+      FROM   analytics.mv_employer_outcomes eo
+      WHERE  eo.id::text = ANY($1::text[])
+    `, [tailIds]);
+
+    // Same disambiguation as top-N, but resolved against the existing
+    // top-N display names so a tail "AMAZON" doesn't shadow an already
+    // disambiguated top-N "AMAZON.COM SERVICES LLC (WA)" slug.
+    const insertTail = db.prepare(`INSERT OR IGNORE INTO employer
+      (slug, canonical_id, canonical_name, employer_state, fein, filings,
+       certified_pct, withdrawn_pct, cert_withdrawn_pct, denied_pct,
+       first_year, last_year, rank)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`);
+
+    let tailInserted = 0;
+    for (const r of tailRows) {
+      let slug = slugify(r.canonical_name) || `employer-${r.id}`;
+      const n = (slugsSeen.get(slug) ?? 0) + 1;
+      slugsSeen.set(slug, n);
+      if (n > 1) slug = `${slug}-${n}`;
+      canonicalToSlug.set(r.id, slug);
+
+      // Tail employers rarely collide on canonical_name (top-N pre-claims
+      // the common ones), so we use the raw name. If a future build wants
+      // FEIN/state disambiguation for tails too, mirror the top-N logic.
+      const displayName = r.canonical_name;
+      canonicalToDisplay.set(r.id, displayName);
+
+      insertTail.run(
+        slug, r.id, displayName, r.employer_state, r.fein,
+        Number(r.filings),
+        toNumOrNull(r.certified_pct), toNumOrNull(r.withdrawn_pct),
+        toNumOrNull(r.cert_withdrawn_pct), toNumOrNull(r.denied_pct),
+        null, null,
+      );
+      tailInserted += 1;
+    }
+    console.log(`[build-sqlite]   employer (tail): ${tailInserted} rows (referenced by cross-refs, rank=NULL)`);
+
+    /* -- tail employers: top-SOC breakdown ------------------------------- */
+    // `mv_top_employers_by_soc` only includes the top-N employers PER SOC,
+    // so tail employers usually aren't there. Compute from lca_records
+    // directly using the expression index on canonical_employer_id.
+    const tailIdList = tailIds;
+    const { rows: tailSocs } = await pg.query<{ canonical_id: string;
+      soc_code: string; soc_title: string | null;
+      filings: string; rk: number }>(`
+      WITH ranked AS (
+        SELECT r.data->>'canonical_employer_id' AS canonical_id,
+               r.data->>'soc_code'              AS soc_code,
+               count(*)::text                    AS filings,
+               row_number() OVER (
+                 PARTITION BY r.data->>'canonical_employer_id'
+                 ORDER BY count(*) DESC) AS rk
+        FROM   lca_records r
+        WHERE  r.data->>'canonical_employer_id' = ANY($1::text[])
+          AND  r.data->>'soc_code' IS NOT NULL
+        GROUP  BY 1, 2
+      )
+      SELECT r.canonical_id, r.soc_code,
+             (SELECT s.soc_title FROM analytics.mv_soc_summary s WHERE s.soc_code = r.soc_code LIMIT 1) AS soc_title,
+             r.filings, r.rk::int
+      FROM   ranked r WHERE rk <= 10
+      ORDER  BY canonical_id, rk
+    `, [tailIdList]);
+    const insTailSoc = db.prepare(`INSERT OR IGNORE INTO employer_top_soc
+      (employer_slug, soc_code, soc_title, filings, rank) VALUES (?, ?, ?, ?, ?)`);
+    let tailSocCount = 0;
+    for (const r of tailSocs) {
+      const slug = canonicalToSlug.get(r.canonical_id);
+      if (!slug) continue;
+      insTailSoc.run(slug, r.soc_code, r.soc_title, Number(r.filings), Number(r.rk));
+      tailSocCount += 1;
+    }
+    console.log(`[build-sqlite]   employer_top_soc (tail): ${tailSocCount} rows`);
+
+    /* -- tail employers: yearly trend ------------------------------------ */
+    const { rows: tailYears } = await pg.query<{ canonical_id: string;
+      year: number; filings: string }>(`
+      SELECT r.data->>'canonical_employer_id' AS canonical_id,
+             r.filing_year::int               AS year,
+             count(*)::text                    AS filings
+      FROM   lca_records r
+      WHERE  r.data->>'canonical_employer_id' = ANY($1::text[])
+        AND  r.filing_year IS NOT NULL
+      GROUP  BY 1, 2
+      ORDER  BY 1, 2
+    `, [tailIdList]);
+    const insTailYear = db.prepare(`INSERT OR IGNORE INTO employer_yearly
+      (employer_slug, year, filings) VALUES (?, ?, ?)`);
+    const tailYearRange = new Map<string, { min: number; max: number }>();
+    let tailYearCount = 0;
+    for (const r of tailYears) {
+      const slug = canonicalToSlug.get(r.canonical_id);
+      if (!slug) continue;
+      insTailYear.run(slug, Number(r.year), Number(r.filings));
+      tailYearCount += 1;
+      const ex = tailYearRange.get(slug);
+      if (!ex) tailYearRange.set(slug, { min: r.year, max: r.year });
+      else { ex.min = Math.min(ex.min, r.year); ex.max = Math.max(ex.max, r.year); }
+    }
+    const updTailRange = db.prepare(`UPDATE employer SET first_year = ?, last_year = ? WHERE slug = ?`);
+    for (const [slug, { min, max }] of tailYearRange) updTailRange.run(min, max, slug);
+    console.log(`[build-sqlite]   employer_yearly (tail): ${tailYearCount} rows`);
   }
 
   /* -- SEO: 301 redirects for slugs that dropped out of the top-N -------- */

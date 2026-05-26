@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS employer (
   denied_pct          REAL,
   first_year          INTEGER,
   last_year           INTEGER,
-  rank                INTEGER NOT NULL        -- 1 = largest sponsor
+  rank                INTEGER                  -- 1 = largest sponsor; NULL = tail employer (cross-referenced from /state etc. but not in global top-N — has a static page, excluded from /employer index)
 );
 CREATE INDEX IF NOT EXISTS employer_rank_idx ON employer(rank);
 

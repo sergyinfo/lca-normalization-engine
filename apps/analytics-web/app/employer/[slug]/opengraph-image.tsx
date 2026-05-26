@@ -27,7 +27,7 @@ export default async function Image({ params }: { params: Promise<{ slug: string
     stats: [
       { label: 'Filings',    value: fmt(e.filings) },
       { label: 'Certified',  value: fmtPct(e.certified_pct, 1) },
-      { label: 'Rank',       value: `#${e.rank}` },
+      { label: 'Rank',       value: e.rank != null ? `#${e.rank}` : '—' },
     ],
   });
 }

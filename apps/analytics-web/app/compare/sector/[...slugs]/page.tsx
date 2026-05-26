@@ -38,10 +38,12 @@ export async function generateMetadata(
   const a = getSectorBySlug(aSlug);
   const b = getSectorBySlug(bSlug);
   if (!a || !b) return { title: 'Not found' };
+  // Canonical points at the sorted pair so /A/B and /B/A fold together.
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
   return entityMetadata({
     title: `${a.label} vs ${b.label} — H-1B Industry Comparison`,
     description: `Side-by-side H-1B sponsorship comparison: NAICS ${a.naics2} (${fmt(a.filings)} filings) vs NAICS ${b.naics2} (${fmt(b.filings)} filings). Top sponsors, top occupations.`,
-    path: `/compare/sector/${aSlug}/${bSlug}`,
+    path: `/compare/sector/${c0}/${c1}`,
   });
 }
 

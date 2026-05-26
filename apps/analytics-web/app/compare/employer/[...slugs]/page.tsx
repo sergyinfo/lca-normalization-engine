@@ -39,10 +39,14 @@ export async function generateMetadata(
   const a = getEmployer(aSlug);
   const b = getEmployer(bSlug);
   if (!a || !b) return { title: 'Not found' };
+  // Canonical points at the alphabetically-sorted pair so /A/B and /B/A
+  // both fold onto the same indexable URL (A < B). Page itself still
+  // renders with whichever order the visitor requested.
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
   return entityMetadata({
     title: `${a.canonical_name} vs ${b.canonical_name} — H-1B Sponsor Comparison`,
     description: `Side-by-side H-1B sponsorship comparison: ${a.canonical_name} (${fmt(a.filings)} filings) vs ${b.canonical_name} (${fmt(b.filings)} filings). Certification rates, denial rates, top occupations, yearly trend.`,
-    path: `/compare/employer/${aSlug}/${bSlug}`,
+    path: `/compare/employer/${c0}/${c1}`,
   });
 }
 
@@ -164,8 +168,13 @@ export default async function CompareEmployersPage(
               />
               <CompareRow
                 label="Rank"
-                a={`#${a.rank}`} b={`#${b.rank}`}
-                winner={a.rank < b.rank ? 'a' : a.rank > b.rank ? 'b' : null}
+                a={a.rank != null ? `#${a.rank}` : '—'}
+                b={b.rank != null ? `#${b.rank}` : '—'}
+                winner={
+                  a.rank != null && b.rank != null
+                    ? (a.rank < b.rank ? 'a' : a.rank > b.rank ? 'b' : null)
+                    : null
+                }
               />
               <CompareRow
                 label="Active years"
