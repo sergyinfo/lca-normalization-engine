@@ -101,8 +101,7 @@ function snapshotPastState(dbPath: string): PastState {
     } catch { /* table may not exist on very old snapshots */ }
   }
   try {
-    const rows = old.prepare(`SELECT source_path, target_path FROM redirects`).all()
-      as Array<{ source_path: string; target_path: string }>;
+    const rows = old.prepare(`SELECT source_path, target_path FROM redirects`).all() as Array<{ source_path: string; target_path: string }>;
     for (const r of rows) past.redirects.set(r.source_path, r.target_path);
   } catch { /* redirects table is new; absent on first run */ }
   old.close();

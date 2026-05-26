@@ -332,7 +332,7 @@ This is the procedure for every data refresh. Every step is idempotent.
 Required after new data lands in `lca_records`. Skip if your Postgres is already up to date.
 
 ```bash
-pnpm --filter @lca/cli analytics:refresh-views
+pnpm analytics:refresh-views
 ```
 
 What it does: runs `REFRESH MATERIALIZED VIEW analytics.<view>` for every analytics matview, in dependency order.
@@ -340,6 +340,22 @@ What it does: runs `REFRESH MATERIALIZED VIEW analytics.<view>` for every analyt
 Expected time: 1–15 min depending on dataset size.
 
 Failure mode: usually a row-count mismatch or stale FK. Check `pg_stat_activity` for blocking queries; consider `REFRESH MATERIALIZED VIEW CONCURRENTLY` if a unique index exists.
+
+#### Step 1a — When `analytics_views.sql` adds *new* matviews
+
+`refresh_views.sql` only refreshes matviews that *already exist* — if a release adds a new one, REFRESH silently skips it and `build:sqlite` later blows up with `relation "analytics.mv_xxx" does not exist`. This bit us on 2026-05-26.
+
+The release script (`scripts/release.sh`) now guards against this: it diffs declared matviews (from `analytics_views.sql`) against `pg_matviews` and *refuses to continue* if any are missing, telling the operator to re-run with `--rebuild-views`.
+
+Manual fix when you hit this outside the release script:
+
+```bash
+# Either: surgical CREATE of just the missing matview (5–10 min)
+psql "$DATABASE_URL" -c "CREATE MATERIALIZED VIEW analytics.mv_new_one AS …"
+
+# Or: full DROP+CREATE pass (30–60 min on the full corpus)
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/analytics-ui/db/analytics_views.sql
+```
 
 ### Step 2 — Build the SQLite snapshot
 
@@ -773,83 +789,34 @@ Before pushing to production, confirm:
 
 ## Appendix A — `release.sh` helper
 
-Create `scripts/release.sh` at the repo root:
+Lives at [`scripts/release.sh`](scripts/release.sh) — single source of truth. Run `./scripts/release.sh --help` for the current flag set.
+
+What it covers, in order:
+
+| Step | What | Notes |
+|---|---|---|
+| Pre-flight | `pnpm --filter analytics-web typecheck` | Fails fast on TS errors before touching prod data. |
+| 0 | Matview safety check | Diffs `analytics_views.sql` against `pg_matviews`. **Refuses to continue** if any declared matview is missing — points the operator to `--rebuild-views`. |
+| 0b | `REFRESH MATERIALIZED VIEW analytics.*` | Default path. ~5 min. |
+| 0 *(--rebuild-views)* | `psql -f analytics_views.sql` | DROP+CREATE every matview. Used when a release adds a new one. **30–60 min** on the full corpus. |
+| 1 | `pnpm --filter analytics-web build:sqlite` | Pulls top-N from matviews into `data/lca.db`. Also writes `data/archives/<YYYY-qN>.lca.db`. |
+| 2 | `pnpm --filter analytics-web build:summaries` | LLM-generated entity prose. Skip with `--skip-summaries` if unchanged. |
+| 3 | Tag previous image as `:rollback` | One-shot recovery: `docker tag …:rollback …:latest && docker compose up -d`. |
+| 4 | `docker compose build analytics-web` | Bakes the fresh `data/` directory into the image. |
+| 5 | `docker compose up -d analytics-web` | Rolling restart. |
+| 6 | Smoke test 5 critical routes | `/`, `/employer`, `/occupation/software-developers-15-1252`, `/sitemap.xml`, `/api/docs`. Exits non-zero if any non-200. |
+
+Flags:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# release.sh — canonical rebuild + deploy for analytics-web.
-# Usage:
-#   ./scripts/release.sh                   # full rebuild (data + image)
-#   ./scripts/release.sh --code-only       # skip SQLite + summaries
-#   ./scripts/release.sh --skip-summaries  # rebuild data but keep existing summaries
-
-CODE_ONLY=0
-SKIP_SUMMARIES=0
-for arg in "$@"; do
-  case "$arg" in
-    --code-only)      CODE_ONLY=1 ;;
-    --skip-summaries) SKIP_SUMMARIES=1 ;;
-    *) echo "Unknown flag: $arg" >&2; exit 1 ;;
-  esac
-done
-
-cd "$(dirname "$0")/.."
-ROOT=$(pwd)
-
-echo "▶ Pre-flight checks"
-pnpm --filter analytics-web typecheck
-echo "  ✓ Typecheck passed"
-
-if [[ $CODE_ONLY -eq 0 ]]; then
-  echo "▶ Step 1: Rebuilding lca.db from Postgres"
-  pnpm --filter analytics-web build:sqlite
-
-  if [[ $SKIP_SUMMARIES -eq 0 ]]; then
-    echo "▶ Step 2: Regenerating LLM summaries"
-    pnpm --filter analytics-web build:summaries
-  fi
-fi
-
-echo "▶ Step 3: Tagging current image as :rollback"
-if docker image inspect lca-normalization-engine-analytics-web:latest >/dev/null 2>&1; then
-  docker tag lca-normalization-engine-analytics-web:latest \
-             lca-normalization-engine-analytics-web:rollback
-  echo "  ✓ Previous image tagged"
-else
-  echo "  ⚠  No previous :latest image — first release"
-fi
-
-echo "▶ Step 4: Building new image"
-docker compose build analytics-web
-
-echo "▶ Step 5: Deploying"
-docker compose up -d analytics-web
-
-echo "▶ Step 6: Smoke test"
-sleep 3
-for path in / /employer /occupation/software-developers-15-1252 /sitemap.xml; do
-  code=$(curl -fsS -o /dev/null -w "%{http_code}" "http://localhost:3000${path}" || echo "FAIL")
-  printf "  %-50s %s\n" "$path" "$code"
-  [[ "$code" == "200" ]] || { echo "✗ Smoke test failed"; exit 1; }
-done
-
-echo "✓ Release complete"
+./scripts/release.sh                  # full quarterly refresh
+./scripts/release.sh --code-only      # code-only deploy (skips 0, 1, 2)
+./scripts/release.sh --skip-summaries # data refresh without re-running LLM
+./scripts/release.sh --rebuild-views  # apply analytics_views.sql in full
+./scripts/release.sh --skip-views     # skip matview check + refresh entirely
 ```
 
-Make it executable:
-
-```bash
-chmod +x scripts/release.sh
-```
-
-Usage:
-
-```bash
-./scripts/release.sh                # full quarterly refresh
-./scripts/release.sh --code-only    # code-only deploy
-```
+Required env: `DATABASE_URL` for steps 0 and 1 (typically sourced from `.env`).
 
 ---
 

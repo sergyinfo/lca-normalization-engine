@@ -1,28 +1,35 @@
-import Link from 'next/link';
 import type { Metadata } from 'next';
 import { Briefcase } from 'lucide-react';
 
 import { listTopOccupations, getOccupationYearlyAll } from '@/lib/queries';
-import { fmt, fmtUsd } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Sparkline } from '@/components/charts/Sparkline';
-import { MiniBar } from '@/components/charts/MiniBar';
-import { SortableTable } from '@/components/SortableTable';
+import {
+  OccupationExplorer,
+  type OccupationExplorerRow,
+} from '@/components/OccupationExplorer';
 
 export const metadata: Metadata = entityMetadata({
   title: 'H-1B Occupations — Salary Guide Index',
   description:
-    'Browse H-1B occupations by SOC code. Each guide covers prevailing-wage percentiles, top hiring states and employers, and year-over-year wage growth.',
+    'Browse H-1B occupations by SOC code. KPI summary, biggest YoY share movers, prevailing-wage medians, and a searchable sortable table of every occupation in the corpus.',
   path: '/occupation',
 });
 
 export default function OccupationIndex() {
   const rows = listTopOccupations(500);
   const spark = getOccupationYearlyAll();
-  const maxFilings = rows.reduce((m, o) => Math.max(m, o.filings), 0);
+
+  const explorerRows: OccupationExplorerRow[] = rows.map((o) => ({
+    soc_code: o.soc_code,
+    slug: o.slug,
+    soc_title: o.soc_title,
+    filings: o.filings,
+    p50_wage: o.p50_wage,
+    rank: o.rank,
+    yearly: spark.byKey.get(o.soc_code) ?? [],
+  }));
+
   return (
     <>
       <section className="space-y-3 pb-6">
@@ -33,60 +40,13 @@ export default function OccupationIndex() {
           H-1B occupations by filing volume
         </h1>
         <p className="text-muted-foreground max-w-2xl">
-          SOC-coded occupations covered by the H-1B program. Click any
-          column header to sort by volume or wage.
+          SOC-coded occupations covered by the H-1B program. See which roles
+          are gaining or losing share year over year, and search across all
+          500 codes by SOC number or job title.
         </p>
       </section>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">{fmt(rows.length)} occupations</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12" data-sort-key="rank"  data-sort-type="number">#</TableHead>
-                  <TableHead className="w-24" data-sort-key="soc"   data-sort-type="string">SOC</TableHead>
-                  <TableHead              data-sort-key="title" data-sort-type="string">Title</TableHead>
-                  <TableHead className="text-right" data-sort-key="filings" data-sort-type="number">Filings</TableHead>
-                  <TableHead className="w-28">Trend FY{spark.years[0]}–{spark.years[spark.years.length - 1]}</TableHead>
-                  <TableHead className="text-right" data-sort-key="wage" data-sort-type="number">Median wage</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((o) => {
-                  const series = spark.byKey.get(o.soc_code);
-                  return (
-                    <TableRow key={o.soc_code}>
-                      <TableCell className="text-muted-foreground tabular-nums" data-sort-value={o.rank}>{o.rank}</TableCell>
-                      <TableCell className="font-mono text-xs" data-sort-value={o.soc_code}>
-                        <Link href={`/occupation/${o.slug}`} className="hover:text-primary">{o.soc_code}</Link>
-                      </TableCell>
-                      <TableCell data-sort-value={o.soc_title ?? ''}>
-                        <Link href={`/occupation/${o.slug}`} className="font-medium hover:text-primary">
-                          {o.soc_title ?? '—'}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-right" data-sort-value={o.filings}>
-                        <div className="flex items-center justify-end gap-2">
-                          <MiniBar value={o.filings} max={maxFilings} />
-                          <span className="tabular-nums">{fmt(o.filings)}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {series ? <Sparkline values={series} /> : <span className="text-muted-foreground text-xs">—</span>}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums" data-sort-value={o.p50_wage ?? ''}>{fmtUsd(o.p50_wage)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </SortableTable>
-        </CardContent>
-      </Card>
+      <OccupationExplorer rows={explorerRows} years={spark.years} />
     </>
   );
 }
