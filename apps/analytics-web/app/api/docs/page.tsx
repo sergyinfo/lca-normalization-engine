@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { Code, Lock, Gauge } from 'lucide-react';
 
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { entityMetadata } from '@/lib/seo';
+import { FEATURES } from '@/lib/features';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -18,6 +20,7 @@ export const metadata: Metadata = entityMetadata({
 const E = SITE_URL;
 
 export default function ApiDocsPage() {
+  if (!FEATURES.api) notFound();
   return (
     <>
       <section className="space-y-3 pb-8">

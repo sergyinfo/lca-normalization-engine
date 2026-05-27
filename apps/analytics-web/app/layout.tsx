@@ -7,6 +7,7 @@ import { Search } from 'lucide-react';
 import './globals.css';
 
 import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { FEATURES } from '@/lib/features';
 import { ADSENSE_CLIENT_ID } from '@/lib/adsense';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -33,7 +34,7 @@ const navLinks = [
   { href: '/state',      label: 'States' },
   { href: '/sector',     label: 'Sectors' },
   { href: '/rankings',   label: 'Rankings' },
-  { href: '/api/docs',   label: 'API' },
+  ...(FEATURES.api ? [{ href: '/api/docs', label: 'API' }] : []),
 ];
 
 export default function RootLayout({
@@ -124,8 +125,12 @@ function SiteFooter() {
           <Link href="/about" className="hover:text-foreground">About</Link>
           <span aria-hidden>·</span>
           <Link href="/methodology" className="hover:text-foreground">Methodology</Link>
-          <span aria-hidden>·</span>
-          <Link href="/api/docs" className="hover:text-foreground">Data API</Link>
+          {FEATURES.api ? (
+            <>
+              <span aria-hidden>·</span>
+              <Link href="/api/docs" className="hover:text-foreground">Data API</Link>
+            </>
+          ) : null}
         </p>
       </div>
     </footer>

@@ -11,6 +11,7 @@ import {
 import { fmt, fmtUsd } from '@/lib/format';
 import { websiteJsonLd, datasetJsonLd } from '@/lib/seo';
 import { SITE_URL, SITE_NAME } from '@/lib/site';
+import { FEATURES } from '@/lib/features';
 import { AdSlot } from '@/components/AdSlot';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
@@ -101,9 +102,11 @@ export default function HomePage() {
               Browse rankings <ArrowRight className="size-4" />
             </Link>
           </Button>
-          <Button asChild size="lg" variant="outline" className="rounded-full px-6">
-            <Link href="/api/docs">Data API</Link>
-          </Button>
+          {FEATURES.api ? (
+            <Button asChild size="lg" variant="outline" className="rounded-full px-6">
+              <Link href="/api/docs">Data API</Link>
+            </Button>
+          ) : null}
         </div>
       </section>
 
