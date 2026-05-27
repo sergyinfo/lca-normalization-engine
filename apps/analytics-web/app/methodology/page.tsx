@@ -47,7 +47,8 @@ export default function MethodologyPage() {
         <a
           href="https://www.dol.gov/agencies/eta/foreign-labor/performance"
           className="underline hover:text-foreground"
-          rel="noopener"
+          target="_blank"
+          rel="noopener noreferrer"
         >
           US Department of Labor, Office of Foreign Labor Certification (OFLC)
         </a>
@@ -166,7 +167,8 @@ export default function MethodologyPage() {
         <a
           href="https://creativecommons.org/publicdomain/zero/1.0/"
           className="underline hover:text-foreground"
-          rel="noopener"
+          target="_blank"
+          rel="noopener noreferrer"
         >
           CC0 1.0
         </a>

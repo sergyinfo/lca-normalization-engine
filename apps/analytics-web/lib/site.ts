@@ -16,3 +16,7 @@ export const SITE_URL  = process.env.NEXT_PUBLIC_SITE_URL  ?? 'https://h1b.repor
 /** Hostname stripped of protocol — used in OG watermarks where the visual
  *  weight of "https://" adds noise. */
 export const SITE_HOST = SITE_URL.replace(/^https?:\/\//, '');
+
+/** Google Tag Manager container ID. Set NEXT_PUBLIC_GTM_ID="" to disable
+ *  injection entirely (e.g., during local development). */
+export const GTM_ID = process.env.NEXT_PUBLIC_GTM_ID ?? 'GTM-NGCWHKZ2';

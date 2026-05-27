@@ -71,7 +71,8 @@ export default function MethodologyPage() {
           Every record on this site originates from the{' '}
           <a
             href="https://www.dol.gov/agencies/eta/foreign-labor/performance"
-            rel="noopener"
+            target="_blank"
+            rel="noopener noreferrer"
           >
             US Department of Labor, Office of Foreign Labor Certification (OFLC)
           </a>
@@ -180,7 +181,7 @@ export default function MethodologyPage() {
         <p className="mt-4 text-[color:var(--color-fg-muted)]">
           The underlying DOL releases are US-government public records, free of copyright. The derived data on this
           site — canonical employer mappings, occupation classifications, and roll-ups — is released under{' '}
-          <a href="https://creativecommons.org/publicdomain/zero/1.0/" rel="noopener">CC0 1.0</a>. You may mirror or
+          <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0 1.0</a>. You may mirror or
           republish without attribution; a link back is appreciated but not required.
         </p>
 

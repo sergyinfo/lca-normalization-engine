@@ -6,7 +6,7 @@ import { GeistMono } from 'geist/font/mono';
 import { Search } from 'lucide-react';
 import './globals.css';
 
-import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_NAME, SITE_URL, GTM_ID } from '@/lib/site';
 import { FEATURES } from '@/lib/features';
 import { ADSENSE_CLIENT_ID } from '@/lib/adsense';
 import { Input } from '@/components/ui/input';
@@ -45,6 +45,15 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn(GeistSans.variable, GeistMono.variable)} suppressHydrationWarning>
       <head>
+        {GTM_ID ? (
+          <Script id="gtm-loader" strategy="afterInteractive">
+            {`(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','${GTM_ID}');`}
+          </Script>
+        ) : null}
         {ADSENSE_CLIENT_ID ? (
           <Script
             id="adsbygoogle-loader"
@@ -56,6 +65,16 @@ export default function RootLayout({
         ) : null}
       </head>
       <body className="font-sans antialiased min-h-screen flex flex-col bg-background text-foreground">
+        {GTM_ID ? (
+          <noscript>
+            <iframe
+              src={`https://www.googletagmanager.com/ns.html?id=${GTM_ID}`}
+              height="0"
+              width="0"
+              style={{ display: 'none', visibility: 'hidden' }}
+            />
+          </noscript>
+        ) : null}
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <SiteHeader />
           <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8 md:py-12">
