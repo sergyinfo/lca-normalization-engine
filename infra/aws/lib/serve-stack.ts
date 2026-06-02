@@ -16,13 +16,14 @@
  * if you need sub-second p99.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cf from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import type { LcaSharedStack } from './shared-stack.js';
 
 interface ServeStackProps extends StackProps {
@@ -35,6 +36,35 @@ export class LcaServeStack extends Stack {
     const { shared } = props;
 
     Tags.of(this).add('Component', 'serve');
+
+    // ---------------------------------------------------------------------
+    // Per-environment wiring, sourced from CDK context so secrets/ARNs stay
+    // out of source control. Pass on deploy, e.g.:
+    //   cdk deploy LcaServeStack \
+    //     -c siteCertificateArn=arn:aws:acm:us-east-1:…:certificate/… \
+    //     -c siteDomains=dev.h1b.report \
+    //     -c siteUrl=https://dev.h1b.report
+    //
+    // Domain wiring is OPTIONAL: with no cert/domains context the stack still
+    // synths and deploys against the raw *.cloudfront.net hostname (handy for
+    // the very first deploy, before the ACM cert exists / is Issued).
+    // ---------------------------------------------------------------------
+    const siteCertificateArn = this.node.tryGetContext('siteCertificateArn') as string | undefined;
+    const siteDomains = ((this.node.tryGetContext('siteDomains') as string | undefined) ?? '')
+      .split(',')
+      .map((d) => d.trim())
+      .filter(Boolean);
+    const siteUrl = (this.node.tryGetContext('siteUrl') as string | undefined) ?? 'https://h1b.report';
+
+    if (siteCertificateArn && siteDomains.length === 0) {
+      throw new Error('siteCertificateArn provided but siteDomains is empty — set -c siteDomains=dev.h1b.report');
+    }
+    if (siteDomains.length > 0 && !siteCertificateArn) {
+      throw new Error('siteDomains provided but siteCertificateArn is missing — CloudFront aliases require an ACM cert in us-east-1');
+    }
+    const siteCert = siteCertificateArn
+      ? acm.Certificate.fromCertificateArn(this, 'SiteCert', siteCertificateArn)
+      : undefined;
 
     // ---------------------------------------------------------------------
     // S3 bucket holding static Next.js assets uploaded out-of-band by the
@@ -61,7 +91,7 @@ export class LcaServeStack extends Stack {
       architecture: lambda.Architecture.ARM_64,
       environment: {
         // The lca.db is baked into the image; nothing to wire here for now.
-        SITE_URL: 'https://h1b.report',
+        SITE_URL: siteUrl,
         ADSENSE_CLIENT_ID: '',   // set when you have a real one
       },
     });
@@ -102,7 +132,10 @@ export class LcaServeStack extends Stack {
       },
     });
 
-    new cf.Distribution(this, 'Distribution', {
+    const distribution = new cf.Distribution(this, 'Distribution', {
+      // Custom domain wiring is optional — only attached when context is set.
+      ...(siteCert ? { domainNames: siteDomains, certificate: siteCert } : {}),
+      minimumProtocolVersion: cf.SecurityPolicyProtocol.TLS_V1_2_2021,
       defaultBehavior: {
         origin: lambdaOrigin,
         allowedMethods: cf.AllowedMethods.ALLOW_ALL,
@@ -142,6 +175,20 @@ export class LcaServeStack extends Stack {
       priceClass: cf.PriceClass.PRICE_CLASS_100, // North America + Europe
       defaultRootObject: '',
       comment: 'LCA analytics web — CloudFront distribution',
+    });
+
+    // ---------------------------------------------------------------------
+    // Outputs — consumed by infra/aws/scripts/{migrate-from-local,sync-static}.sh
+    // and the Cloudflare DNS step (point dev/apex CNAME at DistributionDomainName).
+    // ---------------------------------------------------------------------
+    new CfnOutput(this, 'StaticAssetsBucketName', {
+      value: staticBucket.bucketName,
+      description: 'S3 bucket for /_next/static/* and /static/* assets. Sync via sync-static.sh.',
+      exportName: 'LcaStaticAssetsBucket',
+    });
+    new CfnOutput(this, 'DistributionDomainName', {
+      value: distribution.distributionDomainName,
+      description: 'CloudFront hostname. Point the Cloudflare dev/apex CNAME here.',
     });
   }
 }

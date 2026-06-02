@@ -19,7 +19,7 @@
  * unlikely, but the guard is there.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags, Fn } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -31,6 +31,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LcaSharedStack } from './shared-stack.js';
@@ -144,6 +145,39 @@ export class LcaDataPipelineStack extends Stack {
     }));
 
     // ---------------------------------------------------------------------
+    // GitHub token — the burst EC2 clones the (private) repo to run the
+    // pipeline. A fine-grained, read-only Contents PAT lives here. CDK
+    // auto-generates a random placeholder on first deploy; replace it with
+    // your real PAT before the first burst run:
+    //
+    //   aws secretsmanager put-secret-value \
+    //     --secret-id lca/github-token --secret-string 'github_pat_…'
+    // ---------------------------------------------------------------------
+    const githubTokenSecret = new secretsmanager.Secret(this, 'GithubToken', {
+      secretName: 'lca/github-token',
+      description: 'Fine-grained read-only GitHub PAT for the burst EC2 to clone the private repo. Populate manually after deploy.',
+    });
+    githubTokenSecret.grantRead(ec2Role);
+
+    // ---------------------------------------------------------------------
+    // Static-assets bucket write access. On every quarterly rebuild the
+    // Next.js chunk hashes change, so the burst must re-sync .next/static to
+    // the bucket CloudFront serves (LcaServeStack's StaticAssetsBucket) or
+    // the freshly-built HTML references assets that 404. The bucket lives in
+    // LcaServeStack; we resolve its name via the CloudFormation export and
+    // scope the grant to it. This makes LcaServeStack a deploy-time
+    // dependency (deploy serve before data — matches the runbook order).
+    // ---------------------------------------------------------------------
+    const staticBucketName = Fn.importValue('LcaStaticAssetsBucket');
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject', 's3:DeleteObject', 's3:ListBucket', 's3:GetBucketLocation'],
+      resources: [
+        `arn:aws:s3:::${staticBucketName}`,
+        `arn:aws:s3:::${staticBucketName}/*`,
+      ],
+    }));
+
+    // ---------------------------------------------------------------------
     // EC2 launch template — what gets started during a build run.
     // Cloud-init clones the repo, runs the pipeline, uploads artefacts,
     // then self-terminates. Failure modes notify SNS via the Step Fn.
@@ -219,9 +253,13 @@ export class LcaDataPipelineStack extends Stack {
       `dnf install -y nodejs`,
       `npm install -g pnpm@9`,
       ``,
-      `# Fetch the repo (use CodeCommit / GitHub release tarball / S3-stored bundle)`,
-      `# Replace the URL with your fork's release tarball, or use git+ssh.`,
-      `cd /opt && git clone https://github.com/${process.env.GITHUB_REPO ?? 'YOUR_ORG/lca-normalization-engine'}.git lca`,
+      `# Fetch the repo. Private repo → clone with a fine-grained read-only PAT`,
+      `# pulled from Secrets Manager (lca/github-token). The token never lands`,
+      `# on disk and is unset right after the clone.`,
+      `GITHUB_TOKEN=$(aws secretsmanager get-secret-value \\`,
+      `  --secret-id ${githubTokenSecret.secretName} --query SecretString --output text)`,
+      `cd /opt && git clone https://x-access-token:$GITHUB_TOKEN@github.com/${process.env.GITHUB_REPO ?? 'sergyinfo/lca-normalization-engine'}.git lca`,
+      `unset GITHUB_TOKEN`,
       `cd /opt/lca`,
       `pnpm install --frozen-lockfile`,
       ``,
@@ -266,6 +304,14 @@ export class LcaDataPipelineStack extends Stack {
       `aws lambda update-function-code \\`,
       `  --function-name lca-analytics-web \\`,
       `  --image-uri "$ECR_URI:latest"`,
+      ``,
+      `# Re-sync static assets to the CloudFront S3 origin. The new build's`,
+      `# chunk hashes differ from last quarter's, so without this the freshly`,
+      `# deployed HTML references /_next/static/* paths that aren't in S3 yet`,
+      `# (→ 404, unstyled site). Build Next on the host to get .next/static,`,
+      `# then sync. Non-fatal: a serving Lambda still holds the assets too.`,
+      `pnpm --filter analytics-web build`,
+      `AWS_REGION=$REGION ./infra/aws/scripts/sync-static.sh || true`,
       ``,
       `# Snapshot Postgres back to S3 for the next run`,
       `docker compose exec -T lca_db pg_dump --format=custom -U lca_user -d lca_db \\`,
@@ -392,12 +438,16 @@ export class LcaDataPipelineStack extends Stack {
     stateMachine.grantStartExecution(dolChecker);
 
     // ---------------------------------------------------------------------
-    // EventBridge — schedule the checker every 6 hours.
+    // EventBridge — schedule the checker once a day. DOL publishes quarterly,
+    // so daily is ample and keeps Lambda invocations (and any false-positive
+    // notifications) minimal. On a detected change the checker starts the
+    // Step Functions pipeline, which publishes to the SNS topic above —
+    // subscribe your email so "new period" actually reaches you.
     // ---------------------------------------------------------------------
     new events.Rule(this, 'DolCheckSchedule', {
-      schedule: events.Schedule.rate(Duration.hours(6)),
+      schedule: events.Schedule.rate(Duration.days(1)),
       targets: [new targets.LambdaFunction(dolChecker)],
-      description: 'Polls DOL for new H-1B disclosure releases.',
+      description: 'Daily poll of DOL for new H-1B disclosure releases.',
     });
 
     // Allow operator-triggered runs too.
