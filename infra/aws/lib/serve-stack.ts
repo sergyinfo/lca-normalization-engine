@@ -24,6 +24,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cf from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import type { LcaSharedStack } from './shared-stack.js';
 
 interface ServeStackProps extends StackProps {
@@ -97,10 +98,22 @@ export class LcaServeStack extends Stack {
     });
 
     // Function URL → CloudFront origin. Cheaper + lower-latency than API Gateway.
+    // Public Function URL fronted by CloudFront. We deliberately do NOT use
+    // OAC/AWS_IAM here: CloudFront OAC signing against a Lambda Function URL was
+    // reproducibly rejected (403) in this account even with a from-scratch,
+    // spec-correct OAC setup. AuthType NONE + a public invoke grant is the
+    // simple, reliable pattern. SECURITY: the Function URL is then directly
+    // reachable, bypassing CloudFront. Acceptable for dev; for prod, add a
+    // secret header on the CloudFront origin and verify it in the app/edge.
     const fnUrl = fn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.AWS_IAM,
-      invokeMode: lambda.InvokeMode.BUFFERED,
+      authType: lambda.FunctionUrlAuthType.NONE,
+      // Must match the image's AWS_LWA_INVOKE_MODE=response_stream. With BUFFERED
+      // the Lambda Web Adapter streams but the URL buffers → empty (content-length 0)
+      // responses even on a 200. RESPONSE_STREAM also enables Next.js streaming SSR.
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
     });
+    // Allow anonymous invocation of the (AuthType NONE) Function URL.
+    fnUrl.grantInvokeUrl(new iam.AnyPrincipal());
 
     // ---------------------------------------------------------------------
     // CloudFront distribution.
@@ -110,11 +123,8 @@ export class LcaServeStack extends Stack {
     });
     staticBucket.grantRead(oai);
 
-    // Lambda origin must use a custom origin (its FN_URL is an HTTPS endpoint).
-    // We use an Origin Access Control via CloudFront to sign requests with SigV4.
-    const lambdaOrigin = new origins.FunctionUrlOrigin(fnUrl, {
-      // No timeouts here — sub-15s Lambda timeout governs.
-    });
+    // Plain Function URL origin (no OAC) — the URL is public (AuthType NONE).
+    const lambdaOrigin = new origins.FunctionUrlOrigin(fnUrl);
 
     const s3Origin = origins.S3BucketOrigin.withOriginAccessIdentity(staticBucket, {
       originAccessIdentity: oai,
@@ -132,6 +142,19 @@ export class LcaServeStack extends Stack {
       },
     });
 
+    // Origin request policy for the OAC-signed Lambda origin. It must forward
+    // viewer headers but EXCLUDE `authorization` (and `host`): CloudFront OAC
+    // injects its SigV4 signature into the Authorization header, so if that
+    // header is in the forwarded allowlist CloudFront passes the (empty) viewer
+    // value through instead of signing → the Function URL 403s. The managed
+    // ALL_VIEWER_EXCEPT_HOST_HEADER policy forwards Authorization and breaks OAC.
+    const lambdaOriginRequestPolicy = new cf.OriginRequestPolicy(this, 'LambdaOriginReqPolicy', {
+      comment: 'All viewer headers except Host + Authorization (OAC injects the SigV4 Authorization).',
+      headerBehavior: cf.OriginRequestHeaderBehavior.denyList('host', 'authorization'),
+      cookieBehavior: cf.OriginRequestCookieBehavior.all(),
+      queryStringBehavior: cf.OriginRequestQueryStringBehavior.all(),
+    });
+
     const distribution = new cf.Distribution(this, 'Distribution', {
       // Custom domain wiring is optional — only attached when context is set.
       ...(siteCert ? { domainNames: siteDomains, certificate: siteCert } : {}),
@@ -141,7 +164,7 @@ export class LcaServeStack extends Stack {
         allowedMethods: cf.AllowedMethods.ALLOW_ALL,
         cachePolicy: cf.CachePolicy.CACHING_DISABLED,   // dynamic routes
         viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cf.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy: lambdaOriginRequestPolicy,
         responseHeadersPolicy: securityHeaders,
       },
       additionalBehaviors: {
@@ -158,19 +181,11 @@ export class LcaServeStack extends Stack {
           cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
-        '/sitemap.xml': {
-          origin: s3Origin,
-          cachePolicy: new cf.CachePolicy(this, 'SitemapCache', {
-            defaultTtl: Duration.hours(6),
-            maxTtl: Duration.days(1),
-          }),
-          viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        },
-        '/robots.txt': {
-          origin: s3Origin,
-          cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
-          viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        },
+        // NOTE: /sitemap.xml and /robots.txt are NOT routed to S3 — this Next app
+        // serves them as (statically-prerendered) dynamic routes from the Lambda
+        // standalone server, not as files in .next/static. Routing them to the
+        // (empty) static bucket 404s. They fall through to the default Lambda
+        // behavior instead.
       },
       priceClass: cf.PriceClass.PRICE_CLASS_100, // North America + Europe
       defaultRootObject: '',

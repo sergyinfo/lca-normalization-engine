@@ -1,0 +1,6 @@
+# CDK build artifacts
+cdk.out/
+cdk.context.json
+
+# Dependencies (infra/aws installs standalone, outside the pnpm workspace)
+node_modules/

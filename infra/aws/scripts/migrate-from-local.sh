@@ -29,8 +29,11 @@ fi
 if ! command -v docker >/dev/null; then
   echo "✗ docker not on PATH" >&2; exit 1
 fi
-if ! command -v pg_dump >/dev/null; then
-  echo "✗ pg_dump not on PATH (install postgresql client tools)" >&2; exit 1
+# pg_dump is only needed for the optional Postgres-snapshot step (P1). For a
+# P2-only serve deploy, set SKIP_PG_DUMP=1 to skip it (the public site runs off
+# lca.db and never needs cloud Postgres).
+if [[ -z "${SKIP_PG_DUMP:-}" ]] && ! command -v pg_dump >/dev/null; then
+  echo "✗ pg_dump not on PATH (install postgresql client tools), or set SKIP_PG_DUMP=1 to skip the Postgres snapshot" >&2; exit 1
 fi
 
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -41,11 +44,12 @@ echo "▶ Account: $ACCOUNT  Region: $REGION"
 echo "▶ Reading LcaSharedStack outputs"
 
 get_resource() {
-  aws cloudformation describe-stack-resource \
+  # CDK suffixes logical IDs with a hash (e.g. LcaDbBucket993DDCC0), so match
+  # on a logical-ID prefix rather than an exact id.
+  aws cloudformation describe-stack-resources \
     --region "$REGION" \
     --stack-name LcaSharedStack \
-    --logical-resource-id "$1" \
-    --query 'StackResourceDetail.PhysicalResourceId' \
+    --query "StackResources[?starts_with(LogicalResourceId, \`$1\`)].PhysicalResourceId | [0]" \
     --output text
 }
 
@@ -86,8 +90,14 @@ aws ecr get-login-password --region "$REGION" | \
 # on x86 this transparently emulates arm64 (slower but works).
 docker buildx create --use --name lca-builder >/dev/null 2>&1 || true
 
+# --provenance=false / --sbom=false are REQUIRED: without them buildx pushes an
+# OCI image index with an attestation manifest, which AWS Lambda rejects with
+# "image manifest ... media type ... is not supported". A single-platform build
+# with attestations off pushes a plain Docker schema-2 manifest that Lambda accepts.
 docker buildx build \
   --platform linux/arm64 \
+  --provenance=false \
+  --sbom=false \
   --file apps/analytics-web/Dockerfile.lambda \
   --tag "$ECR_URI:latest" \
   --tag "$ECR_URI:$(date +%Y%m%d-%H%M%S)" \
@@ -95,7 +105,12 @@ docker buildx build \
   .
 echo "  ✓ Pushed $ECR_URI:latest"
 
-# ----- 3. Postgres dump ---------------------------------------------------
+# ----- 3. Postgres dump (optional — skip for a P2-only serve deploy) -------
+if [[ -n "${SKIP_PG_DUMP:-}" ]]; then
+  echo "▶ Step 3: Postgres dump SKIPPED (SKIP_PG_DUMP set)."
+  echo "  The public site serves from lca.db and needs no cloud Postgres."
+  echo "  Re-run without SKIP_PG_DUMP before enabling the P1 burst pipeline."
+else
 echo "▶ Step 3: local Postgres → S3"
 DUMP_PATH=/tmp/lca-$(date +%Y%m%d).pgdump
 
@@ -122,6 +137,7 @@ aws s3 cp "$DUMP_PATH" "s3://$PG_BUCKET/$DATED_KEY" --region "$REGION"
 rm "$DUMP_PATH"
 
 echo "  ✓ Uploaded to s3://$PG_BUCKET/latest.pgdump + $DATED_KEY"
+fi
 
 # ----- Summary ------------------------------------------------------------
 echo
