@@ -165,6 +165,30 @@ export class LcaServeStack extends Stack {
       queryStringBehavior: cf.OriginRequestQueryStringBehavior.all(),
     });
 
+    // Canonical-host redirect (viewer-request CloudFront Function). The
+    // distribution always answers on its *.cloudfront.net domain too, which
+    // would serve duplicate content. 301 any request whose Host isn't an
+    // approved domain (cloudfront.net, www, …) to the primary domain. Only
+    // attached when custom domains are configured.
+    const canonicalRedirectFn = siteDomains.length > 0
+      ? new cf.Function(this, 'CanonicalHostRedirect', {
+          comment: 'Redirect non-canonical hosts (*.cloudfront.net, etc.) to the primary domain',
+          code: cf.FunctionCode.fromInline([
+            'function handler(event){',
+            '  var request=event.request;',
+            '  var host=request.headers.host?request.headers.host.value:"";',
+            `  var allow=${JSON.stringify(siteDomains)};`,
+            '  for(var i=0;i<allow.length;i++){if(host===allow[i]){return request;}}',
+            '  var qs="";for(var k in request.querystring){qs+=(qs?"&":"?")+k+"="+request.querystring[k].value;}',
+            `  return{statusCode:301,statusDescription:"Moved Permanently",headers:{location:{value:"https://${siteDomains[0]}"+request.uri+qs}}};`,
+            '}',
+          ].join('\n')),
+        })
+      : undefined;
+    const canonicalFnAssoc = canonicalRedirectFn
+      ? [{ function: canonicalRedirectFn, eventType: cf.FunctionEventType.VIEWER_REQUEST }]
+      : undefined;
+
     const distribution = new cf.Distribution(this, 'Distribution', {
       // Custom domain wiring is optional — only attached when context is set.
       ...(siteCert ? { domainNames: siteDomains, certificate: siteCert } : {}),
@@ -176,6 +200,7 @@ export class LcaServeStack extends Stack {
         viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         originRequestPolicy: lambdaOriginRequestPolicy,
         responseHeadersPolicy: securityHeaders,
+        functionAssociations: canonicalFnAssoc,
       },
       additionalBehaviors: {
         // Hashed JS/CSS — cache forever
@@ -184,12 +209,14 @@ export class LcaServeStack extends Stack {
           cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           responseHeadersPolicy: securityHeaders,
+          functionAssociations: canonicalFnAssoc,
         },
         // Public assets (favicon, /public/*, OG images placeholders)
         '/static/*': {
           origin: s3Origin,
           cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          functionAssociations: canonicalFnAssoc,
         },
         // NOTE: /sitemap.xml and /robots.txt are NOT routed to S3 — this Next app
         // serves them as (statically-prerendered) dynamic routes from the Lambda
