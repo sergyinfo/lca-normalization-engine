@@ -232,28 +232,30 @@ export class LcaBudgetsStack extends Stack {
     //    Catches "5x usual daily cost" even if it's still well under the
     //    monthly budget.
     // ---------------------------------------------------------------------
+    // A member (linked) account can only create an "AWS Services" (DIMENSIONAL
+    // / SERVICE) anomaly monitor — tag- or linked-account-scoped CUSTOM monitors
+    // are management-account-only. Since this whole account is dedicated to
+    // h1b-report, an account-wide SERVICE monitor is equivalent to a
+    // project-scoped one. (For org-wide anomaly detection across all sub-accounts,
+    // create a CUSTOM monitor in the 915 Solutions management account.)
     const anomalyMonitor = new ce.CfnAnomalyMonitor(this, 'AnomalyMonitor', {
       monitorName: 'lca-anomaly-monitor',
-      monitorType: 'CUSTOM',
-      monitorSpecification: JSON.stringify({
-        Tags: {
-          Key: 'Project',
-          Values: [PROJECT_TAG_VALUE],
-        },
-      }),
+      monitorType: 'DIMENSIONAL',
+      monitorDimension: 'SERVICE',
     });
 
     new ce.CfnAnomalySubscription(this, 'AnomalySubscription', {
       subscriptionName: 'lca-anomaly-alerts',
       frequency: 'IMMEDIATE',
       monitorArnList: [anomalyMonitor.attrMonitorArn],
+      // IMMEDIATE frequency allows exactly ONE subscriber. Use the SNS topic
+      // only — the alert email is already subscribed to that topic above, so it
+      // still receives anomaly alerts via SNS fan-out.
       subscribers: [
-        ...(alertEmail
-          ? [{ type: 'EMAIL' as const, address: alertEmail }]
-          : []),
         { type: 'SNS' as const, address: alertTopic.topicArn },
       ],
-      threshold: anomalyTrigger,
+      // Only ThresholdExpression may be set (the legacy `threshold` is mutually
+      // exclusive with it and now rejected by the API).
       thresholdExpression: JSON.stringify({
         Dimensions: {
           Key: 'ANOMALY_TOTAL_IMPACT_ABSOLUTE',
