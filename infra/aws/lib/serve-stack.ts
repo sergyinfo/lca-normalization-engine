@@ -16,11 +16,10 @@
  * if you need sub-second p99.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy, Tags, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, Tags, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cf from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -80,26 +79,10 @@ export class LcaServeStack extends Stack {
       ? acm.Certificate.fromCertificateArn(this, 'SiteCert', siteCertificateArn)
       : undefined;
 
-    // ---------------------------------------------------------------------
-    // S3 bucket holding static Next.js assets uploaded out-of-band by the
-    // build pipeline. Pre-rendered HTML pages + /_next/static/* JS/CSS.
-    // ---------------------------------------------------------------------
-    const staticBucket = new s3.Bucket(this, 'StaticAssetsBucket', {
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      enforceSSL: true,
-      // Contents are fully reproducible (sync-static.sh re-uploads from the
-      // build), so don't orphan the bucket on stack delete — auto-empty + drop
-      // it. Avoids the stale-bucket buildup that RETAIN causes on recreate.
-      removalPolicy: RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
-      // Drop superseded hashed assets so old builds' chunks don't accumulate.
-      lifecycleRules: [{
-        id: 'expire-noncurrent-and-old-assets',
-        noncurrentVersionExpiration: Duration.days(7),
-        abortIncompleteMultipartUploadAfter: Duration.days(1),
-      }],
-    });
+    // NOTE: static assets (/_next/static, /static) are served by the Lambda
+    // itself — its image contains the .next/static that MATCHES the served HTML.
+    // A separate S3 static origin was a DIFFERENT build whose app-chunk hashes
+    // didn't match the HTML → 404 → no hydration. CloudFront still caches them.
 
     // ---------------------------------------------------------------------
     // Lambda function — runs the Next.js standalone server inside a
@@ -142,20 +125,12 @@ export class LcaServeStack extends Stack {
     // ---------------------------------------------------------------------
     // CloudFront distribution.
     // ---------------------------------------------------------------------
-    const oai = new cf.OriginAccessIdentity(this, 'StaticOai', {
-      comment: 'OAI for static asset bucket',
-    });
-    staticBucket.grantRead(oai);
-
     // Plain Function URL origin (no OAC) — the URL is public (AuthType NONE).
     // CloudFront stamps the shared secret header so the app can tell its own
-    // traffic apart from direct Function-URL hits.
+    // traffic apart from direct Function-URL hits. Serves both dynamic routes
+    // and the static assets (one origin = one build = matching asset hashes).
     const lambdaOrigin = new origins.FunctionUrlOrigin(fnUrl, {
       ...(originVerifySecret ? { customHeaders: { 'x-origin-verify': originVerifySecret } } : {}),
-    });
-
-    const s3Origin = origins.S3BucketOrigin.withOriginAccessIdentity(staticBucket, {
-      originAccessIdentity: oai,
     });
 
     const securityHeaders = new cf.ResponseHeadersPolicy(this, 'SecurityHeaders', {
@@ -246,26 +221,27 @@ export class LcaServeStack extends Stack {
         functionAssociations: defaultFnAssoc.length ? defaultFnAssoc : undefined,
       },
       additionalBehaviors: {
-        // Hashed JS/CSS — cache forever
+        // Hashed JS/CSS/media — served by the Lambda (the standalone server holds
+        // the .next/static that MATCHES the served HTML) and cached forever by
+        // CloudFront. A separate S3 origin was a different build whose app-chunk
+        // hashes didn't match the HTML → 404 → no hydration; never split these.
         '/_next/static/*': {
-          origin: s3Origin,
+          origin: lambdaOrigin,
           cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
+          originRequestPolicy: lambdaOriginRequestPolicy,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           responseHeadersPolicy: securityHeaders,
           functionAssociations: canonicalFnAssoc,
         },
-        // Public assets (favicon, /public/*, OG images placeholders)
+        // Public assets (favicon, /public/*) — also from the Lambda image.
         '/static/*': {
-          origin: s3Origin,
+          origin: lambdaOrigin,
           cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
+          originRequestPolicy: lambdaOriginRequestPolicy,
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           functionAssociations: canonicalFnAssoc,
         },
-        // NOTE: /sitemap.xml and /robots.txt are NOT routed to S3 — this Next app
-        // serves them as (statically-prerendered) dynamic routes from the Lambda
-        // standalone server, not as files in .next/static. Routing them to the
-        // (empty) static bucket 404s. They fall through to the default Lambda
-        // behavior instead.
+        // /sitemap.xml + /robots.txt fall through to the default Lambda behavior.
       },
       priceClass: cf.PriceClass.PRICE_CLASS_100, // North America + Europe
       defaultRootObject: '',
@@ -273,14 +249,8 @@ export class LcaServeStack extends Stack {
     });
 
     // ---------------------------------------------------------------------
-    // Outputs — consumed by infra/aws/scripts/{migrate-from-local,sync-static}.sh
-    // and the Cloudflare DNS step (point dev/apex CNAME at DistributionDomainName).
+    // Output — the Cloudflare DNS step points the dev/apex CNAME at this.
     // ---------------------------------------------------------------------
-    new CfnOutput(this, 'StaticAssetsBucketName', {
-      value: staticBucket.bucketName,
-      description: 'S3 bucket for /_next/static/* and /static/* assets. Sync via sync-static.sh.',
-      exportName: 'LcaStaticAssetsBucket',
-    });
     new CfnOutput(this, 'DistributionDomainName', {
       value: distribution.distributionDomainName,
       description: 'CloudFront hostname. Point the Cloudflare dev/apex CNAME here.',

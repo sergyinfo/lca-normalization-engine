@@ -19,7 +19,7 @@
  * unlikely, but the guard is there.
  */
 
-import { Stack, StackProps, Duration, RemovalPolicy, Tags, Fn } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -159,23 +159,9 @@ export class LcaDataPipelineStack extends Stack {
     });
     githubTokenSecret.grantRead(ec2Role);
 
-    // ---------------------------------------------------------------------
-    // Static-assets bucket write access. On every quarterly rebuild the
-    // Next.js chunk hashes change, so the burst must re-sync .next/static to
-    // the bucket CloudFront serves (LcaServeStack's StaticAssetsBucket) or
-    // the freshly-built HTML references assets that 404. The bucket lives in
-    // LcaServeStack; we resolve its name via the CloudFormation export and
-    // scope the grant to it. This makes LcaServeStack a deploy-time
-    // dependency (deploy serve before data — matches the runbook order).
-    // ---------------------------------------------------------------------
-    const staticBucketName = Fn.importValue('LcaStaticAssetsBucket');
-    ec2Role.addToPolicy(new iam.PolicyStatement({
-      actions: ['s3:PutObject', 's3:DeleteObject', 's3:ListBucket', 's3:GetBucketLocation'],
-      resources: [
-        `arn:aws:s3:::${staticBucketName}`,
-        `arn:aws:s3:::${staticBucketName}/*`,
-      ],
-    }));
+    // (Static assets are served by the Lambda image, not a separate S3 bucket,
+    // so the burst doesn't need S3 static-write access — pushing the new image
+    // is enough.)
 
     // ---------------------------------------------------------------------
     // EC2 launch template — what gets started during a build run.
@@ -305,13 +291,8 @@ export class LcaDataPipelineStack extends Stack {
       `  --function-name lca-analytics-web \\`,
       `  --image-uri "$ECR_URI:latest"`,
       ``,
-      `# Re-sync static assets to the CloudFront S3 origin. The new build's`,
-      `# chunk hashes differ from last quarter's, so without this the freshly`,
-      `# deployed HTML references /_next/static/* paths that aren't in S3 yet`,
-      `# (→ 404, unstyled site). Build Next on the host to get .next/static,`,
-      `# then sync. Non-fatal: a serving Lambda still holds the assets too.`,
-      `pnpm --filter analytics-web build`,
-      `AWS_REGION=$REGION ./infra/aws/scripts/sync-static.sh || true`,
+      `# (Static assets ship inside the Lambda image — the update-function-code`,
+      `#  above repoints the function at them; no separate S3 sync needed.)`,
       ``,
       `# Snapshot Postgres back to S3 for the next run`,
       `docker compose exec -T lca_db pg_dump --format=custom -U lca_user -d lca_db \\`,
