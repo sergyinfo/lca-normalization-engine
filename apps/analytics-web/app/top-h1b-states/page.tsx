@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listTopStates, getSiteKpis } from '@/lib/queries';
+import { listTopStates, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmt } from '@/lib/format';
 import { RankingPage, filingsCellWithBar } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -27,6 +27,7 @@ export default function TopH1bStates() {
   }));
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'top-h1b-states')}
       eyebrow="State leaderboard"
       title="Top H-1B States"
       fiscalYear={kpis.last_year}

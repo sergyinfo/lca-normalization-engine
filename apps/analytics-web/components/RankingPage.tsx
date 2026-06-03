@@ -18,6 +18,8 @@ import { fmt } from '@/lib/format';
 import { itemListJsonLd } from '@/lib/seo';
 import { SITE_URL } from '@/lib/site';
 import { AdSlot } from '@/components/AdSlot';
+import { Summary } from '@/components/Summary';
+import type { EntitySummaryRow } from '@/lib/queries';
 import { Badge } from '@/components/ui/badge';
 import { MiniBar } from '@/components/charts/MiniBar';
 import { PageMinimap } from '@/components/PageMinimap';
@@ -55,6 +57,8 @@ interface Props {
   adSlotName: string;
   /** Optional href + label for a back link at the top. */
   back?: { href: string; label: string };
+  /** Optional per-page overview, rendered between the hero and the table. */
+  summary?: EntitySummaryRow | null;
   /**
    * Optional pre-table visualisation. Renders inside its own Card directly
    * above the ranked table. Use for "Top 10 leaderboard at a glance"
@@ -65,7 +69,7 @@ interface Props {
 
 export function RankingPage({
   eyebrow, title, fiscalYear, intro, rows, methodology, adSlotName, back,
-  preTableVisual,
+  preTableVisual, summary,
 }: Props) {
   return (
     <>
@@ -99,6 +103,8 @@ export function RankingPage({
         </h1>
         <div className="text-muted-foreground max-w-3xl">{intro}</div>
       </section>
+
+      {summary ? <Summary summary={summary} /> : null}
 
       <AdSlot name={adSlotName} />
 

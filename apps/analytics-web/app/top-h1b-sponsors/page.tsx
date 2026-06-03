@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listTopEmployers, getSiteKpis } from '@/lib/queries';
+import { listTopEmployers, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmt, fmtPct } from '@/lib/format';
 import { RankingPage, filingsCellWithBar } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -28,6 +28,7 @@ export default function TopH1bSponsors() {
   const allFilings = employers.map((e) => e.filings);
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'top-h1b-sponsors')}
       eyebrow="Sponsor leaderboard"
       title="Top 100 H-1B Sponsors"
       fiscalYear={kpis.last_year}

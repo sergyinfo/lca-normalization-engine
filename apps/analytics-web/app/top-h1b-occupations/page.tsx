@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listTopOccupations, getSiteKpis } from '@/lib/queries';
+import { listTopOccupations, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmtUsd } from '@/lib/format';
 import { RankingPage, filingsCellWithBar } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -27,6 +27,7 @@ export default function TopH1bOccupations() {
   }));
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'top-h1b-occupations')}
       eyebrow="Occupation leaderboard"
       title="Top H-1B Occupations"
       fiscalYear={kpis.last_year}

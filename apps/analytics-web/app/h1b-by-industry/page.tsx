@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listTopSectors, getSiteKpis } from '@/lib/queries';
+import { listTopSectors, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmt } from '@/lib/format';
 import { RankingPage, filingsCellWithBar } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -26,6 +26,7 @@ export default function H1bByIndustry() {
   }));
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'h1b-by-industry')}
       eyebrow="Industry leaderboard"
       title="H-1B by Industry (NAICS Sector)"
       fiscalYear={kpis.last_year}

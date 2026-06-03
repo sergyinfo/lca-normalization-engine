@@ -165,6 +165,7 @@ export interface StateYearlyRow {
 
 export interface EntitySummaryRow {
   summary_md: string;
+  keywords: string | null;   // JSON array of keyword phrases (rendered as chips)
   generated_at: number;
   model: string | null;
 }
@@ -174,6 +175,15 @@ export interface EntityMetaRow {
   meta_title: string | null;
   meta_description: string | null;
 }
+
+/** Kinds a summary/meta row can be keyed by: entities, the site, listing
+ *  ('index') and ranking pages, and featured comparisons. */
+export type SummaryKind =
+  | EntityKind
+  | 'site'
+  | 'index'
+  | 'ranking'
+  | `compare-${EntityKind}`;
 
 /* -------------------------------------------------------------------------- */
 /* Site KPIs                                                                  */
@@ -468,9 +478,9 @@ export function getSectorYearlyAll(): SparkSeries {
 /* Summaries (LLM-generated, optional per page)                               */
 /* -------------------------------------------------------------------------- */
 
-export function getEntitySummary(kind: EntityKind | 'site', slug: string): EntitySummaryRow | null {
+export function getEntitySummary(kind: SummaryKind, slug: string): EntitySummaryRow | null {
   return queryOne<EntitySummaryRow>(
-    `SELECT summary_md, generated_at, model FROM entity_summary WHERE kind = ? AND slug = ?`,
+    `SELECT summary_md, keywords, generated_at, model FROM entity_summary WHERE kind = ? AND slug = ?`,
     kind, slug);
 }
 
@@ -479,7 +489,7 @@ export function getEntitySummary(kind: EntityKind | 'site', slug: string): Entit
  * caller falls back to its hand-written template) when no summary was generated
  * or — defensively — when an older lca.db predates the meta columns.
  */
-export function getEntityMeta(kind: EntityKind | 'site', slug: string): EntityMetaRow | null {
+export function getEntityMeta(kind: SummaryKind, slug: string): EntityMetaRow | null {
   try {
     return queryOne<EntityMetaRow>(
       `SELECT meta_title, meta_description FROM entity_summary WHERE kind = ? AND slug = ?`,

@@ -6,12 +6,15 @@ import { ArrowLeft, GitCompare, ArrowRight } from 'lucide-react';
 import {
   getSectorBySlug, getSectorTopEmployers, getSectorTopOccupations,
   getSectorTopStates, getSectorYearly, listTopSectors, getSiteKpis,
+  getEntitySummary,
 } from '@/lib/queries';
 import { CompareSwapper } from '@/components/CompareSwapper';
 import type { PeerOption } from '@/components/ComparePicker';
 import { fmt } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
 import { SITE_NAME } from '@/lib/site';
+import { Summary } from '@/components/Summary';
+import { sectorCompareFallback } from '@/lib/compare-summary';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +61,9 @@ export default async function CompareSectorsPage(
   const b = getSectorBySlug(bSlug);
   if (!a || !b) notFound();
 
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
+  const summary = getEntitySummary('compare-sector', `${c0}__${c1}`) ?? sectorCompareFallback(a, b);
+
   const aEmps   = getSectorTopEmployers(a.naics2).slice(0, 5);
   const bEmps   = getSectorTopEmployers(b.naics2).slice(0, 5);
   const aSocs   = getSectorTopOccupations(a.naics2).slice(0, 5);
@@ -97,6 +103,8 @@ export default async function CompareSectorsPage(
           dominant occupations.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <PageMinimap />
 

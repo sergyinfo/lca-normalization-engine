@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { Building2 } from 'lucide-react';
 
-import { listTopEmployers, getEmployerYearlyAll } from '@/lib/queries';
+import { listTopEmployers, getEmployerYearlyAll, getEntitySummary } from '@/lib/queries';
 import { entityMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
+import { Summary } from '@/components/Summary';
 import {
   EmployerExplorer,
   type EmployerExplorerRow,
@@ -19,6 +20,7 @@ export const metadata: Metadata = entityMetadata({
 export default function EmployerIndex() {
   const employers = listTopEmployers(500);
   const spark = getEmployerYearlyAll();
+  const summary = getEntitySummary('index', 'employer');
 
   const explorerRows: EmployerExplorerRow[] = employers.map((e) => ({
     slug: e.slug,
@@ -46,6 +48,8 @@ export default function EmployerIndex() {
           share year over year, and search by company name or state code.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <EmployerExplorer rows={explorerRows} years={spark.years} />
     </>

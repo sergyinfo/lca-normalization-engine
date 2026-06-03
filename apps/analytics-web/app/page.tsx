@@ -7,12 +7,14 @@ import {
 import {
   getSiteKpis, listTopEmployers, listTopOccupations,
   listHighestPayingOccupations, listTopSectors, listTopStates,
+  getEntitySummary,
 } from '@/lib/queries';
 import { fmt, fmtUsd } from '@/lib/format';
 import { websiteJsonLd, datasetJsonLd } from '@/lib/seo';
 import { SITE_URL, SITE_NAME } from '@/lib/site';
 import { FEATURES } from '@/lib/features';
 import { AdSlot } from '@/components/AdSlot';
+import { Summary } from '@/components/Summary';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
@@ -42,6 +44,7 @@ const browseLinks = [
 
 export default function HomePage() {
   const kpis = getSiteKpis();
+  const summary = getEntitySummary('site', 'home');
   const topEmployers   = listTopEmployers(10);
   const topOccupations = listTopOccupations(10);
   const wageRank       = listHighestPayingOccupations(8);
@@ -117,6 +120,8 @@ export default function HomePage() {
         <KpiTile label="Occupations"        value={fmt(kpis.distinct_socs)}        sub="SOC codes covered" />
         <KpiTile label="Median wage"        value={fmtUsd(kpis.median_wage)}       sub="across all filings" accent />
       </section>
+
+      <Summary summary={summary} />
 
       <AdSlot name="home-top" />
 

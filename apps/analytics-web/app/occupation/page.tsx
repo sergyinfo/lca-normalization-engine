@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { Briefcase } from 'lucide-react';
 
-import { listTopOccupations, getOccupationYearlyAll } from '@/lib/queries';
+import { listTopOccupations, getOccupationYearlyAll, getEntitySummary } from '@/lib/queries';
 import { entityMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
+import { Summary } from '@/components/Summary';
 import {
   OccupationExplorer,
   type OccupationExplorerRow,
@@ -19,6 +20,7 @@ export const metadata: Metadata = entityMetadata({
 export default function OccupationIndex() {
   const rows = listTopOccupations(500);
   const spark = getOccupationYearlyAll();
+  const summary = getEntitySummary('index', 'occupation');
 
   const explorerRows: OccupationExplorerRow[] = rows.map((o) => ({
     soc_code: o.soc_code,
@@ -45,6 +47,8 @@ export default function OccupationIndex() {
           500 codes by SOC number or job title.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <OccupationExplorer rows={explorerRows} years={spark.years} />
     </>

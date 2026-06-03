@@ -66,9 +66,15 @@ const SYSTEM_BLOCKS: Anthropic.TextBlockParam[] = [
 const FORMAT = zodOutputFormat(SEO_SCHEMA);
 
 export interface SeoJob {
-  kind: 'employer' | 'occupation' | 'state' | 'sector' | 'site';
+  /** 'employer'|'occupation'|'state'|'sector'|'site', or a page kind
+   *  ('index'|'ranking'|'compare-<kind>'). */
+  kind: string;
   slug: string;
   payload: Record<string, unknown>;
+  /** Instruction line for the user prompt; defaults per entity kind below.
+   *  Page jobs pass their own. (Not part of the data_hash — only the payload
+   *  + PROMPT_VERSION are, so unchanged entities still skip.) */
+  instruction?: string;
 }
 
 export interface SeoResult {
@@ -109,20 +115,20 @@ export function clampContent(out: SeoContent): SeoContent {
   };
 }
 
+const ENTITY_INSTRUCTIONS: Record<string, string> = {
+  employer: 'Entity: H-1B sponsoring employer.\nWrite the summary as a company profile: what it appears to be, how active it is in the H-1B program, its role mix and certification record.',
+  occupation: 'Entity: SOC occupation in the US H-1B program.\nWrite the summary as a salary guide: typical wage range (P25-P75), wage progression across DOL levels I->IV, top hiring states and employers.',
+  state: 'Entity: US state H-1B sponsorship activity.\nWrite the summary as a state overview: total filing volume, top sponsoring employers (and any concentration), top occupations sponsored.',
+  sector: 'Entity: NAICS sector H-1B sponsorship.\nWrite the summary as a sector overview: what the sector is, total filings, how many distinct employers participate, what that implies about labour demand.',
+  site: 'Entity: the analytics site itself (homepage).\nWrite the summary as a "what this site covers" overview: years of data, total disclosures, distinct sponsors and occupations, and the kinds of questions the site answers.',
+};
+
 export function buildUserPrompt(job: SeoJob): string {
   const data = JSON.stringify(job.payload, null, 2);
-  switch (job.kind) {
-    case 'employer':
-      return `Entity: H-1B sponsoring employer.\nWrite the summary as a company profile: what it appears to be, how active it is in the H-1B program, its role mix and certification record.\n\nData:\n${data}`;
-    case 'occupation':
-      return `Entity: SOC occupation in the US H-1B program.\nWrite the summary as a salary guide: typical wage range (P25-P75), wage progression across DOL levels I->IV, top hiring states and employers.\n\nData:\n${data}`;
-    case 'state':
-      return `Entity: US state H-1B sponsorship activity.\nWrite the summary as a state overview: total filing volume, top sponsoring employers (and any concentration), top occupations sponsored.\n\nData:\n${data}`;
-    case 'sector':
-      return `Entity: NAICS sector H-1B sponsorship.\nWrite the summary as a sector overview: what the sector is, total filings, how many distinct employers participate, what that implies about labour demand.\n\nData:\n${data}`;
-    case 'site':
-      return `Entity: the analytics site itself (homepage).\nWrite the summary as a "what this site covers" overview: years of data, total disclosures, distinct sponsors and occupations, and the kinds of questions the site answers.\n\nData:\n${data}`;
-  }
+  const instr = job.instruction
+    ?? ENTITY_INSTRUCTIONS[job.kind]
+    ?? 'Write a useful 2-3 paragraph overview of this page from the data below, plus its SEO meta.';
+  return `${instr}\n\nData:\n${data}`;
 }
 
 /** One synchronous, structured call (on-publish / small runs). */

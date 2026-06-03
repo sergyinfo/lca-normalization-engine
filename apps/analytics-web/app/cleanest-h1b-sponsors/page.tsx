@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listCleanestEmployers, getSiteKpis } from '@/lib/queries';
+import { listCleanestEmployers, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmt, fmtPct } from '@/lib/format';
 import { RankingPage } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -25,6 +25,7 @@ export default function CleanestH1bSponsors() {
   }));
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'cleanest-h1b-sponsors')}
       eyebrow="Sponsor leaderboard"
       title="Cleanest H-1B Sponsors"
       fiscalYear={kpis.last_year}

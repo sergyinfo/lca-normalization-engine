@@ -6,12 +6,15 @@ import { ArrowLeft, GitCompare, ArrowRight } from 'lucide-react';
 import {
   getOccupationBySlug, getOccupationTopStates, getOccupationTopEmployers,
   getOccupationYearly, listTopOccupations,
+  getEntitySummary,
 } from '@/lib/queries';
 import { CompareSwapper } from '@/components/CompareSwapper';
 import type { PeerOption } from '@/components/ComparePicker';
 import { fmt, fmtUsd } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
 import { SITE_NAME } from '@/lib/site';
+import { Summary } from '@/components/Summary';
+import { occupationCompareFallback } from '@/lib/compare-summary';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -60,6 +63,9 @@ export default async function CompareOccupationsPage(
   const b = getOccupationBySlug(bSlug);
   if (!a || !b) notFound();
 
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
+  const summary = getEntitySummary('compare-occupation', `${c0}__${c1}`) ?? occupationCompareFallback(a, b);
+
   const aStates = getOccupationTopStates(a.soc_code).slice(0, 5);
   const bStates = getOccupationTopStates(b.soc_code).slice(0, 5);
   const aEmps   = getOccupationTopEmployers(a.soc_code).slice(0, 5);
@@ -93,6 +99,8 @@ export default async function CompareOccupationsPage(
           geography, top sponsors and yearly wage drift.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <PageMinimap />
 

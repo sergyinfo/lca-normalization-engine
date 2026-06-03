@@ -5,9 +5,11 @@ import {
   listTopStates,
   getStateYearlyAll,
   getStateTopEmployers,
+  getEntitySummary,
 } from '@/lib/queries';
 import { entityMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
+import { Summary } from '@/components/Summary';
 import { StateExplorer, type StateExplorerRow } from '@/components/StateExplorer';
 
 export const metadata: Metadata = entityMetadata({
@@ -20,6 +22,7 @@ export const metadata: Metadata = entityMetadata({
 export default function StateIndex() {
   const rows = listTopStates(60);
   const spark = getStateYearlyAll();
+  const summary = getEntitySummary('index', 'state');
 
   const explorerRows: StateExplorerRow[] = rows.map((s) => {
     const top = getStateTopEmployers(s.code)[0];
@@ -51,6 +54,8 @@ export default function StateIndex() {
           and see which states are gaining or losing share year over year.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <StateExplorer rows={explorerRows} years={spark.years} />
     </>

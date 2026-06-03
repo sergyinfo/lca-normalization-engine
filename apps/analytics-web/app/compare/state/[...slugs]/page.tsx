@@ -6,12 +6,15 @@ import { ArrowLeft, GitCompare, ArrowRight } from 'lucide-react';
 import {
   getStateBySlug, getStateTopEmployers, getStateTopOccupations, getStateYearly,
   listTopStates, getSiteKpis,
+  getEntitySummary,
 } from '@/lib/queries';
 import { CompareSwapper } from '@/components/CompareSwapper';
 import type { PeerOption } from '@/components/ComparePicker';
 import { fmt, fmtPct } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
 import { SITE_NAME } from '@/lib/site';
+import { Summary } from '@/components/Summary';
+import { stateCompareFallback } from '@/lib/compare-summary';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +61,9 @@ export default async function CompareStatesPage(
   const b = getStateBySlug(bSlug);
   if (!a || !b) notFound();
 
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
+  const summary = getEntitySummary('compare-state', `${c0}__${c1}`) ?? stateCompareFallback(a, b);
+
   const aEmps   = getStateTopEmployers(a.code).slice(0, 5);
   const bEmps   = getStateTopEmployers(b.code).slice(0, 5);
   const aSocs   = getStateTopOccupations(a.code).slice(0, 5);
@@ -92,6 +98,8 @@ export default async function CompareStatesPage(
           from the same DOL LCA data that drives every page on {SITE_NAME}.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <PageMinimap />
 

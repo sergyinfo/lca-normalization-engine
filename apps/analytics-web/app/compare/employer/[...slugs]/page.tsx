@@ -4,13 +4,15 @@ import type { Metadata } from 'next';
 import { ArrowLeft, GitCompare, ArrowRight } from 'lucide-react';
 
 import {
-  getEmployer, getEmployerTopSocs, getEmployerYearly, listTopEmployers,
+  getEmployer, getEmployerTopSocs, getEmployerYearly, listTopEmployers, getEntitySummary,
 } from '@/lib/queries';
 import { CompareSwapper } from '@/components/CompareSwapper';
 import type { PeerOption } from '@/components/ComparePicker';
 import { fmt, fmtPct, fmtFy } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
 import { SITE_NAME } from '@/lib/site';
+import { Summary } from '@/components/Summary';
+import { employerCompareFallback } from '@/lib/compare-summary';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -68,6 +70,9 @@ export default async function CompareEmployersPage(
 
   const entities = [a, b];
 
+  const [c0, c1] = [aSlug, bSlug].sort() as [string, string];
+  const summary = getEntitySummary('compare-employer', `${c0}__${c1}`) ?? employerCompareFallback(a, b);
+
   return (
     <>
       <nav aria-label="Breadcrumb" className="pb-2">
@@ -97,6 +102,8 @@ export default async function CompareEmployersPage(
           side-by-side.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <PageMinimap />
 

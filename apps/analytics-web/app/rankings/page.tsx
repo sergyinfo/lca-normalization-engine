@@ -5,9 +5,10 @@ import {
 } from 'lucide-react';
 
 import { entityMetadata } from '@/lib/seo';
-import { getSiteKpis } from '@/lib/queries';
+import { getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Summary } from '@/components/Summary';
 
 export const metadata: Metadata = entityMetadata({
   title: 'Rankings',
@@ -64,6 +65,7 @@ const RANKINGS: RankingMeta[] = [
 
 export default function RankingsIndex() {
   const kpis = getSiteKpis();
+  const summary = getEntitySummary('ranking', 'rankings');
   return (
     <>
       <section className="space-y-3 pb-8">
@@ -78,6 +80,8 @@ export default function RankingsIndex() {
           regenerated quarterly from the same data the entity pages use.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
         {RANKINGS.map((r) => {

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { entityMetadata } from '@/lib/seo';
-import { listHighestPayingOccupations, getSiteKpis } from '@/lib/queries';
+import { listHighestPayingOccupations, getSiteKpis, getEntitySummary } from '@/lib/queries';
 import { fmtUsd, fmt } from '@/lib/format';
 import { RankingPage } from '@/components/RankingPage';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -27,6 +27,7 @@ export default function HighestPayingH1bJobs() {
   const wageValues = occs.map((o) => o.p50_wage ?? 0).filter((v) => v > 0);
   return (
     <RankingPage
+      summary={getEntitySummary('ranking', 'highest-paying-h1b-jobs')}
       eyebrow="Salary leaderboard"
       title="Highest-Paying H-1B Jobs"
       fiscalYear={kpis.last_year}

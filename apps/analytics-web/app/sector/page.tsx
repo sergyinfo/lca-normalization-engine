@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { Factory } from 'lucide-react';
 
-import { listTopSectors, getSectorYearlyAll } from '@/lib/queries';
+import { listTopSectors, getSectorYearlyAll, getEntitySummary } from '@/lib/queries';
 import { entityMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
+import { Summary } from '@/components/Summary';
 import {
   SectorExplorer,
   type SectorExplorerRow,
@@ -19,6 +20,7 @@ export const metadata: Metadata = entityMetadata({
 export default function SectorIndex() {
   const rows = listTopSectors(60);
   const spark = getSectorYearlyAll();
+  const summary = getEntitySummary('index', 'sector');
 
   const explorerRows: SectorExplorerRow[] = rows.map((s) => ({
     naics2: s.naics2,
@@ -45,6 +47,8 @@ export default function SectorIndex() {
           search the full list by code or label.
         </p>
       </section>
+
+      <Summary summary={summary} />
 
       <SectorExplorer rows={explorerRows} years={spark.years} />
     </>
