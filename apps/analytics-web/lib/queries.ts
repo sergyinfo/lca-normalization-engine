@@ -169,6 +169,12 @@ export interface EntitySummaryRow {
   model: string | null;
 }
 
+/** SEO meta (title + description) for an entity page; null when not generated. */
+export interface EntityMetaRow {
+  meta_title: string | null;
+  meta_description: string | null;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Site KPIs                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -466,4 +472,19 @@ export function getEntitySummary(kind: EntityKind | 'site', slug: string): Entit
   return queryOne<EntitySummaryRow>(
     `SELECT summary_md, generated_at, model FROM entity_summary WHERE kind = ? AND slug = ?`,
     kind, slug);
+}
+
+/**
+ * LLM-generated SEO meta for a page's `generateMetadata`. Returns null (so the
+ * caller falls back to its hand-written template) when no summary was generated
+ * or — defensively — when an older lca.db predates the meta columns.
+ */
+export function getEntityMeta(kind: EntityKind | 'site', slug: string): EntityMetaRow | null {
+  try {
+    return queryOne<EntityMetaRow>(
+      `SELECT meta_title, meta_description FROM entity_summary WHERE kind = ? AND slug = ?`,
+      kind, slug);
+  } catch {
+    return null;
+  }
 }

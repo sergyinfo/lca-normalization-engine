@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 import { ArrowLeft } from 'lucide-react';
 
 import {
-  getSectorBySlug, getEntitySummary, listAllSectorSlugs,
+  getSectorBySlug, getEntitySummary, getEntityMeta, listAllSectorSlugs,
   getSectorTopEmployers, getSectorTopOccupations,
   getSectorTopStates, getSectorYearly, listTopSectors, getSiteKpis,
 } from '@/lib/queries';
@@ -41,9 +41,10 @@ export async function generateMetadata(
   const { slug } = await params;
   const s = getSectorBySlug(slug);
   if (!s) return { title: 'Not found' };
+  const m = getEntityMeta('sector', slug);
   return entityMetadata({
-    title: `${s.label} — H-1B Sponsorship (NAICS ${s.naics2})`,
-    description: `H-1B Labor Condition Applications filed by employers in NAICS sector ${s.naics2} (${s.label}): ${s.filings.toLocaleString()} disclosures from ${s.employers.toLocaleString()} distinct sponsoring employers.`,
+    title: m?.meta_title ?? `${s.label} — H-1B Sponsorship (NAICS ${s.naics2})`,
+    description: m?.meta_description ?? `H-1B Labor Condition Applications filed by employers in NAICS sector ${s.naics2} (${s.label}): ${s.filings.toLocaleString()} disclosures from ${s.employers.toLocaleString()} distinct sponsoring employers.`,
     path: `/sector/${slug}`,
   });
 }

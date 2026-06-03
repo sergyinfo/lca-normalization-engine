@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import {
   getStateBySlug, getStateTopEmployers, getStateTopOccupations, getStateYearly,
-  getEntitySummary, listAllStateSlugs, getSiteKpis, listTopStates,
+  getEntitySummary, getEntityMeta, listAllStateSlugs, getSiteKpis, listTopStates,
 } from '@/lib/queries';
 import { fmt, fmtPct } from '@/lib/format';
 import { entityMetadata, placeJsonLd } from '@/lib/seo';
@@ -40,9 +40,10 @@ export async function generateMetadata(
   const { slug } = await params;
   const s = getStateBySlug(slug);
   if (!s) return { title: 'Not found' };
+  const m = getEntityMeta('state', slug);
   return entityMetadata({
-    title: `H-1B sponsorship in ${s.name}`,
-    description: `H-1B Labor Condition Applications filed for worksites in ${s.name}: ${s.filings.toLocaleString()} disclosures, top sponsoring employers, and top occupations.`,
+    title: m?.meta_title ?? `H-1B sponsorship in ${s.name}`,
+    description: m?.meta_description ?? `H-1B Labor Condition Applications filed for worksites in ${s.name}: ${s.filings.toLocaleString()} disclosures, top sponsoring employers, and top occupations.`,
     path: `/state/${slug}`,
   });
 }

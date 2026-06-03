@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import {
   getOccupationBySlug, getOccupationLevels, getOccupationTopStates,
-  getOccupationTopEmployers, getOccupationYearly, getEntitySummary,
+  getOccupationTopEmployers, getOccupationYearly, getEntitySummary, getEntityMeta,
   listAllOccupationSlugs, listTopOccupations, getSiteKpis,
 } from '@/lib/queries';
 import { fmt, fmtUsd } from '@/lib/format';
@@ -45,9 +45,10 @@ export async function generateMetadata(
   const title = o.soc_title
     ? `${o.soc_title} — H-1B Salary Guide (${o.soc_code})`
     : `SOC ${o.soc_code} H-1B Salary Guide`;
+  const m = getEntityMeta('occupation', slug);
   return entityMetadata({
-    title,
-    description: `H-1B prevailing-wage data for ${o.soc_title ?? o.soc_code}: ${o.filings.toLocaleString()} filings, median wage ${fmtUsd(o.p50_wage)}, plus top hiring states and employers.`,
+    title: m?.meta_title ?? title,
+    description: m?.meta_description ?? `H-1B prevailing-wage data for ${o.soc_title ?? o.soc_code}: ${o.filings.toLocaleString()} filings, median wage ${fmtUsd(o.p50_wage)}, plus top hiring states and employers.`,
     path: `/occupation/${slug}`,
   });
 }

@@ -201,12 +201,15 @@ CREATE TABLE IF NOT EXISTS state_yearly (
 -- LLM-generated per-page summaries. Keyed by (kind, slug); skip-if-unchanged
 -- via the data_hash column. Generated quarterly by scripts/generate-summaries.ts.
 CREATE TABLE IF NOT EXISTS entity_summary (
-  kind         TEXT NOT NULL CHECK (kind IN ('employer','occupation','state','sector','site')),
-  slug         TEXT NOT NULL,
-  summary_md   TEXT NOT NULL,
-  data_hash    TEXT NOT NULL,
-  generated_at INTEGER NOT NULL,
-  model        TEXT,
+  kind             TEXT NOT NULL CHECK (kind IN ('employer','occupation','state','sector','site')),
+  slug             TEXT NOT NULL,
+  summary_md       TEXT NOT NULL,
+  meta_title       TEXT,            -- LLM-generated <title> (falls back to template)
+  meta_description TEXT,            -- LLM-generated meta description (falls back to template)
+  keywords         TEXT,            -- JSON array of search keyword phrases
+  data_hash        TEXT NOT NULL,
+  generated_at     INTEGER NOT NULL,
+  model            TEXT,
   PRIMARY KEY (kind, slug)
 );
 

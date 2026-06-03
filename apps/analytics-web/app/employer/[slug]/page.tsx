@@ -5,7 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import {
   getEmployer, getEmployerTopSocs, getEmployerYearly,
-  getEntitySummary, listAllEmployerSlugs, listTopEmployers, getSiteKpis,
+  getEntitySummary, getEntityMeta, listAllEmployerSlugs, listTopEmployers, getSiteKpis,
 } from '@/lib/queries';
 import { fmt, fmtPct, fmtFy } from '@/lib/format';
 import { entityMetadata, organizationJsonLd } from '@/lib/seo';
@@ -41,9 +41,10 @@ export async function generateMetadata(
   const { slug } = await params;
   const e = getEmployer(slug);
   if (!e) return { title: 'Not found' };
+  const m = getEntityMeta('employer', slug);
   return entityMetadata({
-    title: `${e.canonical_name} — H-1B sponsor profile`,
-    description: `H-1B sponsorship data for ${e.canonical_name}: ${e.filings.toLocaleString()} Labor Condition Applications filed, ${fmtPct(e.certified_pct)} certified, top occupations and yearly trend.`,
+    title: m?.meta_title ?? `${e.canonical_name} — H-1B sponsor profile`,
+    description: m?.meta_description ?? `H-1B sponsorship data for ${e.canonical_name}: ${e.filings.toLocaleString()} Labor Condition Applications filed, ${fmtPct(e.certified_pct)} certified, top occupations and yearly trend.`,
     path: `/employer/${slug}`,
   });
 }
