@@ -41,6 +41,7 @@ export interface OccupationExplorerProps {
 
 export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
   const [search, setSearch] = useState('');
+  const [bottomFocused, setBottomFocused] = useState(false);
   const { current: currentPage, pageSize, goToPage } = usePagination(50);
   const onSearchChange = (v: string) => {
     setSearch(v);
@@ -223,9 +224,10 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
-          {totalPages > 1 && (
+          {(totalPages > 1 || bottomFocused) && (
             <TableToolbar current={safePage} total={totalPages} onPageChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="occupation"
-              search={search} onSearch={onSearchChange} searchPlaceholder="Filter by SOC code or title…" searchLabel="Filter occupations by SOC code or title" position="bottom" />
+              search={search} onSearch={onSearchChange} searchPlaceholder="Filter by SOC code or title…" searchLabel="Filter occupations by SOC code or title"
+              onSearchFocusChange={setBottomFocused} position="bottom" />
           )}
         </CardContent>
       </Card>

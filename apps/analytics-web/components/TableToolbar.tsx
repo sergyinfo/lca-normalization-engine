@@ -26,6 +26,9 @@ export interface TableToolbarProps {
   onSearch?: (value: string) => void;
   searchPlaceholder?: string;
   searchLabel?: string;
+  /** Notifies the host when the filter input gains/loses focus, so the host can
+   *  keep a (otherwise-hideable) bottom toolbar mounted while you're typing in it. */
+  onSearchFocusChange?: (focused: boolean) => void;
   position?: 'top' | 'bottom';
 }
 
@@ -36,7 +39,7 @@ const ICON_BTN_CLS =
 
 export function TableToolbar({
   current, total, onPageChange, itemCount, pageSize, itemNoun = 'item',
-  search, onSearch, searchPlaceholder, searchLabel, position = 'bottom',
+  search, onSearch, searchPlaceholder, searchLabel, onSearchFocusChange, position = 'bottom',
 }: TableToolbarProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -70,6 +73,7 @@ export function TableToolbar({
           <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="search" value={search} onChange={(e) => onSearch!(e.target.value)}
+            onFocus={() => onSearchFocusChange?.(true)} onBlur={() => onSearchFocusChange?.(false)}
             placeholder={searchPlaceholder} aria-label={searchLabel} className={INPUT_CLS}
           />
         </label>
@@ -85,7 +89,8 @@ export function TableToolbar({
                 <input
                   autoFocus type="search" value={search} onChange={(e) => onSearch!(e.target.value)}
                   placeholder={searchPlaceholder} aria-label={searchLabel} className={INPUT_CLS}
-                  onBlur={() => { if (!search) setMobileOpen(false); }}
+                  onFocus={() => onSearchFocusChange?.(true)}
+                  onBlur={() => { onSearchFocusChange?.(false); if (!search) setMobileOpen(false); }}
                 />
               </label>
               <button type="button" aria-label="Clear filter" className={ICON_BTN_CLS}

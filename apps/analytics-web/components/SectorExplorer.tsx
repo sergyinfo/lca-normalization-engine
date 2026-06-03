@@ -41,6 +41,7 @@ export interface SectorExplorerProps {
 
 export function SectorExplorer({ rows, years }: SectorExplorerProps) {
   const [search, setSearch] = useState('');
+  const [bottomFocused, setBottomFocused] = useState(false);
   const { current: currentPage, pageSize, goToPage } = usePagination(50);
   const onSearchChange = (v: string) => {
     setSearch(v);
@@ -210,9 +211,10 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
-          {totalPages > 1 && (
+          {(totalPages > 1 || bottomFocused) && (
             <TableToolbar current={safePage} total={totalPages} onPageChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="sector"
-              search={search} onSearch={onSearchChange} searchPlaceholder="Filter sectors…" searchLabel="Filter sectors by NAICS code or label" position="bottom" />
+              search={search} onSearch={onSearchChange} searchPlaceholder="Filter sectors…" searchLabel="Filter sectors by NAICS code or label"
+              onSearchFocusChange={setBottomFocused} position="bottom" />
           )}
         </CardContent>
       </Card>

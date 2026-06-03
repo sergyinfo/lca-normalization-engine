@@ -58,6 +58,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
   const [region, setRegion] = useState<RegionFilter>('All');
   const [metric, setMetric] = useState<Metric>('absolute');
   const [search, setSearch] = useState('');
+  const [bottomFocused, setBottomFocused] = useState(false);
   const { current: currentPage, pageSize, goToPage } = usePagination(50);
   const resetPage = () => { if (currentPage !== 1) goToPage(1); };
   const onSearchChange = (v: string) => { setSearch(v); resetPage(); };
@@ -379,9 +380,10 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
-          {totalPages > 1 && (
+          {(totalPages > 1 || bottomFocused) && (
             <TableToolbar current={safePage} total={totalPages} onPageChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="state"
-              search={search} onSearch={onSearchChange} searchPlaceholder="Filter states…" searchLabel="Filter states by code or name" position="bottom" />
+              search={search} onSearch={onSearchChange} searchPlaceholder="Filter states…" searchLabel="Filter states by code or name"
+              onSearchFocusChange={setBottomFocused} position="bottom" />
           )}
         </CardContent>
       </Card>
