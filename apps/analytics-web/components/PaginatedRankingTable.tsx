@@ -12,7 +12,8 @@ import Link from 'next/link';
 
 import { fmt } from '@/lib/format';
 import { SortableTable } from '@/components/SortableTable';
-import { Pagination, usePagination } from '@/components/Pagination';
+import { usePagination } from '@/components/Pagination';
+import { TableToolbar } from '@/components/TableToolbar';
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from '@/components/ui/card';
@@ -49,10 +50,10 @@ export function PaginatedRankingTable({
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <Pagination
+        <TableToolbar
           current={safePage}
           total={totalPages}
-          onChange={goToPage}
+          onPageChange={goToPage}
           itemCount={rows.length}
           pageSize={pageSize}
           itemNoun={itemNoun}
@@ -102,14 +103,17 @@ export function PaginatedRankingTable({
             </TableBody>
           </Table>
         </SortableTable>
-        <Pagination
-          current={safePage}
-          total={totalPages}
-          onChange={goToPage}
-          itemCount={rows.length}
-          pageSize={pageSize}
-          itemNoun={itemNoun}
-        />
+        {totalPages > 1 && (
+          <TableToolbar
+            current={safePage}
+            total={totalPages}
+            onPageChange={goToPage}
+            itemCount={rows.length}
+            pageSize={pageSize}
+            itemNoun={itemNoun}
+            position="bottom"
+          />
+        )}
       </CardContent>
     </Card>
   );

@@ -83,7 +83,7 @@ export function usePagination(pageSize: number) {
 }
 
 /** Generate the visible page-button list with ellipses for > 7 pages. */
-function buildPageList(current: number, total: number): Array<number | 'ellipsis-l' | 'ellipsis-r'> {
+export function buildPageList(current: number, total: number): Array<number | 'ellipsis-l' | 'ellipsis-r'> {
   if (total <= 7) {
     return Array.from({ length: total }, (_, i) => i + 1);
   }
@@ -191,7 +191,7 @@ export function Pagination({
   );
 }
 
-function PaginationButton({
+export function PaginationButton({
   children, active, disabled, onClick, ...rest
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }) {
   return (

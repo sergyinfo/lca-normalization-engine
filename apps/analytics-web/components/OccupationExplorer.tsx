@@ -9,7 +9,6 @@
  */
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Search } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -20,8 +19,8 @@ import { MiniBar } from '@/components/charts/MiniBar';
 import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMoversChart';
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
-import { Pagination, usePagination } from '@/components/Pagination';
-import { TableSearch } from '@/components/TableSearch';
+import { usePagination } from '@/components/Pagination';
+import { TableToolbar } from '@/components/TableToolbar';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt, fmtUsd } from '@/lib/format';
 
@@ -166,24 +165,14 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
       ) : null}
 
       <Card data-section-id="table" data-section-label="Occupations table">
-        <CardHeader className="pb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">
             {fmt(tableRows.length)} occupation{tableRows.length === 1 ? '' : 's'}
           </CardTitle>
-          <label className="relative w-full sm:w-72">
-            <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="search"
-              placeholder="Filter by SOC code or title…"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full rounded-md border bg-background h-9 pl-8 pr-3 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              aria-label="Filter occupations by SOC code or title"
-            />
-          </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <Pagination current={safePage} total={totalPages} onChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="occupation" position="top" />
+          <TableToolbar current={safePage} total={totalPages} onPageChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="occupation"
+            search={search} onSearch={onSearchChange} searchPlaceholder="Filter by SOC code or title…" searchLabel="Filter occupations by SOC code or title" position="top" />
           <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
@@ -234,17 +223,10 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
               </TableBody>
             </Table>
           </SortableTable>
-          <Pagination
-            current={safePage}
-            total={totalPages}
-            onChange={goToPage}
-            itemCount={tableRows.length}
-            pageSize={pageSize}
-            itemNoun="occupation"
-          />
-          <div className="flex justify-end px-4 py-3 border-t">
-            <TableSearch value={search} onChange={onSearchChange} placeholder="Filter by SOC code or title…" ariaLabel="Filter occupations by SOC code or title (bottom)" />
-          </div>
+          {totalPages > 1 && (
+            <TableToolbar current={safePage} total={totalPages} onPageChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="occupation"
+              search={search} onSearch={onSearchChange} searchPlaceholder="Filter by SOC code or title…" searchLabel="Filter occupations by SOC code or title" position="bottom" />
+          )}
         </CardContent>
       </Card>
     </div>
