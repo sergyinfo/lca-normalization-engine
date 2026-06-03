@@ -473,10 +473,10 @@ For the cloud-architecture-forward variant: **CDK templates live in
 
 1. **Shared** — S3 (lca.db versioned + PG snapshots + ingest scratch), ECR, Secrets Manager
 2. **Data pipeline** — EventBridge schedule → Lambda DOL-checker → Step Functions → ephemeral EC2 c6i.2xlarge that ingests, builds, pushes new Lambda image, self-terminates
-3. **Serve** — Lambda Container Image (Next.js standalone via AWS Lambda Web Adapter) + CloudFront + S3 static origin
+3. **Serve** — Lambda Container Image (Next.js standalone via AWS Lambda Web Adapter) behind CloudFront + S3 static origin. The Lambda uses a **public Function URL** reachable only via CloudFront (an `x-origin-verify` secret header the app enforces — OAC for Lambda Function URLs was reproducibly broken in-account); CloudFront Functions add a canonical-host redirect + `noindex` on non-prod hosts. Details + required deploy context in [`infra/aws/README.md` §Serving model](infra/aws/README.md#serving-model-read-before-deployserve).
 
 ```
-EventBridge (6h) → Lambda check ─► Step Fn ─► EC2 burst (~8h) ─► lca.db in S3
+EventBridge (daily) → Lambda check ─► Step Fn ─► EC2 burst (~8h) ─► lca.db in S3
                                                               ─► Lambda image in ECR
                                                               ─► UpdateFunctionCode
 

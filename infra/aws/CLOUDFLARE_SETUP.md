@@ -7,6 +7,31 @@ at the bottom so you can confirm before moving on.
 
 ---
 
+## 0a. `dev.h1b.report` (staging) — what's live today
+
+The apex/`www` runbook below is the **prod** target. We currently serve on
+**`dev.h1b.report`**, which uses the exact same steps with a few simplifications:
+
+- **One ACM cert** for `h1b.report` **and** `*.h1b.report` (the wildcard covers
+  `dev`). Request it once (step 2); it already serves `dev` now and apex/`www` later.
+- **DNS:** add a single record — `CNAME dev → <dist>.cloudfront.net`, **DNS-only
+  (grey cloud)**. Same shape as the apex/`www` rows in step 4, just the `dev` name.
+- **Deploy serve** with `-c siteDomains=dev.h1b.report -c siteUrl=https://dev.h1b.report`
+  (+ `-c siteCertificateArn=…` + `-c originVerifySecret=…`; see
+  [`README.md` §Serving model](./README.md#serving-model-read-before-deployserve)).
+- **`dev` is automatically `noindex`** (the distribution's viewer-response
+  CloudFront Function stamps `X-Robots-Tag: noindex` on any host not in
+  `indexableHosts`, which is empty until prod promotion), and the bare
+  `*.cloudfront.net` 301-redirects to `dev` — so nothing duplicates or gets indexed.
+- These records can be created in the dashboard, or via the Cloudflare API with
+  the token in `.env` (`CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ZONE_ID`).
+
+**Promotion to prod** = add the apex/`www` records (step 4), redeploy serve with
+`-c siteDomains=h1b.report,dev.h1b.report -c indexableHosts=h1b.report,www.h1b.report`,
+and (optionally) flip to proxied (§9). `dev` stays noindex automatically.
+
+---
+
 ## 0. Architecture decision: DNS-only vs. Proxied
 
 Cloudflare can either:

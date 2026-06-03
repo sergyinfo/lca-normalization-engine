@@ -17,7 +17,7 @@ Together they implement the architecture sketched in [`../../DEPLOY.md`](../../D
 ```
             ┌── Burst (idle 99% of the year) ──────────────────────┐
             │                                                       │
-            │   EventBridge ─► Lambda (DOL ETag check, every 6h)    │
+            │   EventBridge ─► Lambda (DOL ETag check, daily)      │
             │                       │                               │
             │                       ▼ on change                     │
             │              Step Functions state machine             │
@@ -43,6 +43,55 @@ Together they implement the architecture sketched in [`../../DEPLOY.md`](../../D
             │                                                        │
             └────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Serving model (read before `deploy:serve`)
+
+The serve stack does **not** use CloudFront Origin Access Control (OAC) in front
+of the Lambda. OAC against a Lambda **Function URL** was reproducibly rejected
+(HTTP 403) in our account even with a from-scratch, spec-correct setup (S3 OAC
+works fine). Instead:
+
+- The Lambda exposes a **public Function URL** (`AuthType: NONE`,
+  `invokeMode: RESPONSE_STREAM` to match the image's
+  `AWS_LWA_INVOKE_MODE=response_stream` — `BUFFERED` returns empty bodies).
+- CloudFront injects a secret **`x-origin-verify`** header on origin requests;
+  the Next.js middleware **403s any request without it**, so the Function URL
+  can't be reached directly (CloudFront-only). The secret is generated once and
+  stored git-ignored at `infra/aws/.origin-verify-secret`.
+- Two **CloudFront Functions** on the distribution:
+  - *viewer-request* — 301-redirects any host **not** in `siteDomains` (the bare
+    `*.cloudfront.net`, `www`, …) to the primary domain, killing duplicate content.
+  - *viewer-response* — stamps `X-Robots-Tag: noindex` on any host **not** in
+    `indexableHosts`, so dev/staging never competes with prod in search.
+
+### Required `deploy:serve` context
+
+`LcaServeStack` reads all of this from CDK context — **pass every flag** or you
+lose the domain, the hardening, and/or the SEO controls:
+
+```bash
+cd infra/aws
+ARN=arn:aws:acm:us-east-1:<acct>:certificate/<id>   # us-east-1 ACM cert for h1b.report + *.h1b.report
+AWS_PROFILE=<deploy-profile> pnpm cdk deploy LcaServeStack --require-approval never \
+  -c siteCertificateArn=$ARN \
+  -c siteDomains=dev.h1b.report \
+  -c siteUrl=https://dev.h1b.report \
+  -c originVerifySecret=$(cat infra/aws/.origin-verify-secret)
+# Prod promotion: -c siteDomains=h1b.report,dev.h1b.report  (omit www so it 301s to apex)
+#                 -c indexableHosts=h1b.report,www.h1b.report
+```
+
+With **no** domain context the stack still deploys against the raw
+`*.cloudfront.net` host — handy for a first smoke test before the cert is issued.
+
+> **Image repointing gotcha:** the Lambda references the image by the `:latest`
+> **tag**, and `cdk deploy` does **not** repoint it when `:latest` moves to a new
+> digest. After any push you must
+> `aws lambda update-function-code --image-uri …:latest` — `migrate-from-local.sh`
+> now does this automatically. See [`CLOUDFLARE_SETUP.md`](./CLOUDFLARE_SETUP.md)
+> for the DNS/ACM steps.
 
 ---
 
@@ -82,14 +131,22 @@ If you've already ingested data locally and just want to host on AWS
    aws secretsmanager put-secret-value --secret-id lca/llm-api-key --secret-string "sk-..."
    ```
 4. **Run the migration script** — uploads your local lca.db, builds + pushes the
-   Lambda image, dumps + uploads your local Postgres database:
+   Lambda image (and repoints the serving Lambda via `update-function-code`),
+   and optionally dumps + uploads your local Postgres. For a serve-only (P2)
+   bring-up you can skip the multi-GB Postgres dump:
    ```bash
-   ./scripts/migrate-from-local.sh
+   SKIP_PG_DUMP=1 AWS_PROFILE=<deploy-profile> ./scripts/migrate-from-local.sh
+   # drop SKIP_PG_DUMP before enabling P1, so the first burst restores history
    ```
-5. Deploy the rest:
+5. Deploy serving **with the domain/hardening context** (see §Serving model),
+   then fill the static bucket:
    ```bash
-   pnpm deploy:serve   # ~15 min for CloudFront
-   pnpm deploy:data    # provisions burst pipeline, sits idle
+   AWS_PROFILE=<deploy-profile> pnpm cdk deploy LcaServeStack --require-approval never \
+     -c siteCertificateArn=$ARN -c siteDomains=dev.h1b.report \
+     -c siteUrl=https://dev.h1b.report \
+     -c originVerifySecret=$(cat infra/aws/.origin-verify-secret)     # ~5–15 min for CloudFront
+   ./scripts/sync-static.sh    # REQUIRED — fills the S3 static bucket or all CSS/JS 404s
+   pnpm deploy:data            # provisions the burst pipeline, sits idle
    ```
 6. Smoke-test the live CloudFront URL:
    ```bash
@@ -141,29 +198,29 @@ pnpm deploy:serve
 
 ### Bootstrap the first image
 
-The serve stack references `:latest` in the ECR repo. Until the burst
-pipeline has run once, that tag doesn't exist. Do an initial manual push
-from your dev machine:
+The serve stack references `:latest` in the ECR repo, which must exist **before**
+`deploy:serve` (or the Lambda can't be created). The supported path is
+`scripts/migrate-from-local.sh` (see §First-time migration) — it builds + pushes
+the image correctly. If you build by hand, you **must** disable buildx
+attestations (`--provenance=false --sbom=false`) or Lambda rejects the image with
+*"image manifest … media type … is not supported"*:
 
 ```bash
-# Get ECR push login
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 REGION=$CDK_DEFAULT_REGION
 aws ecr get-login-password --region $REGION | \
   docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
-# Build + push (from the repo root, not infra/aws)
-cd ../..
-docker build -f apps/analytics-web/Dockerfile.lambda \
-  -t "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/lca-analytics-web:latest" .
-docker push "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/lca-analytics-web:latest"
-
-# Now deploy the serve stack
-cd infra/aws
-pnpm deploy:serve
+cd ../..   # repo root
+docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
+  -f apps/analytics-web/Dockerfile.lambda \
+  -t "$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/lca-analytics-web:latest" --push .
 ```
 
 Subsequent rebuilds happen automatically inside the burst EC2 instance.
+Remember: after any push, repoint the running Lambda with
+`aws lambda update-function-code --function-name lca-analytics-web --image-uri …:latest`
+(`migrate-from-local.sh` does this for you).
 
 ---
 
@@ -189,17 +246,20 @@ Subsequent rebuilds happen automatically inside the burst EC2 instance.
 | `DolChecker` (Lambda, Node 22) | Compares DOL page fingerprint vs SSM-stored value |
 | `LastDolEtag` (SSM Parameter) | Persistence for the checker |
 | `BuildPipeline` (Step Functions) | Orchestrates EC2 launch + notifications |
-| `DolCheckSchedule` (EventBridge) | Triggers checker every 6 hours |
+| `DolCheckSchedule` (EventBridge) | Triggers the DOL checker **daily** |
 | `ManualRunRule` (EventBridge) | Lets ops trigger a build via `aws events put-events` |
+| `GithubToken` (Secrets Manager) | `lca/github-token` — read-only PAT the burst EC2 uses to clone the private repo (populate post-deploy) |
 | `BuildNotifications` (SNS) | Subscribe ops emails / Slack webhook out-of-band |
 
 ### `LcaServeStack`
 
 | Resource | Purpose |
 |---|---|
-| `AnalyticsWebFn` (Lambda DockerImage) | Runs Next.js standalone + LWA, 512 MB / ARM64 |
-| `StaticAssetsBucket` (S3) | Pre-rendered HTML, JS, CSS uploaded by the burst pipeline |
-| `Distribution` (CloudFront) | Routes /_next/static/* + /sitemap.xml to S3, everything else to Lambda |
+| `AnalyticsWebFn` (Lambda DockerImage) | Next.js standalone + LWA, 512 MB / ARM64. Public Function URL (`AuthType NONE`, `RESPONSE_STREAM`); `ORIGIN_VERIFY_SECRET` env makes the middleware enforce the CloudFront-only header |
+| `StaticAssetsBucket` (S3) | `/_next/static/*` + `/static/*`. Filled by `sync-static.sh`; auto-empties on stack delete (contents are reproducible) |
+| `Distribution` (CloudFront) | `/_next/static/*` + `/static/*` → S3; **everything else (incl. `/sitemap.xml`, `/robots.txt`) → Lambda**. Injects the `x-origin-verify` header on the Lambda origin |
+| `CanonicalHostRedirect` (CF Function, viewer-request) | 301s any host not in `siteDomains` (e.g. `*.cloudfront.net`, `www`) → primary domain |
+| `NoindexNonProd` (CF Function, viewer-response) | `X-Robots-Tag: noindex` on any host not in `indexableHosts` (dev/staging) |
 | `SecurityHeaders` (CF Response Headers Policy) | HSTS, X-Frame-Options, Referrer-Policy, etc. |
 
 ---
@@ -327,9 +387,12 @@ AWS sends a confirmation email to the address; click the "Confirm subscription" 
 ### Prerequisite: activate cost-allocation tags
 
 Tag-filtered budgets (everything except a hypothetical "all-AWS" budget)
-need the underlying tags to be **activated as cost-allocation tags** in
-the Billing Console first. Until you do this, the tag filters return
-empty and the budget reports $0 — which silently disables them.
+need the underlying tags to be **activated as cost-allocation tags** first.
+Until you do, the tag filters return empty and the budget reports $0 — which
+silently disables them. **In an AWS Organization, activate them in the
+management/payer account** (cost-allocation tags are org-wide, owned by the
+payer). They only appear in the inventory **~24 h after** the tagged resources
+first incur cost, so a brand-new account can't activate them on day one.
 
 ```bash
 aws ce update-cost-allocation-tags-status --cost-allocation-tags-status \
@@ -607,4 +670,4 @@ aws s3 rm s3://<bucket-name> --recursive
 pnpm destroy:all
 ```
 
-Be aware that `LcaSharedStack`'s S3 buckets and ECR repo have `RemovalPolicy.RETAIN` — they survive `cdk destroy`. Override only if you really want a clean slate.
+Be aware that **`LcaSharedStack`'s S3 buckets and ECR repo have `RemovalPolicy.RETAIN`** — they survive `cdk destroy` (they hold real data). `LcaServeStack`'s `StaticAssetsBucket` is `DESTROY` + `autoDeleteObjects`, so it cleans itself up (contents are reproducible via `sync-static.sh`) — no orphaned buckets on recreate. The ECR repo keeps the last 5 tagged images and expires untagged after 1 day.
