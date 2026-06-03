@@ -160,3 +160,8 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* Display-only table pagination: off-page rows are still rendered (so every
+   row is in the SSR HTML for crawlers) but hidden until JS. SortableTable
+   overrides this with an inline `display` once hydrated. See SortableTable.tsx. */
+tr.pgn-initial-hidden { display: none; }

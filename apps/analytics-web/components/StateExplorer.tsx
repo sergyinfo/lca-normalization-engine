@@ -210,7 +210,6 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
   const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
 
   return (
     <div className="space-y-6">
@@ -328,7 +327,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -350,11 +349,11 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
                       No states match — try clearing the filters.
                     </TableCell>
                   </TableRow>
-                ) : pagedRows.map((s) => {
+                ) : tableRows.map((s, idx) => {
                   const series = s.yearly;
                   const pc = perCapita(s.filings, s.code);
                   return (
-                    <TableRow key={s.code}>
+                    <TableRow key={s.code} className={idx < pageStart || idx >= pageStart + pageSize ? 'pgn-initial-hidden' : undefined}>
                       <TableCell className="text-muted-foreground tabular-nums" data-sort-value={s.rank}>{s.rank}</TableCell>
                       <TableCell className="font-mono text-xs" data-sort-value={s.code}>
                         <Link href={`/state/${s.slug}`} className="hover:text-primary">{s.code}</Link>

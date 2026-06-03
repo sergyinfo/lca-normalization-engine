@@ -148,7 +148,6 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
   const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
 
   return (
     <div className="space-y-6">
@@ -194,7 +193,7 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -214,10 +213,10 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
                       No sponsors match — try clearing the search.
                     </TableCell>
                   </TableRow>
-                ) : pagedRows.map((e) => {
+                ) : tableRows.map((e, idx) => {
                   const series = e.yearly;
                   return (
-                    <TableRow key={e.slug}>
+                    <TableRow key={e.slug} className={idx < pageStart || idx >= pageStart + pageSize ? 'pgn-initial-hidden' : undefined}>
                       <TableCell className="text-muted-foreground tabular-nums" data-sort-value={e.rank}>{e.rank}</TableCell>
                       <TableCell data-sort-value={e.canonical_name}>
                         <Link href={`/employer/${e.slug}`} className="font-medium hover:text-primary">

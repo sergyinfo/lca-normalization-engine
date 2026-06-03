@@ -40,7 +40,6 @@ export function PaginatedRankingTable({
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = rows.slice(pageStart, pageStart + pageSize);
 
   return (
     <Card className="mt-2" data-section-id="table" data-section-label="Ranked table">
@@ -50,7 +49,7 @@ export function PaginatedRankingTable({
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+        <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -69,8 +68,11 @@ export function PaginatedRankingTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pagedRows.map((r) => (
-                <TableRow key={`${r.rank}-${r.href}`}>
+              {rows.map((r, idx) => (
+                <TableRow
+                  key={`${r.rank}-${r.href}`}
+                  className={idx < pageStart || idx >= pageStart + pageSize ? 'pgn-initial-hidden' : undefined}
+                >
                   <TableCell className="text-muted-foreground tabular-nums" data-sort-value={r.rank}>{r.rank}</TableCell>
                   <TableCell data-sort-value={r.primary}>
                     <Link href={r.href} className="font-medium hover:text-primary">

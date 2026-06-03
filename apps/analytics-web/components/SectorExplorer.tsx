@@ -125,7 +125,6 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
   const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
 
   return (
     <div className="space-y-6">
@@ -170,7 +169,7 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -189,10 +188,10 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
                       No sectors match — try clearing the search.
                     </TableCell>
                   </TableRow>
-                ) : pagedRows.map((s) => {
+                ) : tableRows.map((s, idx) => {
                   const series = s.yearly;
                   return (
-                    <TableRow key={s.naics2}>
+                    <TableRow key={s.naics2} className={idx < pageStart || idx >= pageStart + pageSize ? 'pgn-initial-hidden' : undefined}>
                       <TableCell className="text-muted-foreground tabular-nums" data-sort-value={s.rank}>{s.rank}</TableCell>
                       <TableCell className="font-mono text-xs" data-sort-value={s.naics2}>
                         <Link href={`/sector/${s.slug}`} className="hover:text-primary">{s.naics2}</Link>

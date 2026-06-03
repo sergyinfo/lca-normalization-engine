@@ -137,7 +137,6 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
   const totalPages = Math.max(1, Math.ceil(tableRows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = tableRows.slice(pageStart, pageStart + pageSize);
 
   return (
     <div className="space-y-6">
@@ -183,7 +182,7 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }}>
+          <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -202,10 +201,10 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
                       No occupations match — try clearing the search.
                     </TableCell>
                   </TableRow>
-                ) : pagedRows.map((o) => {
+                ) : tableRows.map((o, idx) => {
                   const series = o.yearly;
                   return (
-                    <TableRow key={o.soc_code}>
+                    <TableRow key={o.soc_code} className={idx < pageStart || idx >= pageStart + pageSize ? 'pgn-initial-hidden' : undefined}>
                       <TableCell className="text-muted-foreground tabular-nums" data-sort-value={o.rank}>{o.rank}</TableCell>
                       <TableCell className="font-mono text-xs" data-sort-value={o.soc_code}>
                         <Link href={`/occupation/${o.slug}`} className="hover:text-primary">{o.soc_code}</Link>

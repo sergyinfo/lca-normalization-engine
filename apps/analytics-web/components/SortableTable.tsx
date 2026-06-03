@@ -40,9 +40,21 @@ interface Props {
   children: ReactNode;
   /** Initial column to sort by. */
   initialSort?: { key: string; dir: Direction };
+  /**
+   * Display-only pagination. When `pageSize` is set, the host renders ALL rows
+   * (so every row is in the SSR HTML for crawlers); rows outside the current
+   * `page` are hidden via inline `display:none` AFTER sorting, so sort +
+   * pagination compose. The host marks off-page rows with the
+   * `pgn-initial-hidden` class for the pre-JS paint; the inline style set here
+   * overrides it once hydrated.
+   */
+  page?: number;
+  pageSize?: number;
+  /** Bump to re-apply sort + pagination when the rendered rows change (e.g. search). */
+  revision?: unknown;
 }
 
-export function SortableTable({ children, initialSort }: Props) {
+export function SortableTable({ children, initialSort, page, pageSize, revision }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<{ key: string; dir: Direction } | null>(initialSort ?? null);
 
@@ -124,43 +136,53 @@ export function SortableTable({ children, initialSort }: Props) {
       }
     });
 
-    if (!sort || !columnInfo) return;
+    // Reorder rows for the active sort (if any).
+    if (sort && columnInfo) {
+      const rows = Array.from(tbody.querySelectorAll(':scope > tr'));
+      if (rows.length > 0) {
+        const idx = columnInfo.index;
+        const type = columnInfo.type;
+        const dir = sort.dir === 'asc' ? 1 : -1;
 
-    const rows = Array.from(tbody.querySelectorAll(':scope > tr'));
-    if (rows.length === 0) return;
+        // Decorated sort to keep it stable (explicit tiebreaker by original index).
+        const decorated = rows.map((row, i) => {
+          const cell = row.children[idx] as HTMLTableCellElement | undefined;
+          const raw = cell?.dataset.sortValue ?? cell?.textContent ?? '';
+          return { row, i, key: raw };
+        });
 
-    const idx = columnInfo.index;
-    const type = columnInfo.type;
-    const dir = sort.dir === 'asc' ? 1 : -1;
+        decorated.sort((a, b) => {
+          let cmp = 0;
+          if (type === 'number') {
+            const an = parseNumber(a.key);
+            const bn = parseNumber(b.key);
+            if (an === null && bn === null) cmp = 0;
+            else if (an === null) cmp = 1;        // nulls last
+            else if (bn === null) cmp = -1;
+            else cmp = an - bn;
+          } else {
+            cmp = a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: 'base' });
+          }
+          return cmp !== 0 ? cmp * dir : a.i - b.i;
+        });
 
-    // Decorated sort to keep it stable (Array.prototype.sort is stable in
-    // modern engines but we want explicit tiebreaker by original index).
-    const decorated = rows.map((row, i) => {
-      const cell = row.children[idx] as HTMLTableCellElement | undefined;
-      const raw = cell?.dataset.sortValue ?? cell?.textContent ?? '';
-      return { row, i, key: raw };
-    });
-
-    decorated.sort((a, b) => {
-      let cmp = 0;
-      if (type === 'number') {
-        const an = parseNumber(a.key);
-        const bn = parseNumber(b.key);
-        if (an === null && bn === null) cmp = 0;
-        else if (an === null) cmp = 1;        // nulls last
-        else if (bn === null) cmp = -1;
-        else cmp = an - bn;
-      } else {
-        cmp = a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: 'base' });
+        const frag = document.createDocumentFragment();
+        decorated.forEach((d) => frag.appendChild(d.row));
+        tbody.appendChild(frag);
       }
-      return cmp !== 0 ? cmp * dir : a.i - b.i;
-    });
+    }
 
-    // Re-append in sorted order.
-    const frag = document.createDocumentFragment();
-    decorated.forEach((d) => frag.appendChild(d.row));
-    tbody.appendChild(frag);
-  }, [sort, columnInfo]);
+    // Display-only pagination: after any reorder, hide rows outside the current
+    // page (DOM order). Inline style overrides the pre-JS `pgn-initial-hidden`
+    // class. All rows stay in the DOM, so they remain crawlable.
+    if (pageSize && pageSize > 0) {
+      const all = Array.from(tbody.querySelectorAll<HTMLElement>(':scope > tr'));
+      const startI = (Math.max(1, page ?? 1) - 1) * pageSize;
+      all.forEach((r, i) => {
+        r.style.display = i >= startI && i < startI + pageSize ? 'table-row' : 'none';
+      });
+    }
+  }, [sort, columnInfo, page, pageSize, revision]);
 
   // Click handler delegation for the header row.
   useEffect(() => {
