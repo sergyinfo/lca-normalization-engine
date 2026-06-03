@@ -84,10 +84,20 @@ export class LcaSharedStack extends Stack {
       repositoryName: 'lca-analytics-web',
       imageScanOnPush: true,
       removalPolicy: RemovalPolicy.RETAIN,
-      lifecycleRules: [{
-        description: 'Keep the last 10 image tags',
-        maxImageCount: 10,
-      }],
+      lifecycleRules: [
+        // Each image push leaves the previous :latest untagged — drop those fast.
+        {
+          description: 'Expire untagged images after 1 day',
+          tagStatus: ecr.TagStatus.UNTAGGED,
+          maxImageAge: Duration.days(1),
+        },
+        // Keep a few recent tagged builds for rollback; ~160 MB each.
+        {
+          description: 'Keep only the last 5 tagged images',
+          tagStatus: ecr.TagStatus.ANY,
+          maxImageCount: 5,
+        },
+      ],
     });
 
     // ---- Secrets Manager: Anthropic key ----

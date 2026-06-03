@@ -88,7 +88,17 @@ export class LcaServeStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      removalPolicy: RemovalPolicy.RETAIN,
+      // Contents are fully reproducible (sync-static.sh re-uploads from the
+      // build), so don't orphan the bucket on stack delete — auto-empty + drop
+      // it. Avoids the stale-bucket buildup that RETAIN causes on recreate.
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      // Drop superseded hashed assets so old builds' chunks don't accumulate.
+      lifecycleRules: [{
+        id: 'expire-noncurrent-and-old-assets',
+        noncurrentVersionExpiration: Duration.days(7),
+        abortIncompleteMultipartUploadAfter: Duration.days(1),
+      }],
     });
 
     // ---------------------------------------------------------------------
