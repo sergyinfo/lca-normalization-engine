@@ -57,6 +57,11 @@ export class LcaServeStack extends Stack {
       .filter(Boolean);
     const siteUrl = (this.node.tryGetContext('siteUrl') as string | undefined) ?? 'https://h1b.report';
 
+    // Optional shared secret CloudFront injects as the `x-origin-verify` header.
+    // The app middleware 403s any request lacking it, so the public Function URL
+    // can't be reached directly (only via CloudFront). Pass -c originVerifySecret=…
+    const originVerifySecret = this.node.tryGetContext('originVerifySecret') as string | undefined;
+
     if (siteCertificateArn && siteDomains.length === 0) {
       throw new Error('siteCertificateArn provided but siteDomains is empty — set -c siteDomains=dev.h1b.report');
     }
@@ -94,6 +99,7 @@ export class LcaServeStack extends Stack {
         // The lca.db is baked into the image; nothing to wire here for now.
         SITE_URL: siteUrl,
         ADSENSE_CLIENT_ID: '',   // set when you have a real one
+        ...(originVerifySecret ? { ORIGIN_VERIFY_SECRET: originVerifySecret } : {}),
       },
     });
 
@@ -124,7 +130,11 @@ export class LcaServeStack extends Stack {
     staticBucket.grantRead(oai);
 
     // Plain Function URL origin (no OAC) — the URL is public (AuthType NONE).
-    const lambdaOrigin = new origins.FunctionUrlOrigin(fnUrl);
+    // CloudFront stamps the shared secret header so the app can tell its own
+    // traffic apart from direct Function-URL hits.
+    const lambdaOrigin = new origins.FunctionUrlOrigin(fnUrl, {
+      ...(originVerifySecret ? { customHeaders: { 'x-origin-verify': originVerifySecret } } : {}),
+    });
 
     const s3Origin = origins.S3BucketOrigin.withOriginAccessIdentity(staticBucket, {
       originAccessIdentity: oai,
