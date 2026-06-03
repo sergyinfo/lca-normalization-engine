@@ -105,6 +105,22 @@ docker buildx build \
   .
 echo "  ✓ Pushed $ECR_URI:latest"
 
+# Repoint the serving Lambda at the freshly-pushed image. CloudFormation won't
+# do this itself: the function references the image by the :latest TAG, and the
+# tag string is unchanged even though it now resolves to a new digest — so a
+# `cdk deploy` is a no-op for the image. update-function-code resolves :latest
+# to the current digest and updates the function. Skipped gracefully on the very
+# first run (before deploy:serve has created the function).
+if aws lambda get-function --function-name lca-analytics-web --region "$REGION" >/dev/null 2>&1; then
+  echo "  Repointing lca-analytics-web Lambda at the new image..."
+  aws lambda update-function-code --function-name lca-analytics-web \
+    --image-uri "$ECR_URI:latest" --region "$REGION" >/dev/null
+  aws lambda wait function-updated --function-name lca-analytics-web --region "$REGION"
+  echo "  ✓ Lambda updated"
+else
+  echo "  (lca-analytics-web Lambda not found yet — deploy:serve will create it)"
+fi
+
 # ----- 3. Postgres dump (optional — skip for a P2-only serve deploy) -------
 if [[ -n "${SKIP_PG_DUMP:-}" ]]; then
   echo "▶ Step 3: Postgres dump SKIPPED (SKIP_PG_DUMP set)."
