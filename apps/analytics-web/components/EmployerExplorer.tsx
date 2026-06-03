@@ -25,6 +25,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { TableSearch } from '@/components/TableSearch';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt, fmtPct } from '@/lib/format';
 
@@ -193,6 +194,7 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
+          <Pagination current={safePage} total={totalPages} onChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="sponsor" position="top" />
           <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
@@ -257,6 +259,9 @@ export function EmployerExplorer({ rows, years }: EmployerExplorerProps) {
             pageSize={pageSize}
             itemNoun="sponsor"
           />
+          <div className="flex justify-end px-4 py-3 border-t">
+            <TableSearch value={search} onChange={onSearchChange} placeholder="Filter by name or state code…" ariaLabel="Filter sponsors by company name or state code (bottom)" />
+          </div>
         </CardContent>
       </Card>
     </div>

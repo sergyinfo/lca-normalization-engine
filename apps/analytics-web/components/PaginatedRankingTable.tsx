@@ -49,6 +49,15 @@ export function PaginatedRankingTable({
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
+        <Pagination
+          current={safePage}
+          total={totalPages}
+          onChange={goToPage}
+          itemCount={rows.length}
+          pageSize={pageSize}
+          itemNoun={itemNoun}
+          position="top"
+        />
         <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize}>
           <Table>
             <TableHeader>

@@ -27,6 +27,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { TableSearch } from '@/components/TableSearch';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt } from '@/lib/format';
 import { REGIONS, regionOf, type Region } from '@/lib/us-regions';
@@ -327,6 +328,7 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
+          <Pagination current={safePage} total={totalPages} onChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="state" position="top" />
           <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
@@ -396,6 +398,9 @@ export function StateExplorer({ rows, years, yearLabels }: StateExplorerProps) {
             pageSize={pageSize}
             itemNoun="state"
           />
+          <div className="flex justify-end px-4 py-3 border-t">
+            <TableSearch value={search} onChange={onSearchChange} placeholder="Filter states…" ariaLabel="Filter states by code or name (bottom)" />
+          </div>
         </CardContent>
       </Card>
     </div>

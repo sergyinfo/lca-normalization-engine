@@ -21,6 +21,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { TableSearch } from '@/components/TableSearch';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt } from '@/lib/format';
 
@@ -169,6 +170,7 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
+          <Pagination current={safePage} total={totalPages} onChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="sector" position="top" />
           <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
@@ -227,6 +229,9 @@ export function SectorExplorer({ rows, years }: SectorExplorerProps) {
             pageSize={pageSize}
             itemNoun="sector"
           />
+          <div className="flex justify-end px-4 py-3 border-t">
+            <TableSearch value={search} onChange={onSearchChange} placeholder="Filter sectors…" ariaLabel="Filter sectors by NAICS code or label (bottom)" />
+          </div>
         </CardContent>
       </Card>
     </div>

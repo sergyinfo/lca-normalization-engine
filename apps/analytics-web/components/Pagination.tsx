@@ -28,6 +28,9 @@ export interface PaginationProps {
   pageSize: number;
   /** Singular noun ("sponsor"), used as "showing X-Y of Z sponsors". */
   itemNoun?: string;
+  /** Where the control sits relative to the table — flips the divider border.
+   *  'top' (above the table) uses a bottom border; 'bottom' (default) a top one. */
+  position?: 'top' | 'bottom';
 }
 
 /**
@@ -95,7 +98,7 @@ function buildPageList(current: number, total: number): Array<number | 'ellipsis
 }
 
 export function Pagination({
-  current, total, onChange, itemCount, pageSize, itemNoun = 'item',
+  current, total, onChange, itemCount, pageSize, itemNoun = 'item', position = 'bottom',
 }: PaginationProps) {
   const pages = useMemo(() => buildPageList(current, total), [current, total]);
   const navRef = useRef<HTMLElement | null>(null);
@@ -128,7 +131,7 @@ export function Pagination({
     <nav
       ref={navRef}
       aria-label="Pagination"
-      className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t bg-card/50"
+      className={`flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-card/50 ${position === 'top' ? 'border-b' : 'border-t'}`}
     >
       <span className="text-xs text-muted-foreground">
         Showing <span className="font-medium tabular-nums">{start.toLocaleString()}-{end.toLocaleString()}</span>

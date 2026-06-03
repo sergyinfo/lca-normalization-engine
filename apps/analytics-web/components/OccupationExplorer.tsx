@@ -21,6 +21,7 @@ import { BiggestMoversChart, type MoverRow } from '@/components/charts/BiggestMo
 import { EntityKpiStrip, type EntityKpiData } from '@/components/EntityKpiStrip';
 import { SortableTable } from '@/components/SortableTable';
 import { Pagination, usePagination } from '@/components/Pagination';
+import { TableSearch } from '@/components/TableSearch';
 import { PageMinimap } from '@/components/PageMinimap';
 import { fmt, fmtUsd } from '@/lib/format';
 
@@ -182,6 +183,7 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
           </label>
         </CardHeader>
         <CardContent className="px-0 pb-0">
+          <Pagination current={safePage} total={totalPages} onChange={goToPage} itemCount={tableRows.length} pageSize={pageSize} itemNoun="occupation" position="top" />
           <SortableTable initialSort={{ key: 'rank', dir: 'asc' }} page={safePage} pageSize={pageSize} revision={tableRows}>
             <Table>
               <TableHeader>
@@ -240,6 +242,9 @@ export function OccupationExplorer({ rows, years }: OccupationExplorerProps) {
             pageSize={pageSize}
             itemNoun="occupation"
           />
+          <div className="flex justify-end px-4 py-3 border-t">
+            <TableSearch value={search} onChange={onSearchChange} placeholder="Filter by SOC code or title…" ariaLabel="Filter occupations by SOC code or title (bottom)" />
+          </div>
         </CardContent>
       </Card>
     </div>
