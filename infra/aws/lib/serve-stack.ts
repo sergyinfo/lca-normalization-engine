@@ -62,6 +62,14 @@ export class LcaServeStack extends Stack {
     // can't be reached directly (only via CloudFront). Pass -c originVerifySecret=…
     const originVerifySecret = this.node.tryGetContext('originVerifySecret') as string | undefined;
 
+    // Hosts that SHOULD be indexed by search engines (i.e. production). Any
+    // served host NOT in this list gets an `X-Robots-Tag: noindex, nofollow`
+    // response header, so dev/staging never competes with prod. Empty by
+    // default ⇒ everything is noindex; set at prod promotion:
+    //   -c indexableHosts=h1b.report,www.h1b.report
+    const indexableHosts = ((this.node.tryGetContext('indexableHosts') as string | undefined) ?? '')
+      .split(',').map((d) => d.trim()).filter(Boolean);
+
     if (siteCertificateArn && siteDomains.length === 0) {
       throw new Error('siteCertificateArn provided but siteDomains is empty — set -c siteDomains=dev.h1b.report');
     }
@@ -189,6 +197,31 @@ export class LcaServeStack extends Stack {
       ? [{ function: canonicalRedirectFn, eventType: cf.FunctionEventType.VIEWER_REQUEST }]
       : undefined;
 
+    // noindex non-production hosts (viewer-response). Runs only for requests
+    // that passed the canonical redirect (i.e. an allowed host); stamps a
+    // noindex header unless the host is explicitly indexable.
+    const noindexFn = siteDomains.length > 0
+      ? new cf.Function(this, 'NoindexNonProd', {
+          comment: 'Add X-Robots-Tag: noindex on non-production hosts so dev/staging does not compete with prod',
+          code: cf.FunctionCode.fromInline([
+            'function handler(event){',
+            '  var request=event.request;var response=event.response;',
+            '  var host=request.headers.host?request.headers.host.value:"";',
+            `  var indexable=${JSON.stringify(indexableHosts)};`,
+            '  for(var i=0;i<indexable.length;i++){if(host===indexable[i]){return response;}}',
+            '  response.headers["x-robots-tag"]={value:"noindex, nofollow"};',
+            '  return response;',
+            '}',
+          ].join('\n')),
+        })
+      : undefined;
+
+    // Default behavior runs both: canonical redirect (request) + noindex (response).
+    const defaultFnAssoc = [
+      ...(canonicalFnAssoc ?? []),
+      ...(noindexFn ? [{ function: noindexFn, eventType: cf.FunctionEventType.VIEWER_RESPONSE }] : []),
+    ];
+
     const distribution = new cf.Distribution(this, 'Distribution', {
       // Custom domain wiring is optional — only attached when context is set.
       ...(siteCert ? { domainNames: siteDomains, certificate: siteCert } : {}),
@@ -200,7 +233,7 @@ export class LcaServeStack extends Stack {
         viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         originRequestPolicy: lambdaOriginRequestPolicy,
         responseHeadersPolicy: securityHeaders,
-        functionAssociations: canonicalFnAssoc,
+        functionAssociations: defaultFnAssoc.length ? defaultFnAssoc : undefined,
       },
       additionalBehaviors: {
         // Hashed JS/CSS — cache forever
