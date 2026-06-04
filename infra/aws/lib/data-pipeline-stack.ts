@@ -1,29 +1,28 @@
 /**
- * Burst-on-demand data pipeline.
+ * Burst-on-demand data pipeline (human-gated release).
  *
- * Flow when DOL publishes a new quarterly release:
+ * DOL's WAF blocks AWS IP ranges, so release detection + download run OFF-AWS:
+ * the PHP cron in infra/php scrapes DOL, uploads a new LCA Disclosure file to
+ * the S3 inbox (s3://<scratch>/incoming/), and fires the `lca.manual/build.run`
+ * EventBridge event. From there:
  *
- *   EventBridge (every 6h)
- *     ─► Lambda DOL-checker (compares ETag/hash of DOL releases page)
- *        ─► On change → Step Functions state machine:
- *           1. Start EC2 instance from the burst launch template
- *           2. cloud-init pulls postgres+ingest containers,
- *              restores PG snapshot from S3, ingests new XLSX,
- *              refreshes views, runs build:sqlite + build:summaries,
- *              uploads lca.db to S3, snapshots PG back to S3
- *           3. Wait for instance to self-terminate
- *           4. Notify SNS topic on completion / failure
+ *   ManualRunRule ─► Step Functions:
+ *     CheckBurstRunning → AlreadyRunning? (single-flight)
+ *       └─ else StartBurstEc2 (Graviton/arm64):
+ *            sync the S3 inbox → (empty? notify + self-terminate, cheap)
+ *            restore PG snapshot → ingest (harvester LOCAL mode, supersede)
+ *            → NLP normalise → build candidate lca.db → dev.h1b.report preview
+ *            → operator-ui at operator.h1b.report → SNS "ready for review"
+ *       operator: Promote (ship to prod) / Rebuild preview / Shut down
  *
- * Concurrency: a singleton state machine — if a run is already in flight,
- * subsequent triggers are rejected. Quarterly cadence makes contention
- * unlikely, but the guard is there.
+ * Single-flight + the inline 36h watchdog cap cost; the on-box failure trap
+ * SNS-notifies and leaves the box for debugging.
  */
 
 import { Stack, StackProps, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
@@ -31,13 +30,8 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
-import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { LcaSharedStack } from './shared-stack.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface DataPipelineStackProps extends StackProps {
   shared: LcaSharedStack;
@@ -312,29 +306,52 @@ export class LcaDataPipelineStack extends Stack {
       `# A stable id for this review cycle — used for the candidate S3 key + logs.`,
       `RELEASE=$(date -u +%Y%m%d-%H%M%S)`,
       ``,
-      `# Where the harvester downloads files + the container path the ingestor sees.`,
-      `# Exported BEFORE 'compose up' so the ingestion-worker mounts the right dir.`,
+      `# Where files live + the container path the ingestor sees. Exported BEFORE`,
+      `# 'compose up' so the ingestion-worker mounts the right dir.`,
       `export LOCAL_FILES_DIR=/opt/lca/data/incoming CONTAINER_MOUNT_DIR=/data`,
       `mkdir -p $LOCAL_FILES_DIR`,
       ``,
-      `# Start Postgres + Redis, then the ingest/NLP workers (compose SERVICE`,
-      `# names 'db'/'redis'/'ingestion-worker'/'nlp-worker'). The nlp-worker image`,
-      `# build pulls torch, so this takes a few minutes.`,
+      `# ----- Pull new DOL files from the S3 inbox -----`,
+      `# DOL's WAF blocks AWS, so the release check + download run OFF-AWS (the PHP`,
+      `# cron in infra/php) and land here: s3://<scratch>/incoming/. Sync them; the`,
+      `# harvester (LOCAL mode) applies the same scope/dedup/supersede logic.`,
+      `INBOX="s3://${shared.ingestScratchBucket.bucketName}/incoming"`,
+      `aws s3 sync "$INBOX/" "$LOCAL_FILES_DIR/" --exclude '*' --include '*.xlsx' --region $REGION`,
+      `FILE_COUNT=$(ls "$LOCAL_FILES_DIR"/*.xlsx 2>/dev/null | wc -l)`,
+      `echo "inbox xlsx files: $FILE_COUNT"`,
+      ``,
+      `# Cheap early exit BEFORE the (~40 min) PG restore: an empty inbox means`,
+      `# nothing to do (e.g. a manual trigger with no upload). ~1-min run.`,
+      `if [ "$FILE_COUNT" -eq 0 ]; then`,
+      `  aws sns publish --region $REGION --topic-arn ${notifyTopic.topicArn} \\`,
+      `    --subject "[LCA] no new files in inbox ($RELEASE)" \\`,
+      `    --message "S3 inbox empty — nothing to ingest. Terminating the review box."`,
+      `  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID`,
+      `  exit 0`,
+      `fi`,
+      ``,
+      `# Start Postgres + Redis, restore the snapshot, then the ingest/NLP workers`,
+      `# (compose SERVICE names). The nlp-worker image build pulls torch (~minutes).`,
       `docker compose up -d db redis`,
       `until docker compose exec -T db pg_isready -U lca_user; do sleep 2; done`,
-      ``,
-      `# Restore the PG snapshot (piped INTO the db container — no host PGPASSWORD).`,
       `if [ -f /tmp/latest.pgdump ]; then`,
       `  docker compose exec -T db pg_restore --no-owner --no-acl --clean --if-exists \\`,
       `    -U lca_user -d lca_db < /tmp/latest.pgdump`,
       `fi`,
       `docker compose up -d ingestion-worker nlp-worker`,
       ``,
-      `# ----- Harvest the latest DOL release (scoped) -> download -> ingest -----`,
-      `# Pulls ONLY in-scope LCA Disclosure files (year >= floor) into`,
-      `# LOCAL_FILES_DIR (mounted into the ingestion-worker at /data) and enqueues`,
-      `# ingest jobs. Errors are NOT swallowed.`,
-      `HARVEST_OUT=$(HARVEST_ONCE=1 HARVEST_START_YEAR=\${HARVEST_START_YEAR:-2020} \\`,
+      `# Helper: archive processed inbox files so a later burst won't re-ingest them.`,
+      `archive_inbox() {`,
+      `  for f in "$LOCAL_FILES_DIR"/*.xlsx; do`,
+      `    [ -e "$f" ] || continue`,
+      `    n=$(basename "$f")`,
+      `    aws s3 mv "$INBOX/$n" "$INBOX/processed/$RELEASE/$n" --region $REGION || true`,
+      `  done`,
+      `}`,
+      ``,
+      `# ----- Ingest the inbox files (LOCAL mode: no DOL scrape) -----`,
+      `HARVEST_OUT=$(HARVEST_ONCE=1 HARVEST_LOCAL_DIR=$LOCAL_FILES_DIR \\`,
+      `  HARVEST_START_YEAR=\${HARVEST_START_YEAR:-2020} \\`,
       `  DATABASE_URL=postgresql://lca_user:lca_pass@localhost:5432/lca_db \\`,
       `  REDIS_URL=redis://localhost:6379 \\`,
       `  pnpm --silent --filter harvester harvest:once 2>&1)`,
@@ -342,13 +359,13 @@ export class LcaDataPipelineStack extends Stack {
       `SUMMARY_JSON=$(echo "$HARVEST_OUT" | grep -oE 'HARVEST_SUMMARY .*' | tail -1 | sed 's/HARVEST_SUMMARY //')`,
       `ENQUEUED=$(echo "$SUMMARY_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("enqueued",0))' 2>/dev/null || echo 0)`,
       ``,
-      `# Early exit: an unrelated DOL page change (H-2A/PERM/...) yields zero new`,
-      `# LCA files — don't stand up the review env; notify + self-terminate cheaply.`,
+      `# Inbox files were all already processed (nothing new) — archive + exit.`,
       `if [ "\${ENQUEUED:-0}" = "0" ]; then`,
-      `  aws sns publish --topic-arn ${notifyTopic.topicArn} \\`,
-      `    --subject "[LCA] no new LCA data ($RELEASE)" \\`,
-      `    --message "Harvest found no new in-scope LCA files. Summary: \${SUMMARY_JSON:-none}. Terminating the review box."`,
-      `  aws ec2 terminate-instances --instance-ids $INSTANCE_ID`,
+      `  archive_inbox`,
+      `  aws sns publish --region $REGION --topic-arn ${notifyTopic.topicArn} \\`,
+      `    --subject "[LCA] inbox had no new LCA data ($RELEASE)" \\`,
+      `    --message "Inbox files were already processed. Summary: \${SUMMARY_JSON:-none}. Terminating."`,
+      `  aws ec2 terminate-instances --region $REGION --instance-ids $INSTANCE_ID`,
       `  exit 0`,
       `fi`,
       ``,
@@ -375,6 +392,9 @@ export class LcaDataPipelineStack extends Stack {
       `  if [ "$DEPTH" = "0" ]; then EMPTY=$((EMPTY+1)); else EMPTY=0; fi`,
       `done`,
       `echo "queues drained for $RELEASE"`,
+      ``,
+      `# Ingested into PG — archive the inbox files out of the way.`,
+      `archive_inbox`,
       ``,
       `# Refresh the analytics matviews from the freshly normalised PG.`,
       `pnpm --filter @lca/cli analytics:refresh-views`,
@@ -507,32 +527,11 @@ export class LcaDataPipelineStack extends Stack {
       'LaunchTemplateData.MetadataOptions.HttpPutResponseHopLimit', 2,
     );
 
-    // ---------------------------------------------------------------------
-    // DOL-checker Lambda. Compares the DOL releases page's ETag against
-    // the last-known value (stored in SSM Parameter Store).
-    // ---------------------------------------------------------------------
-    const lastEtagParam = new ssm.StringParameter(this, 'LastDolEtag', {
-      parameterName: '/lca/last-dol-etag',
-      stringValue: 'none',
-      description: 'ETag of the DOL releases page at last check.',
-    });
-
-    const dolChecker = new lambda.Function(this, 'DolChecker', {
-      runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '..', 'lambda', 'dol-checker')),
-      timeout: Duration.seconds(30),
-      memorySize: 256,
-      logRetention: logs.RetentionDays.ONE_MONTH,
-      environment: {
-        DOL_URL:            'https://www.dol.gov/agencies/eta/foreign-labor/performance',
-        LAST_ETAG_PARAM:    lastEtagParam.parameterName, // now holds the "YYYY-Q" high-water mark
-        STATE_MACHINE_ARN:  '', // wired below once stateMachine is constructed
-        HARVEST_START_YEAR: String(process.env.HARVEST_START_YEAR ?? 2020),
-      },
-    });
-    lastEtagParam.grantRead(dolChecker);
-    lastEtagParam.grantWrite(dolChecker);
+    // NOTE: the DOL-checker Lambda + daily schedule were REMOVED — DOL's WAF
+    // blocks AWS IP ranges (403 to Lambda + EC2), so no AWS-resident checker can
+    // see new releases. Detection now runs OFF-AWS via the PHP cron (infra/php),
+    // which uploads the new file to the S3 inbox and fires the ManualRunRule
+    // (lca.manual / build.run) below. See infra/php/dol-harvest.php.
 
     // ---------------------------------------------------------------------
     // Step Functions state machine that orchestrates the build.
@@ -638,24 +637,9 @@ export class LcaDataPipelineStack extends Stack {
       resources: ['*'],
     }));
 
-    // Wire the state machine ARN into the DOL checker now that it exists.
-    dolChecker.addEnvironment('STATE_MACHINE_ARN', stateMachine.stateMachineArn);
-    stateMachine.grantStartExecution(dolChecker);
-
-    // ---------------------------------------------------------------------
-    // EventBridge — schedule the checker once a day. DOL publishes quarterly,
-    // so daily is ample and keeps Lambda invocations (and any false-positive
-    // notifications) minimal. On a detected change the checker starts the
-    // Step Functions pipeline, which publishes to the SNS topic above —
-    // subscribe your email so "new period" actually reaches you.
-    // ---------------------------------------------------------------------
-    new events.Rule(this, 'DolCheckSchedule', {
-      schedule: events.Schedule.rate(Duration.days(1)),
-      targets: [new targets.LambdaFunction(dolChecker)],
-      description: 'Daily poll of DOL for new H-1B disclosure releases.',
-    });
-
-    // Allow operator-triggered runs too.
+    // The burst is triggered by the off-AWS PHP cron (it uploads a new LCA file
+    // to the S3 inbox, then fires this event). The single-flight guard in the
+    // state machine prevents a second box if one is already up.
     new events.Rule(this, 'ManualRunRule', {
       eventPattern: {
         source: ['lca.manual'],
