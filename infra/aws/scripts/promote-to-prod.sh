@@ -48,3 +48,17 @@ if aws lambda get-function --function-name "$PROD_FN" --region "$REGION" >/dev/n
 else
   echo "  ($PROD_FN not found — deploy LcaServeProdStack first)"
 fi
+
+# 3. Bust the prod edge cache. SSG pages are cached ~forever at CloudFront
+#    (Next sends s-maxage=31536000), so a content deploy MUST invalidate or the
+#    edge keeps serving the old build.
+DIST=$(aws cloudformation describe-stacks --stack-name LcaServeProdStack --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text 2>/dev/null)
+if [[ -n "$DIST" && "$DIST" != "None" ]]; then
+  echo "▶ Invalidating prod edge cache ($DIST)"
+  aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*' \
+    --region "$REGION" --query 'Invalidation.Id' --output text >/dev/null
+  echo "  ✓ invalidation submitted (propagates in ~1-2 min)"
+else
+  echo "  (LcaServeProdStack DistributionId output not found — skipping invalidation)"
+fi

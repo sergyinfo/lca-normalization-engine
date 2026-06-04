@@ -226,13 +226,33 @@ export class LcaServeStack extends Stack {
       defaultBehavior: {
         origin: lambdaOrigin,
         allowedMethods: cf.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cf.CachePolicy.CACHING_DISABLED,   // dynamic routes
+        // Cache at the edge, honouring the origin's Cache-Control. Next sends
+        // `s-maxage=31536000` on prerendered (SSG) pages → cached ~forever (an
+        // invalidation on each content deploy busts it), and `no-store` on
+        // request-dependent routes (/search, dynamic renders) → never cached.
+        // So static pages serve from the edge (no Lambda render, no cold start);
+        // genuinely-dynamic routes still hit the Lambda. The edge Functions
+        // (canonical redirect / noindex) run on every viewer request/response,
+        // cache hit or miss, so they keep working on cached pages.
+        cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
         viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         originRequestPolicy: lambdaOriginRequestPolicy,
         responseHeadersPolicy: securityHeaders,
         functionAssociations: defaultFnAssoc.length ? defaultFnAssoc : undefined,
       },
       additionalBehaviors: {
+        // The data API + its docs (/api/*) — auth'd / per-request; never cache at
+        // the edge (defence-in-depth on top of its no-store headers). POST etc. pass
+        // through. (Caching /api/docs would be a negligible win; safety wins here.)
+        '/api/*': {
+          origin: lambdaOrigin,
+          allowedMethods: cf.AllowedMethods.ALLOW_ALL,
+          cachePolicy: cf.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: lambdaOriginRequestPolicy,
+          viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          responseHeadersPolicy: securityHeaders,
+          functionAssociations: defaultFnAssoc.length ? defaultFnAssoc : undefined,
+        },
         // Hashed JS/CSS/media — served by the Lambda (the standalone server holds
         // the .next/static that MATCHES the served HTML) and cached forever by
         // CloudFront. A separate S3 origin was a different build whose app-chunk
@@ -266,6 +286,10 @@ export class LcaServeStack extends Stack {
     new CfnOutput(this, 'DistributionDomainName', {
       value: distribution.distributionDomainName,
       description: 'CloudFront hostname. Point the Cloudflare dev/apex CNAME here.',
+    });
+    new CfnOutput(this, 'DistributionId', {
+      value: distribution.distributionId,
+      description: 'CloudFront distribution ID — deploy scripts invalidate this to bust the edge cache on a content deploy.',
     });
   }
 }

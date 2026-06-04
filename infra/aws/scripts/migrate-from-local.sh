@@ -117,6 +117,14 @@ if aws lambda get-function --function-name lca-analytics-web --region "$REGION" 
     --image-uri "$ECR_URI:latest" --region "$REGION" >/dev/null
   aws lambda wait function-updated --function-name lca-analytics-web --region "$REGION"
   echo "  ✓ Lambda updated"
+  # Bust the DEV edge cache — SSG pages are cached ~forever at CloudFront, so a
+  # new build must invalidate or the edge keeps serving the old one.
+  DEV_DIST=$(aws cloudformation describe-stacks --stack-name LcaServeStack --region "$REGION" \
+    --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text 2>/dev/null)
+  if [[ -n "$DEV_DIST" && "$DEV_DIST" != "None" ]]; then
+    aws cloudfront create-invalidation --distribution-id "$DEV_DIST" --paths '/*' \
+      --region "$REGION" --query 'Invalidation.Id' --output text >/dev/null && echo "  ✓ dev edge cache invalidated"
+  fi
 else
   echo "  (lca-analytics-web Lambda not found yet — deploy:serve will create it)"
 fi
