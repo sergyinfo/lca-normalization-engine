@@ -207,7 +207,7 @@ export class LcaDataPipelineStack extends Stack {
     // A-record → public IP). Allow HTTPS (+ HTTP for the ACME/redirect path).
     // The UI itself is password-gated; only the login page is exposed.
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'operator UI (HTTPS via Caddy)');
-    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP → HTTPS redirect');
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP for ACME and HTTPS redirect');
 
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
