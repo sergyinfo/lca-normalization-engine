@@ -55,6 +55,10 @@ const FILE_PATTERN = new RegExp(
   'i',
 );
 const RUN_ONCE = /^(1|true|yes)$/i.test(process.env.HARVEST_ONCE ?? '');
+// Re-ingest (supersede) a year that already has data but was never recorded in
+// harvested_files (e.g. the historical 2020-2025 backfill done via cli-tool).
+// OFF by default so the first production harvest never clobbers historical data.
+const SUPERSEDE_UNTRACKED = /^(1|true|yes)$/i.test(process.env.HARVEST_SUPERSEDE_UNTRACKED ?? '');
 const LOCAL_FILES_DIR = process.env.LOCAL_FILES_DIR ?? './data';
 const CONTAINER_MOUNT_DIR = process.env.CONTAINER_MOUNT_DIR ?? '/data';
 // The DOL page rejects non-browser agents (returns a tiny stub), so present one.
@@ -76,9 +80,12 @@ async function ensureHarvestedFilesTable() {
       url         TEXT PRIMARY KEY,
       file_name   TEXT NOT NULL,
       filing_year SMALLINT,
+      quarter     SMALLINT,
       enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  // Backfill the column on pre-existing tables.
+  await pool.query('ALTER TABLE harvested_files ADD COLUMN IF NOT EXISTS quarter SMALLINT;');
 }
 
 async function isAlreadyHarvested(url) {
@@ -89,12 +96,30 @@ async function isAlreadyHarvested(url) {
   return rowCount > 0;
 }
 
-async function markHarvested(url, fileName, filingYear) {
+async function markHarvested(url, fileName, filingYear, quarter) {
   await pool.query(
-    `INSERT INTO harvested_files (url, file_name, filing_year)
-     VALUES ($1, $2, $3) ON CONFLICT (url) DO NOTHING`,
-    [url, fileName, filingYear ?? null],
+    `INSERT INTO harvested_files (url, file_name, filing_year, quarter)
+     VALUES ($1, $2, $3, $4) ON CONFLICT (url) DO NOTHING`,
+    [url, fileName, filingYear ?? null, quarter ?? null],
   );
+}
+
+/** Does lca_records already hold any rows for this fiscal year? */
+async function yearHasData(year) {
+  const { rowCount } = await pool.query(
+    'SELECT 1 FROM lca_records WHERE filing_year = $1 LIMIT 1',
+    [year],
+  );
+  return rowCount > 0;
+}
+
+/** Highest quarter this harvester has already ingested for a year (or null). */
+async function lastHarvestedQuarter(year) {
+  const { rows } = await pool.query(
+    'SELECT max(quarter) AS q FROM harvested_files WHERE filing_year = $1',
+    [year],
+  );
+  return rows[0]?.q ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +162,12 @@ async function scrapeAllXlsxLinks() {
   return links;
 }
 
+/** Quarter from a disclosure filename; annual files (no _Q) = 4 (full year). */
+function parseQuarter(fileName) {
+  const qm = fileName.match(/_Q([1-4])/i);
+  return qm ? Number(qm[1]) : 4;
+}
+
 /** Keep only LCA Disclosure files at/above the year floor. */
 function scopeLinks(links) {
   const inScope = [];
@@ -145,9 +176,23 @@ function scopeLinks(links) {
     if (!m) continue;                       // wrong program / not a disclosure file
     const filingYear = m[1] ? Number(m[1]) : null;
     if (filingYear == null || filingYear < START_YEAR) continue;
-    inScope.push({ url, fileName, filingYear });
+    inScope.push({ url, fileName, filingYear, quarter: parseQuarter(fileName) });
   }
   return inScope;
+}
+
+/**
+ * The DOL quarterly files are CUMULATIVE within a fiscal year (Q4 ⊃ Q3 ⊃ … ⊃ Q1;
+ * an annual file = the full year). Within one poll, keep only the most-complete
+ * file per fiscal year so we never ingest two overlapping quarters of the same FY.
+ */
+function dedupePerYear(inScope) {
+  const best = new Map();
+  for (const f of inScope) {
+    const cur = best.get(f.filingYear);
+    if (!cur || f.quarter > cur.quarter) best.set(f.filingYear, f);
+  }
+  return [...best.values()];
 }
 
 /** Stream a remote file to LOCAL_FILES_DIR. Returns the local path. */
@@ -169,27 +214,47 @@ async function downloadFile(url, fileName) {
 /** @returns {Promise<{linksTotal:number, inScope:number, downloaded:number, enqueued:number, skippedExisting:number, errors:number}>} */
 async function poll() {
   log.info({ startYear: START_YEAR, pattern: FILE_PATTERN.source }, 'harvester.poll.start');
-  const summary = { linksTotal: 0, inScope: 0, downloaded: 0, enqueued: 0, skippedExisting: 0, errors: 0 };
+  const summary = {
+    linksTotal: 0, inScope: 0, candidates: 0, downloaded: 0, enqueued: 0,
+    skippedExisting: 0, skippedOlder: 0, skippedUntracked: 0, errors: 0,
+  };
 
   const all = await scrapeAllXlsxLinks();   // throws on blocked/empty page
   summary.linksTotal = all.length;
   const inScope = scopeLinks(all);
   summary.inScope = inScope.length;
+  const candidates = dedupePerYear(inScope);   // one (most-complete) file per FY
+  summary.candidates = candidates.length;
 
-  for (const { url, fileName, filingYear } of inScope) {
+  for (const { url, fileName, filingYear, quarter } of candidates) {
     if (await isAlreadyHarvested(url)) { summary.skippedExisting++; continue; }
+
+    const existing = await yearHasData(filingYear);
+    const lastQ = await lastHarvestedQuarter(filingYear);
+
+    // Year already has data but was never recorded here (historical cli-tool
+    // backfill) — don't clobber it unless explicitly told to.
+    if (existing && lastQ == null && !SUPERSEDE_UNTRACKED) {
+      summary.skippedUntracked++;
+      log.warn({ filingYear, fileName }, 'harvester.skip.untracked_existing');
+      continue;
+    }
+    // Already have this quarter or a newer one for this year.
+    if (lastQ != null && quarter <= lastQ) { summary.skippedOlder++; continue; }
+
+    const supersede = existing;   // replace the year if it already holds data
     try {
       const localPath = await downloadFile(url, fileName);
       summary.downloaded++;
       const containerPath = path.posix.join(CONTAINER_MOUNT_DIR, fileName);
       await ingestQueue.add(
         'ingest',
-        { filePath: containerPath, localPath, sourceFile: fileName, filingYear },
+        { filePath: containerPath, localPath, sourceFile: fileName, filingYear, supersede },
         { attempts: 3, backoff: { type: 'exponential', delay: 30_000 } },
       );
-      await markHarvested(url, fileName, filingYear);
+      await markHarvested(url, fileName, filingYear, quarter);
       summary.enqueued++;
-      log.info({ url, filingYear, containerPath }, 'harvester.enqueued');
+      log.info({ url, filingYear, quarter, supersede, containerPath }, 'harvester.enqueued');
     } catch (err) {
       summary.errors++;
       log.error({ url, err: err.message }, 'harvester.file.error');
