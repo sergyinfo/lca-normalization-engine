@@ -30,6 +30,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as path from 'node:path';
@@ -56,6 +57,13 @@ export class LcaDataPipelineStack extends Stack {
     const notifyTopic = new sns.Topic(this, 'BuildNotifications', {
       displayName: 'LCA build pipeline notifications',
     });
+    // Subscribe the ops email in-code when LCA_OPS_EMAIL is set at synth time
+    // (confirm the subscription from the email AWS sends). Falls back to the
+    // out-of-band `aws sns subscribe` flow if unset.
+    const opsEmail = process.env.LCA_OPS_EMAIL?.trim();
+    if (opsEmail) {
+      notifyTopic.addSubscription(new subs.EmailSubscription(opsEmail));
+    }
 
     // ---------------------------------------------------------------------
     // Pre-create CloudWatch log groups so retention is IaC-managed (not
@@ -113,6 +121,10 @@ export class LcaDataPipelineStack extends Stack {
     shared.pgSnapshotBucket.grantReadWrite(ec2Role);
     shared.llmApiKeySecret.grantRead(ec2Role);
     shared.pgPasswordSecret.grantRead(ec2Role);
+    // Operator-UI + Cloudflare credentials read by the keep-alive review env.
+    shared.operatorPasswordSecret.grantRead(ec2Role);
+    shared.sessionSecret.grantRead(ec2Role);
+    shared.cloudflareTokenSecret.grantRead(ec2Role);
     ec2Role.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     );
@@ -135,14 +147,32 @@ export class LcaDataPipelineStack extends Stack {
       resources: ['*'],
       conditions: { StringEquals: { 'ec2:ResourceTag/BurstWorker': 'true' } },
     }));
-    // Update the serving Lambda with the new image (lambda:UpdateFunctionCode).
+    // Update the serving Lambdas with the new image (lambda:UpdateFunctionCode).
+    // Covers BOTH the dev function (lca-analytics-web, candidate preview) and the
+    // prod function (lca-analytics-web-prod, written by the Promote step).
     ec2Role.addToPolicy(new iam.PolicyStatement({
-      actions: ['lambda:UpdateFunctionCode', 'lambda:GetFunction'],
-      // Scope to the analytics-web function — wildcard here lets the
-      // dependency between stacks stay loose; tighten if your IAM policy
-      // requires resource ARNs.
+      actions: ['lambda:UpdateFunctionCode', 'lambda:GetFunction', 'lambda:GetFunctionConfiguration'],
+      // Wildcard keeps the cross-stack dependency loose; tighten to the two
+      // function ARNs if your IAM policy requires it.
       resources: ['*'],
     }));
+    // Bust the dev + prod CloudFront edge caches after a content deploy.
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      actions: ['cloudfront:CreateInvalidation'],
+      resources: ['*'],
+    }));
+    // Resolve the serve stacks' DistributionId outputs (for cache invalidation).
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      actions: ['cloudformation:DescribeStacks'],
+      resources: ['*'],
+    }));
+    // The operator UI publishes promote/teardown events to the default bus.
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      actions: ['events:PutEvents'],
+      resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+    }));
+    // The user-data + promote/teardown scripts publish progress to the topic.
+    notifyTopic.grantPublish(ec2Role);
 
     // ---------------------------------------------------------------------
     // GitHub token — the burst EC2 clones the (private) repo to run the
@@ -170,9 +200,14 @@ export class LcaDataPipelineStack extends Stack {
     // ---------------------------------------------------------------------
     const sg = new ec2.SecurityGroup(this, 'BurstSg', {
       vpc,
-      description: 'Burst EC2: outbound only.',
+      description: 'Burst EC2: outbound + inbound 80/443 for the operator site.',
       allowAllOutbound: true,
     });
+    // operator.h1b.report is served directly off this box by Caddy (grey-cloud
+    // A-record → public IP). Allow HTTPS (+ HTTP for the ACME/redirect path).
+    // The UI itself is password-gated; only the login page is exposed.
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'operator UI (HTTPS via Caddy)');
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP → HTTPS redirect');
 
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
@@ -252,33 +287,44 @@ export class LcaDataPipelineStack extends Stack {
       `# Pull the latest PG snapshot if one exists, else start fresh`,
       `aws s3 cp s3://${shared.pgSnapshotBucket.bucketName}/latest.pgdump /tmp/latest.pgdump || true`,
       ``,
-      `# Start Postgres via docker compose`,
-      `docker compose up -d lca_db lca_redis`,
-      `until docker compose exec -T lca_db pg_isready -U lca_user; do sleep 2; done`,
+      `# Start Postgres + Redis via docker compose (these are the compose SERVICE`,
+      `# names — 'db' / 'redis' — not the container_names lca_db / lca_redis).`,
+      `docker compose up -d db redis`,
+      `until docker compose exec -T db pg_isready -U lca_user; do sleep 2; done`,
       ``,
-      `# Restore (if dump present) and refresh views`,
+      `# Restore (if a snapshot exists). Piped INTO the db container so no`,
+      `# host-side PGPASSWORD is required.`,
       `if [ -f /tmp/latest.pgdump ]; then`,
-      `  pg_restore --no-owner --no-acl --clean --if-exists \\`,
-      `    -h localhost -U lca_user -d lca_db /tmp/latest.pgdump`,
+      `  docker compose exec -T db pg_restore --no-owner --no-acl --clean --if-exists \\`,
+      `    -U lca_user -d lca_db < /tmp/latest.pgdump`,
       `fi`,
       ``,
-      `# Run the ingest + normalise pipeline against new DOL files`,
-      `# (placeholder — adapt to your harvester/ingestor invocation)`,
+      `# Run the ingest + normalise pipeline against new DOL files.`,
+      `# TODO(Phase 6): replace this placeholder with the real harvester/ingestor`,
+      `# invocation once DOL file delivery to the burst box is wired. The NLP`,
+      `# normalise step is what populates requires_review / quarantine /`,
+      `# unresolved_employers — the queues the operator then reviews.`,
       `node apps/cli-tool/index.js seed --files-dir /tmp/new-xlsx || true`,
       `pnpm --filter @lca/cli analytics:refresh-views`,
       ``,
-      `# Build the SQLite snapshot + summaries`,
+      `# A stable id for this review cycle — used for the candidate S3 key.`,
+      `RELEASE=$(date -u +%Y%m%d-%H%M%S)`,
+      ``,
+      `# Build the SQLite snapshot + summaries from the (freshly normalised) PG.`,
       `pnpm --filter analytics-web build:sqlite`,
       `LLM_API_KEY=$(aws secretsmanager get-secret-value \\`,
       `  --secret-id ${shared.llmApiKeySecret.secretName} --query SecretString --output text) \\`,
       `LLM_PROVIDER=anthropic \\`,
       `  pnpm --filter analytics-web build:summaries`,
       ``,
-      `# Upload lca.db to the versioned bucket`,
+      `# Upload the CANDIDATE lca.db (a staging key) — NEVER the prod key.`,
+      `# The prod key (lca.db) is only written by the Promote step, so a review`,
+      `# cycle can never clobber live prod data.`,
       `aws s3 cp apps/analytics-web/data/lca.db \\`,
-      `  s3://${shared.lcaDbBucket.bucketName}/lca.db`,
+      `  s3://${shared.lcaDbBucket.bucketName}/candidates/$RELEASE/lca.db`,
       ``,
-      `# Build + push the Lambda container image`,
+      `# Build + push the Lambda image (native arm64 — this is a Graviton box,`,
+      `# matching the arm64 serving Lambda).`,
       `ECR_URI=$(aws ecr describe-repositories --repository-names ${shared.lambdaImageRepo.repositoryName} \\`,
       `  --query 'repositories[0].repositoryUri' --output text)`,
       `aws ecr get-login-password --region $REGION | \\`,
@@ -286,33 +332,95 @@ export class LcaDataPipelineStack extends Stack {
       `docker build -f apps/analytics-web/Dockerfile.lambda -t "$ECR_URI:latest" .`,
       `docker push "$ECR_URI:latest"`,
       ``,
-      `# Update the serving Lambda to the new image`,
+      `# Point the DEV serving Lambda at the candidate image → dev.h1b.report`,
+      `# preview. Prod is untouched until Promote.`,
       `aws lambda update-function-code \\`,
       `  --function-name lca-analytics-web \\`,
       `  --image-uri "$ECR_URI:latest"`,
+      `aws lambda wait function-updated --function-name lca-analytics-web || true`,
+      `DEV_DIST=$(aws cloudformation describe-stacks --stack-name LcaServeStack \\`,
+      `  --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text 2>/dev/null || true)`,
+      `if [ -n "$DEV_DIST" ] && [ "$DEV_DIST" != "None" ]; then`,
+      `  aws cloudfront create-invalidation --distribution-id "$DEV_DIST" --paths '/*' || true`,
+      `fi`,
       ``,
-      `# (Static assets ship inside the Lambda image — the update-function-code`,
-      `#  above repoints the function at them; no separate S3 sync needed.)`,
-      ``,
-      `# Snapshot Postgres back to S3 for the next run`,
-      `docker compose exec -T lca_db pg_dump --format=custom -U lca_user -d lca_db \\`,
+      `# Snapshot Postgres back to S3 (so the next run restores fast).`,
+      `docker compose exec -T db pg_dump --format=custom -U lca_user -d lca_db \\`,
       `  > /tmp/latest.pgdump`,
       `aws s3 cp /tmp/latest.pgdump s3://${shared.pgSnapshotBucket.bucketName}/latest.pgdump`,
       ``,
-      `# Notify on success and self-terminate`,
+      `# ----- Bring up the operator review UI against the local Postgres -----`,
+      `export OPERATOR_PASSWORD=$(aws secretsmanager get-secret-value \\`,
+      `  --secret-id ${shared.operatorPasswordSecret.secretName} --query SecretString --output text)`,
+      `export SESSION_SECRET=$(aws secretsmanager get-secret-value \\`,
+      `  --secret-id ${shared.sessionSecret.secretName} --query SecretString --output text)`,
+      `export INSTANCE_ID AWS_REGION=$REGION RELEASE`,
+      `docker compose up -d operator-ui`,
+      `unset OPERATOR_PASSWORD SESSION_SECRET`,
+      ``,
+      `# ----- TLS + DNS for operator.h1b.report (Caddy + Let's Encrypt DNS-01) -----`,
+      `CF_TOKEN=$(aws secretsmanager get-secret-value \\`,
+      `  --secret-id ${shared.cloudflareTokenSecret.secretName} --query SecretString --output text)`,
+      `PUBLIC_IP=$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4)`,
+      `# Caddy binary with the Cloudflare DNS module baked in (arm64).`,
+      `curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/cloudflare" \\`,
+      `  -o /usr/local/bin/caddy && chmod +x /usr/local/bin/caddy`,
+      `mkdir -p /etc/caddy`,
+      `cat > /etc/caddy/Caddyfile <<'CADDY'`,
+      `operator.h1b.report {`,
+      `  reverse_proxy localhost:8080`,
+      `  tls {`,
+      `    dns cloudflare {env.CLOUDFLARE_API_TOKEN}`,
+      `  }`,
+      `}`,
+      `CADDY`,
+      `CLOUDFLARE_API_TOKEN=$CF_TOKEN /usr/local/bin/caddy start --config /etc/caddy/Caddyfile --adapter caddyfile`,
+      ``,
+      `# Upsert the operator.h1b.report A-record → this instance's public IP.`,
+      `ZONE_ID=$(curl -sf -H "Authorization: Bearer $CF_TOKEN" \\`,
+      `  "https://api.cloudflare.com/client/v4/zones?name=h1b.report" \\`,
+      `  | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"][0]["id"])')`,
+      `REC_ID=$(curl -sf -H "Authorization: Bearer $CF_TOKEN" \\`,
+      `  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=operator.h1b.report" \\`,
+      `  | python3 -c 'import sys,json;r=json.load(sys.stdin)["result"];print(r[0]["id"] if r else "")')`,
+      `REC_BODY="{\\"type\\":\\"A\\",\\"name\\":\\"operator.h1b.report\\",\\"content\\":\\"$PUBLIC_IP\\",\\"ttl\\":120,\\"proxied\\":false}"`,
+      `if [ -n "$REC_ID" ]; then`,
+      `  curl -sf -X PUT -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \\`,
+      `    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$REC_ID" -d "$REC_BODY"`,
+      `else`,
+      `  curl -sf -X POST -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \\`,
+      `    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" -d "$REC_BODY"`,
+      `fi`,
+      `unset CF_TOKEN CLOUDFLARE_API_TOKEN`,
+      ``,
+      `# ----- Notify: ready for review. The box stays UP (no self-terminate) -----`,
+      `# Teardown happens on operator command (Shut down button → Teardown Step Fn).`,
       `aws sns publish --topic-arn ${notifyTopic.topicArn} \\`,
-      `  --subject "[LCA] build succeeded" \\`,
-      `  --message "Build $INSTANCE_ID completed, new image deployed."`,
-      `aws ec2 terminate-instances --instance-ids $INSTANCE_ID`,
+      `  --subject "[LCA] review environment ready ($RELEASE)" \\`,
+      `  --message "Release $RELEASE is built and ready for human review.`,
+      ``,
+      `  Operator UI : https://operator.h1b.report`,
+      `  Preview site: https://dev.h1b.report`,
+      ``,
+      `  Log in, walk the Reviews / Quarantine / Unresolved queues, then either`,
+      `  click Promote (ship to prod) or Shut down (terminate this box)."`,
     );
 
     const launchTemplate = new ec2.LaunchTemplate(this, 'BurstLaunchTemplate', {
       launchTemplateName: 'lca-burst',
-      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C6I, ec2.InstanceSize.XLARGE2),
+      // Graviton (arm64) so a plain `docker build` produces an arm64 image that
+      // matches the arm64 serving Lambda — no QEMU cross-build needed. Also
+      // cheaper than the equivalent Intel box.
+      machineImage: ec2.MachineImage.latestAmazonLinux2023({
+        cpuType: ec2.AmazonLinuxCpuType.ARM_64,
+      }),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C7G, ec2.InstanceSize.XLARGE2),
       role: ec2Role,
       securityGroup: sg,
       userData,
+      // IMDSv2 required; hop limit 2 so the operator-ui CONTAINER can reach the
+      // instance metadata service and assume the instance role (to PutEvents).
+      requireImdsv2: true,
       blockDevices: [{
         deviceName: '/dev/xvda',
         volume: ec2.BlockDeviceVolume.ebs(100, {
@@ -322,8 +430,11 @@ export class LcaDataPipelineStack extends Stack {
         }),
       }],
     });
-    // Tag instances so the self-terminate IAM scope matches.
-    launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate;
+    // requireImdsv2 sets HttpTokens=required but leaves the hop limit at 1,
+    // which blocks Docker containers from IMDS. Bump it to 2 via the L1.
+    (launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate).addPropertyOverride(
+      'LaunchTemplateData.MetadataOptions.HttpPutResponseHopLimit', 2,
+    );
 
     // ---------------------------------------------------------------------
     // DOL-checker Lambda. Compares the DOL releases page's ETag against
@@ -438,6 +549,119 @@ export class LcaDataPipelineStack extends Stack {
         detailType: ['build.run'],
       },
       targets: [new targets.SfnStateMachine(stateMachine)],
+    });
+
+    // ---------------------------------------------------------------------
+    // Operator-driven release control. The operator UI (running on the burst
+    // box) publishes EventBridge events; these two state machines react.
+    // The UI itself holds NO prod-deploy IAM — it can only PutEvents. The
+    // actual prod deploy runs on the EC2 (where the corrected Postgres lives)
+    // via SSM RunCommand.
+    //
+    //   lca.operator / promote.run  → PromotePipeline → ssm:SendCommand(ec2-promote.sh)
+    //   lca.operator / teardown.run → TeardownPipeline → ssm:SendCommand(ec2-teardown.sh)
+    //
+    // SendCommand returns once the command is queued; the on-box scripts
+    // publish the authoritative "promoted" / "torn down" SNS message.
+    // ---------------------------------------------------------------------
+    const sendCommand = (id: string, scriptPath: string) =>
+      new tasks.CallAwsService(this, id, {
+        service: 'ssm',
+        action: 'sendCommand',
+        iamResources: ['*'],
+        parameters: {
+          DocumentName: 'AWS-RunShellScript',
+          InstanceIds: sfn.JsonPath.array(sfn.JsonPath.stringAt('$.detail.instanceId')),
+          Parameters: {
+            commands: [
+              'set -euxo pipefail',
+              'cd /opt/lca',
+              'REGION=$(curl -sf http://169.254.169.254/latest/meta-data/placement/region)',
+              `AWS_REGION=$REGION bash ${scriptPath}`,
+            ],
+          },
+          CloudWatchOutputConfig: { CloudWatchOutputEnabled: true },
+        },
+        resultPath: '$.command',
+      });
+
+    const promoteFail = new tasks.SnsPublish(this, 'PromoteDispatchFail', {
+      topic: notifyTopic,
+      subject: '[LCA] promote FAILED to dispatch',
+      message: sfn.TaskInput.fromJsonPathAt('$'),
+    });
+    const promoteOk = new tasks.SnsPublish(this, 'PromoteDispatched', {
+      topic: notifyTopic,
+      subject: '[LCA] promote dispatched',
+      message: sfn.TaskInput.fromText(
+        'Promote-to-prod started on the review box. It will publish the result when done.',
+      ),
+    });
+    const promotePipeline = new sfn.StateMachine(this, 'PromotePipeline', {
+      stateMachineName: 'lca-promote-pipeline',
+      definitionBody: sfn.DefinitionBody.fromChainable(
+        sendCommand('PromoteSendCommand', 'infra/aws/scripts/ec2-promote.sh')
+          .addCatch(promoteFail, { resultPath: '$.error' })
+          .next(promoteOk),
+      ),
+      timeout: Duration.hours(1),
+    });
+
+    const teardownFail = new tasks.SnsPublish(this, 'TeardownDispatchFail', {
+      topic: notifyTopic,
+      subject: '[LCA] teardown FAILED to dispatch',
+      message: sfn.TaskInput.fromJsonPathAt('$'),
+    });
+    const teardownOk = new tasks.SnsPublish(this, 'TeardownDispatched', {
+      topic: notifyTopic,
+      subject: '[LCA] teardown dispatched',
+      message: sfn.TaskInput.fromText(
+        'Teardown started: the review box will remove its DNS record and self-terminate.',
+      ),
+    });
+    const teardownPipeline = new sfn.StateMachine(this, 'TeardownPipeline', {
+      stateMachineName: 'lca-teardown-pipeline',
+      definitionBody: sfn.DefinitionBody.fromChainable(
+        sendCommand('TeardownSendCommand', 'infra/aws/scripts/ec2-teardown.sh')
+          .addCatch(teardownFail, { resultPath: '$.error' })
+          .next(teardownOk),
+      ),
+      timeout: Duration.minutes(15),
+    });
+
+    const previewFail = new tasks.SnsPublish(this, 'PreviewDispatchFail', {
+      topic: notifyTopic,
+      subject: '[LCA] preview rebuild FAILED to dispatch',
+      message: sfn.TaskInput.fromJsonPathAt('$'),
+    });
+    const previewOk = new tasks.SnsPublish(this, 'PreviewDispatched', {
+      topic: notifyTopic,
+      subject: '[LCA] preview rebuild dispatched',
+      message: sfn.TaskInput.fromText(
+        'Rebuilding dev.h1b.report from the edited Postgres; it will publish when ready.',
+      ),
+    });
+    const previewPipeline = new sfn.StateMachine(this, 'RebuildPreviewPipeline', {
+      stateMachineName: 'lca-rebuild-preview-pipeline',
+      definitionBody: sfn.DefinitionBody.fromChainable(
+        sendCommand('PreviewSendCommand', 'infra/aws/scripts/ec2-rebuild-preview.sh')
+          .addCatch(previewFail, { resultPath: '$.error' })
+          .next(previewOk),
+      ),
+      timeout: Duration.hours(1),
+    });
+
+    new events.Rule(this, 'PromoteRule', {
+      eventPattern: { source: ['lca.operator'], detailType: ['promote.run'] },
+      targets: [new targets.SfnStateMachine(promotePipeline)],
+    });
+    new events.Rule(this, 'TeardownRule', {
+      eventPattern: { source: ['lca.operator'], detailType: ['teardown.run'] },
+      targets: [new targets.SfnStateMachine(teardownPipeline)],
+    });
+    new events.Rule(this, 'RebuildPreviewRule', {
+      eventPattern: { source: ['lca.operator'], detailType: ['preview.run'] },
+      targets: [new targets.SfnStateMachine(previewPipeline)],
     });
   }
 }

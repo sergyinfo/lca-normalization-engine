@@ -12,7 +12,9 @@
     "deploy:serve": "cdk deploy LcaServeStack",
     "deploy:budgets": "cdk deploy LcaBudgetsStack",
     "deploy:all": "cdk deploy --all",
-    "destroy:all": "cdk destroy --all"
+    "destroy:all": "cdk destroy --all",
+    "dev:down": "bash scripts/dev-down.sh",
+    "dev:up": "bash scripts/dev-up.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

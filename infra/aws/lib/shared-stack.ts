@@ -31,6 +31,12 @@ export class LcaSharedStack extends Stack {
   public readonly llmApiKeySecret: sm.Secret;
   /** Secret holding the Postgres password used by the ephemeral EC2 instances. */
   public readonly pgPasswordSecret: sm.Secret;
+  /** Shared operator-UI login password (populate manually after deploy). */
+  public readonly operatorPasswordSecret: sm.Secret;
+  /** HMAC key for the operator-UI signed session cookie (auto-generated, ≥32 chars). */
+  public readonly sessionSecret: sm.Secret;
+  /** Cloudflare API token (Zone.DNS:Edit on h1b.report) for operator.h1b.report DNS + Caddy DNS-01. Populate manually. */
+  public readonly cloudflareTokenSecret: sm.Secret;
 
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -116,6 +122,37 @@ export class LcaSharedStack extends Stack {
         excludePunctuation: true,
         passwordLength: 32,
       },
+    });
+
+    // ---- Secrets Manager: operator-UI login password ----
+    // Single shared password for the HITL operator UI. Populate out-of-band:
+    //   aws secretsmanager put-secret-value --secret-id lca/operator-password \
+    //     --secret-string "$(openssl rand -base64 24)"
+    this.operatorPasswordSecret = new sm.Secret(this, 'OperatorPasswordSecret', {
+      secretName: 'lca/operator-password',
+      description: 'Shared password for the operator review UI (operator.h1b.report). Populate manually after deploy.',
+    });
+
+    // ---- Secrets Manager: operator-UI session HMAC key ----
+    // Signs the operator_sid cookie. Auto-generated; the UI requires ≥32 chars.
+    this.sessionSecret = new sm.Secret(this, 'OperatorSessionSecret', {
+      secretName: 'lca/session-secret',
+      description: 'HMAC key for the operator-UI signed session cookie (auto-generated).',
+      generateSecretString: {
+        excludePunctuation: true,
+        passwordLength: 48,
+      },
+    });
+
+    // ---- Secrets Manager: Cloudflare API token ----
+    // Scoped token (Zone.DNS:Edit on the h1b.report zone). Used on the burst
+    // EC2 by Caddy (Let's Encrypt DNS-01) and to upsert the operator.h1b.report
+    // A-record. Populate out-of-band:
+    //   aws secretsmanager put-secret-value --secret-id lca/cloudflare-token \
+    //     --secret-string 'cf_token_…'
+    this.cloudflareTokenSecret = new sm.Secret(this, 'CloudflareTokenSecret', {
+      secretName: 'lca/cloudflare-token',
+      description: 'Cloudflare API token (Zone.DNS:Edit on h1b.report) for operator.h1b.report DNS + Caddy DNS-01. Populate manually.',
     });
   }
 }

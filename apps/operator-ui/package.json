@@ -10,6 +10,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@aws-sdk/client-eventbridge": "^3.700.0",
     "@fastify/cookie": "^9.4.0",
     "@fastify/formbody": "^7.4.0",
     "@fastify/static": "^7.0.4",

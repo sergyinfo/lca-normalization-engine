@@ -125,6 +125,12 @@ services:
       OPERATOR_UI_PORT: 8080
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
+      # Release controls (Promote / Rebuild preview / Shut down). Only set on the
+      # burst review box — absent locally, so the controls hide themselves.
+      INSTANCE_ID: ${INSTANCE_ID:-}
+      RELEASE: ${RELEASE:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      EVENT_SOURCE: ${EVENT_SOURCE:-lca.operator}
     ports:
       - "${OPERATOR_UI_PORT:-8080}:8080"
     depends_on:
