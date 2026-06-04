@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
     "build:sqlite": "tsx scripts/build-sqlite.ts",
     "build:summaries": "tsx scripts/generate-summaries.ts",
     "build:data": "pnpm run build:sqlite && pnpm run build:summaries",
