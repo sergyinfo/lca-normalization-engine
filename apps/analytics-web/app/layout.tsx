@@ -55,13 +55,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
           </Script>
         ) : null}
         {ADSENSE_CLIENT_ID ? (
-          <Script
-            id="adsbygoogle-loader"
-            async
-            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}`}
-            crossOrigin="anonymous"
-            strategy="afterInteractive"
-          />
+          <>
+            <meta name="google-adsense-account" content={ADSENSE_CLIENT_ID} />
+            <Script
+              id="adsbygoogle-loader"
+              async
+              src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}`}
+              crossOrigin="anonymous"
+              strategy="afterInteractive"
+            />
+          </>
         ) : null}
       </head>
       <body className="font-sans antialiased min-h-screen flex flex-col bg-background text-foreground">

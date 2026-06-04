@@ -7,8 +7,11 @@
  *   ADSENSE_CLIENT_ID=ca-pub-XXXXXXXXXXXXXXXX    (site-wide publisher id)
  *   ADSENSE_SLOTS='{"employer-top":"1234567890","occupation-mid":"...","..."}'
  *
- * If `ADSENSE_CLIENT_ID` is unset, every AdSlot renders its dev placeholder
- * and the AdSense loader script is omitted — so local dev and CI are silent.
+ * `ADSENSE_CLIENT_ID` defaults to the public h1b.report publisher id, so the
+ * loader script + `google-adsense-account` meta render on every build (set
+ * `ADSENSE_CLIENT_ID=none` to disable, e.g. on a fork). Each AdSlot still
+ * renders its dashed dev placeholder until `ADSENSE_SLOTS` provides a slot id
+ * for that name — so manual ad units stay silent until you create them.
  *
  * Caveat: entity pages are statically prerendered via generateStaticParams,
  * so the env is read at BUILD time for those routes. Rotating slot IDs
@@ -16,10 +19,13 @@
  * The dynamic API routes don't have ads, so their env can rotate freely.
  */
 
+// Public AdSense publisher id for h1b.report — not a secret (it ships in the
+// page source). Default to it so the loader + meta render without build-env
+// wiring; `ADSENSE_CLIENT_ID=none` disables, any other value overrides.
+const DEFAULT_CLIENT_ID = 'ca-pub-8373729950359398';
+const _envClient = process.env.ADSENSE_CLIENT_ID?.trim();
 export const ADSENSE_CLIENT_ID: string | null =
-  process.env.ADSENSE_CLIENT_ID && process.env.ADSENSE_CLIENT_ID.trim()
-    ? process.env.ADSENSE_CLIENT_ID.trim()
-    : null;
+  _envClient === 'none' ? null : (_envClient || DEFAULT_CLIENT_ID);
 
 let _slotMap: Record<string, string> | null = null;
 
