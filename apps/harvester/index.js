@@ -61,6 +61,11 @@ const RUN_ONCE = /^(1|true|yes)$/i.test(process.env.HARVEST_ONCE ?? '');
 const SUPERSEDE_UNTRACKED = /^(1|true|yes)$/i.test(process.env.HARVEST_SUPERSEDE_UNTRACKED ?? '');
 const LOCAL_FILES_DIR = process.env.LOCAL_FILES_DIR ?? './data';
 const CONTAINER_MOUNT_DIR = process.env.CONTAINER_MOUNT_DIR ?? '/data';
+// LOCAL-DIR SOURCE MODE: when set, the harvester does NOT scrape DOL — it takes
+// the already-downloaded .xlsx files from this directory (the burst uses this:
+// files arrive via the off-AWS PHP cron → S3 inbox → synced here, because DOL's
+// WAF blocks AWS). All the scope / dedup / supersede / tracking logic is reused.
+const LOCAL_DIR = process.env.HARVEST_LOCAL_DIR || null;
 // The DOL page rejects non-browser agents (returns a tiny stub), so present one.
 const USER_AGENT =
   process.env.HARVEST_USER_AGENT ??
@@ -212,14 +217,27 @@ async function downloadFile(url, fileName) {
 // ---------------------------------------------------------------------------
 
 /** @returns {Promise<{linksTotal:number, inScope:number, downloaded:number, enqueued:number, skippedExisting:number, errors:number}>} */
+/** Candidate .xlsx list — from a local dir (S3-inbox files) or by scraping DOL. */
+async function collectXlsx() {
+  if (LOCAL_DIR) {
+    const names = (await fs.promises.readdir(LOCAL_DIR))
+      .filter((n) => n.toLowerCase().endsWith('.xlsx'));
+    return names.map((n) => ({ url: path.join(LOCAL_DIR, n), fileName: n }));
+  }
+  return scrapeAllXlsxLinks(); // throws on a blocked/empty DOL page
+}
+
 async function poll() {
-  log.info({ startYear: START_YEAR, pattern: FILE_PATTERN.source }, 'harvester.poll.start');
+  log.info(
+    { source: LOCAL_DIR ?? 'dol', startYear: START_YEAR, pattern: FILE_PATTERN.source },
+    'harvester.poll.start',
+  );
   const summary = {
     linksTotal: 0, inScope: 0, candidates: 0, downloaded: 0, enqueued: 0,
     skippedExisting: 0, skippedOlder: 0, skippedUntracked: 0, errors: 0,
   };
 
-  const all = await scrapeAllXlsxLinks();   // throws on blocked/empty page
+  const all = await collectXlsx();
   summary.linksTotal = all.length;
   const inScope = scopeLinks(all);
   summary.inScope = inScope.length;
@@ -244,8 +262,10 @@ async function poll() {
 
     const supersede = existing;   // replace the year if it already holds data
     try {
-      const localPath = await downloadFile(url, fileName);
-      summary.downloaded++;
+      // DOL mode downloads to LOCAL_FILES_DIR; LOCAL_DIR mode already has the
+      // file on disk (synced from the S3 inbox).
+      const localPath = LOCAL_DIR ? url : await downloadFile(url, fileName);
+      if (!LOCAL_DIR) summary.downloaded++;
       const containerPath = path.posix.join(CONTAINER_MOUNT_DIR, fileName);
       await ingestQueue.add(
         'ingest',
