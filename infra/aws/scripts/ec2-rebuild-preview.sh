@@ -5,7 +5,10 @@
 # dev preview (dev.h1b.report). Prod is untouched — that's what Promote is for.
 set -euxo pipefail
 
-REGION="${AWS_REGION:-$(curl -sf http://169.254.169.254/latest/meta-data/placement/region)}"
+# IMDSv2 (HttpTokens=required on the burst launch template).
+_imt=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 600" || true)
+imds() { curl -sf -H "X-aws-ec2-metadata-token: $_imt" "http://169.254.169.254/latest/meta-data/$1"; }
+REGION="${AWS_REGION:-$(imds placement/region)}"
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 
 stack_resource() {
