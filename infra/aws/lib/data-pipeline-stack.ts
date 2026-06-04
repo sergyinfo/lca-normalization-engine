@@ -525,9 +525,10 @@ export class LcaDataPipelineStack extends Stack {
       memorySize: 256,
       logRetention: logs.RetentionDays.ONE_MONTH,
       environment: {
-        DOL_URL:           'https://www.dol.gov/agencies/eta/foreign-labor/performance',
-        LAST_ETAG_PARAM:   lastEtagParam.parameterName,
-        STATE_MACHINE_ARN: '', // wired below once stateMachine is constructed
+        DOL_URL:            'https://www.dol.gov/agencies/eta/foreign-labor/performance',
+        LAST_ETAG_PARAM:    lastEtagParam.parameterName, // now holds the "YYYY-Q" high-water mark
+        STATE_MACHINE_ARN:  '', // wired below once stateMachine is constructed
+        HARVEST_START_YEAR: String(process.env.HARVEST_START_YEAR ?? 2020),
       },
     });
     lastEtagParam.grantRead(dolChecker);
