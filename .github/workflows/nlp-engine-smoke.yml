@@ -90,8 +90,9 @@ jobs:
 
       # Node toolchain — needed to run `cli-tool db:init`, which applies the
       # full Postgres schema (canonical_employers, employer_embeddings, …).
+      # Version resolved from the root packageManager field (pnpm@10.33.0);
+      # don't also pass `version:` — action-setup@v6 errors on the conflict.
       - uses: pnpm/action-setup@v6
-        with: { version: 9 }
       - uses: actions/setup-node@v6
         with:
           node-version: 22
