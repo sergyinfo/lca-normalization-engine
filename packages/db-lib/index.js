@@ -146,16 +146,30 @@ export async function ensureSchema(conn = pool) {
     ) PARTITION BY RANGE (filing_year);
   `);
 
-  // Create one partition per year for 10-year historical range (2014-2024)
+  // Year partitions for [START .. currentYear+1]. START is configurable via
+  // LCA_PARTITION_START_YEAR (default 2020 — the floor of data we actually
+  // ingest; see the harvester's HARVEST_START_YEAR). Lowering the floor adds the
+  // missing year partitions on the next db:init. CAVEAT: if the DEFAULT
+  // partition below already holds rows for a year you're adding, Postgres won't
+  // attach the new partition until those rows are drained/detached out of DEFAULT.
   const currentYear = new Date().getFullYear();
-  const startYear = currentYear - 10;
-  for (let y = startYear; y <= currentYear; y++) {
+  const startYear = Number(process.env.LCA_PARTITION_START_YEAR ?? 2020);
+  for (let y = startYear; y <= currentYear + 1; y++) {
     await conn.query(`
       CREATE TABLE IF NOT EXISTS lca_records_${y}
         PARTITION OF lca_records
         FOR VALUES FROM (${y}) TO (${y + 1});
     `);
   }
+  // Catch-all DEFAULT partition: an out-of-range filing_year (e.g. a stray
+  // pre-floor or mislabelled file) lands here instead of making the entire COPY
+  // batch hard-fail with "no partition found for row". The harvester's year
+  // floor should keep this empty in normal operation; rows here are a signal to
+  // investigate (wrong-year file, bad parse).
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS lca_records_overflow
+      PARTITION OF lca_records DEFAULT;
+  `);
 
   // JSONB GIN index for arbitrary field search
   await conn.query(`
