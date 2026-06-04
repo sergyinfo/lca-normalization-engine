@@ -72,11 +72,12 @@ export class LcaDataPipelineStack extends Stack {
     //
     //   /lca/burst/userdata    ← cloud-init `userData.addCommands(...)` output
     //   /lca/burst/cloud-init  ← Amazon Linux's own cloud-init logs
-    //   /lca/burst/docker      ← any container started on the EC2 (PG, ingest)
     //
     // The EC2 self-terminates at the end of the run, so without shipping
-    // these to CloudWatch the logs are LOST. CW Agent + Docker awslogs
-    // driver below do the shipping; these groups are the destinations.
+    // these to CloudWatch the logs are LOST. The CW Agent (below) ships
+    // /var/log/burst.log here. (We do NOT override Docker's log-driver to
+    // awslogs — that made dockerd fail to start; container stdout stays on
+    // the box. The pipeline's own output runs on the host, so it's captured.)
     // ---------------------------------------------------------------------
     const userdataLogGroup = new logs.LogGroup(this, 'BurstUserdataLogs', {
       logGroupName: '/lca/burst/userdata',
@@ -88,12 +89,6 @@ export class LcaDataPipelineStack extends Stack {
       retention: logs.RetentionDays.ONE_MONTH,
       removalPolicy: RemovalPolicy.DESTROY,
     });
-    const dockerLogGroup = new logs.LogGroup(this, 'BurstDockerLogs', {
-      logGroupName: '/lca/burst/docker',
-      retention: logs.RetentionDays.ONE_MONTH,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-
     // ---------------------------------------------------------------------
     // Networking. A single isolated subnet is enough — the EC2 instance
     // only needs egress (NAT or VPC endpoints).
@@ -269,20 +264,14 @@ export class LcaDataPipelineStack extends Stack {
       `/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \\`,
       `  -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s`,
       ``,
-      `# ----- Docker + awslogs driver: ship every container's stdout to CW -----`,
+      `# ----- Docker (stock config) -----`,
+      `# We deliberately DO NOT override the daemon log-driver to awslogs: an`,
+      `# invalid default-log config makes dockerd fail to START (which it did on`,
+      `# the first run). The pipeline's own progress already ships to CloudWatch`,
+      `# via the CW agent (/var/log/burst.log), and the harvest runs on the host,`,
+      `# so we keep full visibility without risking the daemon. Container stdout`,
+      `# stays on the box (docker compose logs) — fine for an ephemeral build box.`,
       `dnf install -y docker git`,
-      `mkdir -p /etc/docker`,
-      `cat > /etc/docker/daemon.json <<JSON`,
-      `{`,
-      `  "log-driver": "awslogs",`,
-      `  "log-opts": {`,
-      `    "awslogs-region":       "$REGION",`,
-      `    "awslogs-group":        "${dockerLogGroup.logGroupName}",`,
-      `    "tag":                  "{{.Name}}/{{.ID}}",`,
-      `    "awslogs-create-stream": "true"`,
-      `  }`,
-      `}`,
-      `JSON`,
       `systemctl enable --now docker`,
       `usermod -a -G docker ec2-user`,
       ``,
