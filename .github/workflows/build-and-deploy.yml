@@ -1,34 +1,31 @@
-# Push-to-deploy for the analytics-web Lambda image.
+# Branch-per-environment deploy for the analytics-web Lambda image.
 #
-#   push to main (app/infra changes)     → typecheck → build image → deploy to DEV
-#   manual run with promote_to_prod=true → same, then promote to PROD (h1b.report)
+#   PR → develop|production           : typecheck only (required merge gate)
+#   merge to develop  (push)          : build image → deploy to DEV  (dev.h1b.report)
+#   merge to production (push)        : build image → deploy to PROD (h1b.report)
 #
-# Auth: GitHub OIDC → IAM role `github-actions-deploy` (main branch only, no
-# long-lived keys). Data is NOT touched here — lca.db is pulled from S3 as-is and
-# baked into the image, so there are **no LLM / build:summaries calls**. Refresh
-# the data via the quarterly burst (LcaDataPipelineStack) or `pnpm build:data`
-# locally, which uploads a fresh lca.db to S3 for the next image build.
+# develop and production are protected (PR-only). Auth: GitHub OIDC → IAM role
+# `github-actions-deploy` (develop/production refs only, no long-lived keys).
+# Data is NOT touched here — lca.db is pulled from S3 as-is and baked into the
+# image, so there are **no LLM / build:summaries calls**. Refresh data via the
+# quarterly burst (LcaDataPipelineStack) or `pnpm build:data` locally.
 
 name: build-and-deploy
 
 on:
+  pull_request:
+    branches: [develop, production]
   push:
-    branches: [main]
+    branches: [develop, production]
     paths:
       - 'apps/analytics-web/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
       - 'package.json'
       - '.github/workflows/build-and-deploy.yml'
-  workflow_dispatch:
-    inputs:
-      promote_to_prod:
-        description: 'Also promote this build to production (h1b.report)'
-        type: boolean
-        default: false
 
 concurrency:
-  group: deploy-main
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -38,10 +35,9 @@ permissions:
 env:
   AWS_REGION: us-east-1
   ECR_REPO: lca-analytics-web
-  DEV_FN: lca-analytics-web
-  DEV_STACK: LcaServeStack
 
 jobs:
+  # Required status check on every PR (and again before a deploy).
   typecheck:
     runs-on: ubuntu-24.04
     steps:
@@ -54,9 +50,18 @@ jobs:
 
   deploy:
     needs: typecheck
-    runs-on: ubuntu-latest          # swap to `ubuntu-24.04-arm` (native arm64) for a faster build if your plan has it
+    if: github.event_name == 'push'      # deploy only on a merge, never on a PR
+    runs-on: ubuntu-latest               # swap to `ubuntu-24.04-arm` (native, faster) if your plan offers arm64 runners
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve target by branch
+        run: |
+          if [ "${{ github.ref_name }}" = "production" ]; then
+            { echo "TAG=prod"; echo "FN=lca-analytics-web-prod"; echo "STACK=LcaServeProdStack"; echo "TARGET=h1b.report"; } >> "$GITHUB_ENV"
+          else
+            { echo "TAG=latest"; echo "FN=lca-analytics-web"; echo "STACK=LcaServeStack"; echo "TARGET=dev.h1b.report"; } >> "$GITHUB_ENV"
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -66,9 +71,7 @@ jobs:
 
       - name: Resolve ECR URI
         id: ecr
-        run: |
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          echo "uri=$ACCOUNT.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}" >> "$GITHUB_OUTPUT"
+        run: echo "uri=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -80,32 +83,22 @@ jobs:
           mkdir -p apps/analytics-web/data
           aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
 
-      # arm64 to match the Lambda architecture. On an x86 runner QEMU emulates it
-      # (slower); on an arm64 runner it's native — then this QEMU step is a no-op.
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build + push image (:latest + :sha)
+      - name: Build + push image
         run: |
           docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
             -f apps/analytics-web/Dockerfile.lambda \
-            -t ${{ steps.ecr.outputs.uri }}:latest \
+            -t ${{ steps.ecr.outputs.uri }}:${TAG} \
             -t ${{ steps.ecr.outputs.uri }}:${{ github.sha }} \
             --push .
 
-      - name: Deploy to dev (update Lambda + invalidate cache)
+      - name: Deploy (update Lambda + invalidate cache)
         run: |
-          aws lambda update-function-code --function-name "${DEV_FN}" \
-            --image-uri ${{ steps.ecr.outputs.uri }}:latest >/dev/null
-          aws lambda wait function-updated --function-name "${DEV_FN}"
-          DIST=$(aws cloudformation describe-stacks --stack-name "${DEV_STACK}" \
+          aws lambda update-function-code --function-name "${FN}" --image-uri ${{ steps.ecr.outputs.uri }}:${TAG} >/dev/null
+          aws lambda wait function-updated --function-name "${FN}"
+          DIST=$(aws cloudformation describe-stacks --stack-name "${STACK}" \
             --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
           aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*' >/dev/null
-          echo "Deployed to https://dev.h1b.report"
-
-      - name: Promote to prod (manual dispatch only)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.promote_to_prod }}
-        run: |
-          chmod +x infra/aws/scripts/promote-to-prod.sh
-          ./infra/aws/scripts/promote-to-prod.sh
-          echo "Promoted to https://h1b.report"
+          echo "Deployed ${GITHUB_REF_NAME} → https://${TARGET}"
