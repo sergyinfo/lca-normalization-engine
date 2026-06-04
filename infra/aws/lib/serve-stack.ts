@@ -26,14 +26,31 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import type { LcaSharedStack } from './shared-stack.js';
 
+export interface SiteConfig {
+  envName: 'dev' | 'prod';
+  /** CloudFront aliases (covered by the ACM cert). e.g. ['h1b.report','www.h1b.report']. */
+  aliasDomains: string[];
+  /** Hosts the canonical-redirect function leaves alone; primary = [0]. Defaults
+   *  to aliasDomains. Set to ['h1b.report'] to 301 www → apex. */
+  canonicalHosts?: string[];
+  siteUrl: string;
+  /** Hosts that stay indexable (everything else gets X-Robots-Tag: noindex). */
+  indexableHosts: string[];
+  /** ECR image tag the Lambda runs ('latest' for dev, 'prod' for prod). */
+  imageTag: string;
+  /** Lambda function name — must be unique per account/region. */
+  functionName: string;
+}
+
 interface ServeStackProps extends StackProps {
   shared: LcaSharedStack;
+  site: SiteConfig;
 }
 
 export class LcaServeStack extends Stack {
   constructor(scope: Construct, id: string, props: ServeStackProps) {
     super(scope, id, props);
-    const { shared } = props;
+    const { shared, site } = props;
 
     Tags.of(this).add('Component', 'serve');
 
@@ -49,25 +66,20 @@ export class LcaServeStack extends Stack {
     // synths and deploys against the raw *.cloudfront.net hostname (handy for
     // the very first deploy, before the ACM cert exists / is Issued).
     // ---------------------------------------------------------------------
+    // Per-environment site config comes from props (bin/app.ts). `aliasDomains`
+    // are the CloudFront aliases (ACM SANs); `canonicalHosts` is the redirect
+    // allowlist (primary = [0]) — for prod it's just the apex so www → apex.
+    const siteDomains = site.aliasDomains;
+    const canonicalHosts = (site.canonicalHosts && site.canonicalHosts.length > 0)
+      ? site.canonicalHosts : site.aliasDomains;
+    const siteUrl = site.siteUrl;
+    // Hosts that stay indexable; anything else gets X-Robots-Tag: noindex.
+    const indexableHosts = site.indexableHosts;
+
+    // Secrets/ARNs stay in CDK context (shared across dev+prod, never committed),
+    // passed at deploy: -c siteCertificateArn=… -c originVerifySecret=…
     const siteCertificateArn = this.node.tryGetContext('siteCertificateArn') as string | undefined;
-    const siteDomains = ((this.node.tryGetContext('siteDomains') as string | undefined) ?? '')
-      .split(',')
-      .map((d) => d.trim())
-      .filter(Boolean);
-    const siteUrl = (this.node.tryGetContext('siteUrl') as string | undefined) ?? 'https://h1b.report';
-
-    // Optional shared secret CloudFront injects as the `x-origin-verify` header.
-    // The app middleware 403s any request lacking it, so the public Function URL
-    // can't be reached directly (only via CloudFront). Pass -c originVerifySecret=…
     const originVerifySecret = this.node.tryGetContext('originVerifySecret') as string | undefined;
-
-    // Hosts that SHOULD be indexed by search engines (i.e. production). Any
-    // served host NOT in this list gets an `X-Robots-Tag: noindex, nofollow`
-    // response header, so dev/staging never competes with prod. Empty by
-    // default ⇒ everything is noindex; set at prod promotion:
-    //   -c indexableHosts=h1b.report,www.h1b.report
-    const indexableHosts = ((this.node.tryGetContext('indexableHosts') as string | undefined) ?? '')
-      .split(',').map((d) => d.trim()).filter(Boolean);
 
     if (siteCertificateArn && siteDomains.length === 0) {
       throw new Error('siteCertificateArn provided but siteDomains is empty — set -c siteDomains=dev.h1b.report');
@@ -90,8 +102,8 @@ export class LcaServeStack extends Stack {
     // refactor needed, no Vercel-only bits).
     // ---------------------------------------------------------------------
     const fn = new lambda.DockerImageFunction(this, 'AnalyticsWebFn', {
-      functionName: 'lca-analytics-web',
-      code: lambda.DockerImageCode.fromEcr(shared.lambdaImageRepo, { tagOrDigest: 'latest' }),
+      functionName: site.functionName,
+      code: lambda.DockerImageCode.fromEcr(shared.lambdaImageRepo, { tagOrDigest: site.imageTag }),
       memorySize: 512,        // Headroom for SQLite + Next.js render
       timeout: Duration.seconds(15),
       logRetention: logs.RetentionDays.ONE_MONTH,
@@ -170,10 +182,10 @@ export class LcaServeStack extends Stack {
             'function handler(event){',
             '  var request=event.request;',
             '  var host=request.headers.host?request.headers.host.value:"";',
-            `  var allow=${JSON.stringify(siteDomains)};`,
+            `  var allow=${JSON.stringify(canonicalHosts)};`,
             '  for(var i=0;i<allow.length;i++){if(host===allow[i]){return request;}}',
             '  var qs="";for(var k in request.querystring){qs+=(qs?"&":"?")+k+"="+request.querystring[k].value;}',
-            `  return{statusCode:301,statusDescription:"Moved Permanently",headers:{location:{value:"https://${siteDomains[0]}"+request.uri+qs}}};`,
+            `  return{statusCode:301,statusDescription:"Moved Permanently",headers:{location:{value:"https://${canonicalHosts[0]}"+request.uri+qs}}};`,
             '}',
           ].join('\n')),
         })

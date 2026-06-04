@@ -53,10 +53,39 @@ new LcaDataPipelineStack(app, 'LcaDataPipelineStack', {
   description: 'Quarterly burst pipeline: EventBridge → DOL-checker Lambda → Step Functions → ephemeral EC2 → lca.db in S3.',
 });
 
+// Two independent serving stacks (separate CloudFront distro + Lambda + image
+// tag each), so dev can run an experimental build without touching prod:
+//   cdk deploy LcaServeStack     -c siteCertificateArn=… -c originVerifySecret=…  (dev)
+//   cdk deploy LcaServeProdStack -c siteCertificateArn=… -c originVerifySecret=…  (prod)
+// Dev = current live config (dev.h1b.report, noindex, image :latest) — unchanged.
 new LcaServeStack(app, 'LcaServeStack', {
   env,
   shared,
-  description: 'Always-on serving: CloudFront + Lambda Container Image (Next.js) + S3 static origin.',
+  description: 'Serving (dev): CloudFront + Lambda Container Image — dev.h1b.report, noindex, :latest.',
+  site: {
+    envName: 'dev',
+    aliasDomains: ['dev.h1b.report'],
+    siteUrl: 'https://dev.h1b.report',
+    indexableHosts: [],                    // dev never competes with prod
+    imageTag: 'latest',
+    functionName: 'lca-analytics-web',
+  },
+});
+
+// Prod = h1b.report apex (www 301s to apex), indexable, image :prod.
+new LcaServeStack(app, 'LcaServeProdStack', {
+  env,
+  shared,
+  description: 'Serving (prod): CloudFront + Lambda Container Image — h1b.report, indexable, :prod.',
+  site: {
+    envName: 'prod',
+    aliasDomains: ['h1b.report', 'www.h1b.report'],
+    canonicalHosts: ['h1b.report'],        // 301 www → apex
+    siteUrl: 'https://h1b.report',
+    indexableHosts: ['h1b.report', 'www.h1b.report'],
+    imageTag: 'prod',
+    functionName: 'lca-analytics-web-prod',
+  },
 });
 
 new LcaBudgetsStack(app, 'LcaBudgetsStack', {
