@@ -117,6 +117,29 @@ export async function bulkCopyJsonb({ table, column = 'data', columns, rows, cli
   }
 }
 
+/**
+ * Replace all rows for a filing year — used when a NEWER cumulative DOL
+ * disclosure file supersedes an earlier quarter for that fiscal year (the
+ * quarterly files are cumulative, so the new file is the authoritative
+ * full-year snapshot). Truncates the year's partition when it exists (instant),
+ * else deletes by predicate. NOTE: this also clears the NLP write-back +
+ * operator edits for that year — intended for the actively-updated current FY.
+ *
+ * @param {number} year
+ * @param {pg.PoolClient|pg.Pool} [conn] - defaults to pool
+ */
+export async function replaceFilingYear(year, conn = pool) {
+  const y = Number(year);
+  if (!Number.isInteger(y)) throw new Error(`replaceFilingYear: invalid year ${year}`);
+  const { rows } = await conn.query('SELECT to_regclass($1) AS rel', [`public.lca_records_${y}`]);
+  if (rows[0]?.rel) {
+    await conn.query(`TRUNCATE TABLE lca_records_${y}`);
+  } else {
+    // No dedicated partition (e.g. a year living in the DEFAULT overflow).
+    await conn.query('DELETE FROM lca_records WHERE filing_year = $1', [y]);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Schema helpers
 // ---------------------------------------------------------------------------

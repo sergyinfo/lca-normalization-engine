@@ -17,7 +17,7 @@ import { getXlsxStream } from 'xlstream';
 import IORedis from 'ioredis';
 import pino from 'pino';
 import { randomUUID } from 'node:crypto';
-import { bulkCopyJsonb, ensureSchema, closePool } from '@lca/db-lib';
+import { bulkCopyJsonb, ensureSchema, closePool, replaceFilingYear } from '@lca/db-lib';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -43,8 +43,17 @@ const nlpQueue = new Queue(NLP_QUEUE, { connection: redis });
  * @param {{ filePath: string, sourceFile: string, filingYear: number }} data
  */
 async function processIngestJob(data) {
-  const { filePath, sourceFile, filingYear } = data;
-  log.info({ filePath, filingYear }, 'ingestor.job.start');
+  const { filePath, sourceFile, filingYear, supersede } = data;
+  log.info({ filePath, filingYear, supersede: !!supersede }, 'ingestor.job.start');
+
+  // The DOL quarterly files are cumulative within a fiscal year — a newer
+  // quarter supersedes the prior one. When the harvester flags a supersede,
+  // clear the year first so the cumulative file fully REPLACES it (no
+  // duplicate cases) rather than appending. See @lca/db-lib replaceFilingYear.
+  if (supersede && Number.isInteger(filingYear)) {
+    log.info({ filingYear }, 'ingestor.supersede.clear');
+    await replaceFilingYear(filingYear);
+  }
 
   let totalRows = 0;
   let batch = [];
