@@ -51,7 +51,7 @@ jobs:
   deploy:
     needs: typecheck
     if: github.event_name == 'push'      # deploy only on a merge, never on a PR
-    runs-on: ubuntu-latest               # swap to `ubuntu-24.04-arm` (native, faster) if your plan offers arm64 runners
+    runs-on: ubuntu-24.04-arm            # native arm64 (free on public repos) — builds the arm64 image without QEMU emulation
     steps:
       - uses: actions/checkout@v4
 
