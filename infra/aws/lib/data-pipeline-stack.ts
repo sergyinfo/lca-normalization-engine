@@ -615,6 +615,20 @@ export class LcaDataPipelineStack extends Stack {
       tracingEnabled: true,
     });
 
+    // CallAwsService('ec2','runInstances') auto-grants ec2:RunInstances but NOT
+    // iam:PassRole, which RunInstances requires to attach the burst instance
+    // profile. Without it the task fails "You are not authorized to perform this
+    // operation". Grant PassRole on the burst EC2 role (+ CreateTags for the
+    // launch-time TagSpecifications).
+    stateMachine.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['iam:PassRole'],
+      resources: [ec2Role.roleArn],
+    }));
+    stateMachine.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ec2:CreateTags'],
+      resources: ['*'],
+    }));
+
     // Wire the state machine ARN into the DOL checker now that it exists.
     dolChecker.addEnvironment('STATE_MACHINE_ARN', stateMachine.stateMachineArn);
     stateMachine.grantStartExecution(dolChecker);
