@@ -1,17 +1,15 @@
-# Build-and-deploy pipeline for the analytics-web app.
+# Push-to-deploy for the analytics-web Lambda image.
 #
-# Triggers:
-#   - push to main → typecheck + build image + deploy
-#   - workflow_dispatch with refresh_data=true → also rebuild lca.db + summaries
+#   push to main (app/infra changes)     → typecheck → build image → deploy to DEV
+#   manual run with promote_to_prod=true → same, then promote to PROD (h1b.report)
 #
-# Secrets required (Settings → Secrets and variables → Actions):
-#   - PG_PASSWORD, PGDUMP_URL  (only when refresh_data=true)
-#   - ANTHROPIC_API_KEY         (only when refresh_data=true)
-#   - PROD_HOST, PROD_USER, PROD_SSH_KEY (deploy target)
-#
-# See DEPLOY.md Appendix B for setup notes.
+# Auth: GitHub OIDC → IAM role `github-actions-deploy` (main branch only, no
+# long-lived keys). Data is NOT touched here — lca.db is pulled from S3 as-is and
+# baked into the image, so there are **no LLM / build:summaries calls**. Refresh
+# the data via the quarterly burst (LcaDataPipelineStack) or `pnpm build:data`
+# locally, which uploads a fresh lca.db to S3 for the next image build.
 
-name: Build and Deploy
+name: build-and-deploy
 
 on:
   push:
@@ -20,179 +18,94 @@ on:
       - 'apps/analytics-web/**'
       - 'packages/**'
       - 'pnpm-lock.yaml'
+      - 'package.json'
       - '.github/workflows/build-and-deploy.yml'
   workflow_dispatch:
     inputs:
-      refresh_data:
-        description: 'Rebuild lca.db from Postgres'
-        type: boolean
-        default: false
-      regenerate_summaries:
-        description: 'Re-run LLM summaries (~$1)'
+      promote_to_prod:
+        description: 'Also promote this build to production (h1b.report)'
         type: boolean
         default: false
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-main
   cancel-in-progress: false
 
+permissions:
+  id-token: write   # OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: lca-analytics-web
+  DEV_FN: lca-analytics-web
+  DEV_STACK: LcaServeStack
+
 jobs:
-  # ---------------------------------------------------------------------------
   typecheck:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter analytics-web typecheck
 
-  # ---------------------------------------------------------------------------
-  # Optional: rebuild lca.db from a Postgres dump uploaded to S3/R2.
-  # Skipped on plain pushes; only runs when refresh_data input is true.
-  build-data:
-    needs: typecheck
-    if: ${{ inputs.refresh_data == true }}
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: lca_user
-          POSTGRES_PASSWORD: ${{ secrets.PG_PASSWORD }}
-          POSTGRES_DB: lca_db
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Restore Postgres dump
-        env:
-          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
-          PGDUMP_URL: ${{ secrets.PGDUMP_URL }}
-        run: |
-          curl -fsSL "$PGDUMP_URL" -o /tmp/lca.pgdump
-          pg_restore --no-owner --no-acl --clean --if-exists \
-            -h localhost -U lca_user -d lca_db /tmp/lca.pgdump
-
-      - name: Build lca.db
-        env:
-          DATABASE_URL: postgresql://lca_user:${{ secrets.PG_PASSWORD }}@localhost:5432/lca_db
-        run: pnpm --filter analytics-web build:sqlite
-
-      - name: Regenerate LLM summaries
-        if: ${{ inputs.regenerate_summaries == true }}
-        env:
-          LLM_PROVIDER: anthropic
-          LLM_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_CONCURRENCY: '4'
-        run: pnpm --filter analytics-web build:summaries
-
-      - name: Upload artefact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lca-db
-          path: apps/analytics-web/data/lca.db
-          retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  build-image:
-    needs: typecheck
-    # Run even when build-data is skipped.
-    if: ${{ always() && needs.typecheck.result == 'success' }}
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download fresh lca.db (if data refresh ran)
-        uses: actions/download-artifact@v4
-        if: ${{ inputs.refresh_data == true }}
-        with:
-          name: lca-db
-          path: apps/analytics-web/data/
-
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute tags
-        id: tags
-        run: |
-          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
-          echo "stamp=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/analytics-web/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/analytics-web:latest
-            ghcr.io/${{ github.repository }}/analytics-web:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/analytics-web:${{ steps.tags.outputs.stamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ---------------------------------------------------------------------------
   deploy:
-    needs: build-image
-    runs-on: ubuntu-24.04
+    needs: typecheck
+    runs-on: ubuntu-latest          # swap to `ubuntu-24.04-arm` (native arm64) for a faster build if your plan has it
     steps:
-      - uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /opt/lca
+          role-to-assume: arn:aws:iam::299834553927:role/github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
 
-            REPO="ghcr.io/${{ github.repository }}/analytics-web"
-
-            # Tag the currently-running image as :rollback so we can recover.
-            if docker image inspect "${REPO}:latest" >/dev/null 2>&1; then
-              docker tag "${REPO}:latest" "${REPO}:rollback"
-            fi
-
-            docker pull "${REPO}:latest"
-            docker compose up -d analytics-web
-
-            # Smoke test
-            sleep 5
-            for path in / /employer /occupation /sitemap.xml; do
-              code=$(curl -fsS -o /dev/null -w "%{http_code}" "http://localhost:3000$path")
-              echo "$path → $code"
-              [ "$code" = "200" ] || exit 1
-            done
-
-      - name: Purge Cloudflare cache
-        if: ${{ secrets.CF_ZONE_ID != '' }}
+      - name: Resolve ECR URI
+        id: ecr
         run: |
-          curl -fsS -X POST \
-            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE_ID }}/purge_cache" \
-            -H "Authorization: Bearer ${{ secrets.CF_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            --data '{"purge_everything":true}'
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          echo "uri=$ACCOUNT.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull lca.db from S3 (gitignored; baked into the image)
+        run: |
+          BUCKET=$(aws cloudformation describe-stack-resources --stack-name LcaSharedStack \
+            --query "StackResources[?starts_with(LogicalResourceId,'LcaDbBucket')].PhysicalResourceId | [0]" --output text)
+          mkdir -p apps/analytics-web/data
+          aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
+
+      # arm64 to match the Lambda architecture. On an x86 runner QEMU emulates it
+      # (slower); on an arm64 runner it's native — then this QEMU step is a no-op.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build + push image (:latest + :sha)
+        run: |
+          docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
+            -f apps/analytics-web/Dockerfile.lambda \
+            -t ${{ steps.ecr.outputs.uri }}:latest \
+            -t ${{ steps.ecr.outputs.uri }}:${{ github.sha }} \
+            --push .
+
+      - name: Deploy to dev (update Lambda + invalidate cache)
+        run: |
+          aws lambda update-function-code --function-name "${DEV_FN}" \
+            --image-uri ${{ steps.ecr.outputs.uri }}:latest >/dev/null
+          aws lambda wait function-updated --function-name "${DEV_FN}"
+          DIST=$(aws cloudformation describe-stacks --stack-name "${DEV_STACK}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*' >/dev/null
+          echo "Deployed to https://dev.h1b.report"
+
+      - name: Promote to prod (manual dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.promote_to_prod }}
+        run: |
+          chmod +x infra/aws/scripts/promote-to-prod.sh
+          ./infra/aws/scripts/promote-to-prod.sh
+          echo "Promoted to https://h1b.report"

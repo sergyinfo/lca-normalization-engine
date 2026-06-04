@@ -22,6 +22,14 @@
 
 set -euo pipefail
 
+# ----- Args ----------------------------------------------------------------
+# --promote : after the dev image is built + the dev Lambda updated, also
+#             promote this exact build to production (runs promote-to-prod.sh).
+#             One-command code deploy for small fixes: build → dev → prod.
+PROMOTE=
+for arg in "$@"; do case "$arg" in --promote) PROMOTE=1 ;; esac; done
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # ----- Sanity checks -------------------------------------------------------
 if ! command -v aws >/dev/null; then
   echo "✗ aws CLI not on PATH" >&2; exit 1
@@ -180,3 +188,10 @@ echo "  Verify serving:"
 echo "    CF_DOMAIN=\$(aws cloudformation describe-stacks --stack-name LcaServeStack \\"
 echo "      --query \"Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue\" --output text)"
 echo "    ./scripts/smoke-test.sh \"https://\$CF_DOMAIN\""
+
+# ----- Optional: ship straight to production -------------------------------
+if [[ -n "$PROMOTE" ]]; then
+  echo
+  echo "▶ --promote: shipping this build to production (h1b.report)"
+  "$SELF_DIR/promote-to-prod.sh"
+fi
