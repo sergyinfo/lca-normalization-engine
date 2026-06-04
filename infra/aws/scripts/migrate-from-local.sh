@@ -5,16 +5,20 @@
 #
 # Prerequisites:
 #   1. LcaSharedStack already deployed (run `pnpm deploy:shared` first)
-#   2. Local Postgres running on localhost:5432 with the ingested data
-#   3. apps/analytics-web/data/lca.db built locally (`pnpm build:sqlite`)
+#   2. Local Postgres running on localhost:5432 (only for the optional PG dump;
+#      set SKIP_PG_DUMP=1 for a P2-only serve deploy)
+#   3. apps/analytics-web/data/lca.db built locally — ONLY needed with
+#      --push-local-db (first deploy / deliberate local refresh). By default the
+#      script pulls the server lca.db from S3, so no local build is required.
 #   4. Docker buildx available
 #   5. AWS_PROFILE / AWS_REGION configured
 #
 # What it does:
 #   1. Looks up the bucket names + ECR URI from the deployed stack outputs
-#   2. Uploads lca.db to the versioned S3 bucket
+#   2. Pulls lca.db from S3 (the server copy) — or, with --push-local-db,
+#      publishes the local lca.db to S3 instead
 #   3. Builds + pushes the Next.js Lambda image to ECR (linux/arm64)
-#   4. Dumps local Postgres and uploads the .pgdump file to S3
+#   4. Dumps local Postgres and uploads the .pgdump file to S3 (optional)
 #
 # After this, you can `pnpm deploy:serve` + `pnpm deploy:data` and the
 # burst pipeline will incrementally update from your dump instead of
@@ -23,11 +27,17 @@
 set -euo pipefail
 
 # ----- Args ----------------------------------------------------------------
-# --promote : after the dev image is built + the dev Lambda updated, also
-#             promote this exact build to production (runs promote-to-prod.sh).
-#             One-command code deploy for small fixes: build → dev → prod.
-PROMOTE=
-for arg in "$@"; do case "$arg" in --promote) PROMOTE=1 ;; esac; done
+# --promote        : after building + updating dev, also promote to production
+#                    (promote-to-prod.sh) — one command: build → dev → prod.
+# --push-local-db  : publish the LOCAL lca.db to S3 and build from it. WITHOUT it
+#                    the script PULLS lca.db from S3 (the server copy — freshest,
+#                    e.g. from the harvester) and never overwrites it, so a stale
+#                    local DB can't clobber server data.
+PROMOTE=; PUSH_LOCAL_DB=
+for arg in "$@"; do case "$arg" in
+  --promote)       PROMOTE=1 ;;
+  --push-local-db) PUSH_LOCAL_DB=1 ;;
+esac; done
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ----- Sanity checks -------------------------------------------------------
@@ -74,17 +84,29 @@ echo "  ECR repo       : $ECR_URI"
 cd "$(dirname "$0")/../../.."
 
 # ----- 1. lca.db ----------------------------------------------------------
-echo "▶ Step 1: lca.db → S3"
-if [[ ! -f apps/analytics-web/data/lca.db ]]; then
-  echo "  apps/analytics-web/data/lca.db is missing."
-  echo "  Run \`pnpm --filter analytics-web build:sqlite\` first, then retry."
-  exit 1
+# Default: build the image from the SERVER lca.db (pull from S3). The harvester
+# writes the freshest copy there, so a stale local DB must NEVER clobber it.
+# --push-local-db flips this to publish your locally-rebuilt DB (first-deploy
+# seeding, or a deliberate local refresh).
+mkdir -p apps/analytics-web/data
+if [[ -n "$PUSH_LOCAL_DB" ]]; then
+  echo "▶ Step 1: PUBLISH local lca.db → S3 (--push-local-db)"
+  if [[ ! -f apps/analytics-web/data/lca.db ]]; then
+    echo "  ✗ apps/analytics-web/data/lca.db missing — run \`pnpm --filter analytics-web build:data\` first." >&2
+    exit 1
+  fi
+  echo "  Local lca.db: $(du -h apps/analytics-web/data/lca.db | cut -f1) → s3://$LCA_BUCKET/lca.db"
+  aws s3 cp apps/analytics-web/data/lca.db "s3://$LCA_BUCKET/lca.db" --region "$REGION"
+  echo "  ✓ Published — the server DB is now your local DB"
+else
+  echo "▶ Step 1: use the SERVER lca.db (pull from S3 — freshest, e.g. from the harvester)"
+  if ! aws s3 cp "s3://$LCA_BUCKET/lca.db" apps/analytics-web/data/lca.db --region "$REGION" 2>/dev/null; then
+    echo "  ✗ No lca.db in s3://$LCA_BUCKET/ yet. First deploy? Build it locally" >&2
+    echo "    (pnpm --filter analytics-web build:data) and re-run with --push-local-db to seed S3." >&2
+    exit 1
+  fi
+  echo "  ✓ Pulled server lca.db ($(du -h apps/analytics-web/data/lca.db | cut -f1)) — the image bakes this; S3 left untouched"
 fi
-SIZE=$(du -h apps/analytics-web/data/lca.db | cut -f1)
-echo "  Local lca.db: $SIZE"
-aws s3 cp apps/analytics-web/data/lca.db "s3://$LCA_BUCKET/lca.db" \
-  --region "$REGION"
-echo "  ✓ Uploaded"
 
 # ----- 2. Lambda image ----------------------------------------------------
 echo "▶ Step 2: Lambda Docker image → ECR"
