@@ -40,9 +40,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -86,20 +86,20 @@ jobs:
       HF_HUB_DISABLE_PROGRESS_BARS: '1'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Node toolchain — needed to run `cli-tool db:init`, which applies the
       # full Postgres schema (canonical_employers, employer_embeddings, …).
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -108,7 +108,7 @@ jobs:
       # Cache the sentence-transformer weights between runs (~80 MB).
       # Hash on a stable marker so cache key only changes when the model does.
       - name: Cache HuggingFace model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
           key: hf-${{ runner.os }}-all-MiniLM-L6-v2-v1
