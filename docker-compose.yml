@@ -22,6 +22,10 @@ services:
     image: pgvector/pgvector:pg16
     container_name: lca_db
     restart: unless-stopped
+    # Postgres uses POSIX shared memory (/dev/shm) for parallel work — building
+    # the pgvector HNSW index needs ~256MB, but Docker's default /dev/shm is 64MB
+    # ("could not resize shared memory segment ... No space left on device").
+    shm_size: '1gb'
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-lca_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lca_pass}
@@ -125,6 +129,12 @@ services:
       OPERATOR_UI_PORT: 8080
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
+      # Release controls (Promote / Rebuild preview / Shut down). Only set on the
+      # burst review box — absent locally, so the controls hide themselves.
+      INSTANCE_ID: ${INSTANCE_ID:-}
+      RELEASE: ${RELEASE:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      EVENT_SOURCE: ${EVENT_SOURCE:-lca.operator}
     ports:
       - "${OPERATOR_UI_PORT:-8080}:8080"
     depends_on:

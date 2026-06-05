@@ -17,7 +17,8 @@ import { getXlsxStream } from 'xlstream';
 import IORedis from 'ioredis';
 import pino from 'pino';
 import { randomUUID } from 'node:crypto';
-import { bulkCopyJsonb, ensureSchema, closePool } from '@lca/db-lib';
+import { bulkCopyJsonb, ensureSchema, closePool, replaceFilingYear } from '@lca/db-lib';
+import { isPreFlag, normalizePreFlagRecord, ICERT_ALIASES } from './preflag.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -43,8 +44,24 @@ const nlpQueue = new Queue(NLP_QUEUE, { connection: redis });
  * @param {{ filePath: string, sourceFile: string, filingYear: number }} data
  */
 async function processIngestJob(data) {
-  const { filePath, sourceFile, filingYear } = data;
-  log.info({ filePath, filingYear }, 'ingestor.job.start');
+  const { filePath, sourceFile, filingYear, supersede } = data;
+  log.info({ filePath, filingYear, supersede: !!supersede }, 'ingestor.job.start');
+
+  // The DOL quarterly files are cumulative within a fiscal year — a newer
+  // quarter supersedes the prior one. When the harvester flags a supersede,
+  // clear the year first so the cumulative file fully REPLACES it (no
+  // duplicate cases) rather than appending. See @lca/db-lib replaceFilingYear.
+  if (supersede && Number.isInteger(filingYear)) {
+    log.info({ filingYear }, 'ingestor.supersede.clear');
+    await replaceFilingYear(filingYear);
+  }
+
+  // Pre-FLAG (FY<2020) files use partly-different column headers; normalize them
+  // to the canonical FLAG keys the NLP + analytics read. No-op for FLAG-era files.
+  const preFlag = isPreFlag(filingYear);
+  if (preFlag) {
+    log.info({ filingYear, aliases: ICERT_ALIASES }, 'ingestor.preflag.normalize');
+  }
 
   let totalRows = 0;
   let batch = [];
@@ -63,6 +80,7 @@ async function processIngestJob(data) {
     const record = row.formatted?.obj ?? row.obj ?? row;
     record._source_file = sourceFile;
     record._filing_year = filingYear;
+    if (preFlag) normalizePreFlagRecord(record);
 
     batch.push(record);
     totalRows++;

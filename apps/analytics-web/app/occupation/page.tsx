@@ -9,6 +9,7 @@ import {
   OccupationExplorer,
   type OccupationExplorerRow,
 } from '@/components/OccupationExplorer';
+import { AdSlot } from '@/components/AdSlot';
 
 export const metadata: Metadata = entityMetadata({
   title: 'H-1B Occupations — Salary Guide Index',
@@ -49,6 +50,8 @@ export default function OccupationIndex() {
       </section>
 
       <Summary summary={summary} />
+
+      <AdSlot name="occupation-index-top" />
 
       <OccupationExplorer rows={explorerRows} years={spark.years} />
     </>

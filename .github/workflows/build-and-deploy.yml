@@ -41,9 +41,9 @@ jobs:
   typecheck:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter analytics-web typecheck
@@ -53,7 +53,7 @@ jobs:
     if: github.event_name == 'push'      # deploy only on a merge, never on a PR
     runs-on: ubuntu-24.04-arm            # native arm64 (free on public repos) — builds the arm64 image without QEMU emulation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Resolve target by branch
         run: |
@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::299834553927:role/github-actions-deploy
           aws-region: ${{ env.AWS_REGION }}
@@ -83,8 +83,8 @@ jobs:
           mkdir -p apps/analytics-web/data
           aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build + push image
         run: |

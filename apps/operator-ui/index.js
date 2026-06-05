@@ -27,6 +27,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import reviewRoutes from './routes/reviews.js';
 import quarantineRoutes from './routes/quarantine.js';
 import unresolvedRoutes from './routes/unresolved.js';
+import releaseRoutes from './routes/release.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,7 @@ await app.register(dashboardRoutes);
 await app.register(reviewRoutes);
 await app.register(quarantineRoutes);
 await app.register(unresolvedRoutes);
+await app.register(releaseRoutes);
 
 // Graceful shutdown.
 async function shutdown(signal) {

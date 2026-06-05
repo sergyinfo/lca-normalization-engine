@@ -32,6 +32,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: url('/'),                          lastModified, changeFrequency: 'weekly',    priority: 1.0 },
     { url: url('/about'),                     lastModified, changeFrequency: 'yearly',  priority: 0.6 },
     { url: url('/methodology'),               lastModified, changeFrequency: 'yearly',  priority: 0.7 },
+    { url: url('/privacy'),                    lastModified, changeFrequency: 'yearly',  priority: 0.3 },
     { url: url('/employer'),                  lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: url('/occupation'),                lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: url('/state'),                     lastModified, changeFrequency: 'monthly', priority: 0.8 },

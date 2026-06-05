@@ -18,6 +18,9 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM base AS runtime
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/db-lib/node_modules ./packages/db-lib/node_modules
+# pnpm installs each workspace package's deps into ITS OWN node_modules (symlinks
+# into /app/node_modules/.pnpm). Without this the app can't resolve its dependencies.
+COPY --from=deps /app/apps/operator-ui/node_modules ./apps/operator-ui/node_modules
 
 COPY packages/db-lib/ ./packages/db-lib/
 COPY apps/operator-ui/ ./apps/operator-ui/

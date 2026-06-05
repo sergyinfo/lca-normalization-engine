@@ -1,5 +1,7 @@
 <%- include('partials/header', { title: 'Dashboard' }) %>
 
+<%- include('partials/flash', { flash }) %>
+
 <h1>Review queues</h1>
 <p class="muted">Pick a queue to walk pending items.</p>
 
@@ -41,5 +43,33 @@
     <p>staging.unresolved_employers — entity-resolution misses. Merge into existing canonical or create new.</p>
   </a>
 </div>
+
+<% if (release) { %>
+  <section class="release-control">
+    <h2>Release control <span class="muted">— release <%= release %></span></h2>
+    <p class="muted">
+      When the three queues look good, ship the reviewed data to production. These
+      buttons publish a signed action to AWS — the actual deploy runs on this box
+      via Step Functions, and you'll get an email when it finishes.
+    </p>
+    <div class="release-actions">
+      <form method="post" action="/release/preview"
+            onsubmit="return confirm('Rebuild dev.h1b.report from your latest edits? (prod is untouched)')">
+        <button type="submit">Rebuild preview</button>
+        <span class="muted">Re-derive dev.h1b.report so the preview reflects your edits.</span>
+      </form>
+      <form method="post" action="/release/promote"
+            onsubmit="return confirm('PROMOTE to production? This rebuilds lca.db from the corrected data and ships it live to h1b.report.')">
+        <button type="submit" class="primary">Promote to prod</button>
+        <span class="muted">Rebuild from the corrected Postgres and deploy to h1b.report.</span>
+      </form>
+      <form method="post" action="/release/shutdown"
+            onsubmit="return confirm('Shut down the review box? operator.h1b.report stops resolving and this instance terminates.')">
+        <button type="submit" class="danger">Shut down review box</button>
+        <span class="muted">Terminate this instance — do this after promoting (or to abandon).</span>
+      </form>
+    </div>
+  </section>
+<% } %>
 
 <%- include('partials/footer') %>
