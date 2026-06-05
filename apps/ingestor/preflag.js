@@ -24,16 +24,33 @@ export const CANONICAL_KEYS = [
 ];
 
 /**
- * iCERT-era (FY2015–2019) header → canonical FLAG key.
+ * Pre-FLAG header → canonical FLAG key (confirmed against the real FY2019 file,
+ * 260 columns, via inspect-headers.mjs).
  *
- * FY2019 overlaps FLAG heavily (employer / wage / worksite / NAICS headers match
- * by name), so this map is tiny. Extend it ONLY after confirming a real header
- * row with inspect-headers.mjs. Known gaps for FY2019, not aliasable (the field
- * simply doesn't exist pre-FLAG): EMPLOYER_FEIN (so Layer-1 FEIN dedup is skipped
- * for that year — ER falls back to trigram/semantic).
+ * The pre-FLAG disclosure file is a WIDE multi-worksite layout: each case carries
+ * up to 10 worksites inline, each a block suffixed _1…_10 (WORKSITE_*_N,
+ * WAGE_RATE_OF_PAY_*_N, PREVAILING_WAGE_N, PW_*_N). FLAG (FY2020+) normalized this
+ * to ONE primary worksite per Disclosure row with unsuffixed names (the extra
+ * worksites moved to the separate Worksites file we don't join — out of scope).
+ * So we map the PRIMARY worksite block (_1) onto the canonical FLAG keys; the
+ * _2…_10 blocks stay verbatim in the JSONB, unread (same as the FLAG worksite-join
+ * being out of scope). Identical-name fields (CASE_STATUS, JOB_TITLE, SOC_CODE,
+ * SOC_TITLE, EMPLOYER_NAME/CITY/STATE, NAICS_CODE) need no alias.
+ *
+ * Genuinely absent in FY2019 (not aliasable): EMPLOYER_FEIN — so Layer-1 FEIN
+ * dedup is skipped for that year and ER falls back to trigram/semantic.
+ *
+ * CONFIRM against a real header row before trusting a NEW year:
+ *   node apps/ingestor/inspect-headers.mjs <file.xlsx>
  */
 export const ICERT_ALIASES = {
-  SOC_NAME: 'SOC_TITLE', // iCERT used SOC_NAME; FLAG renamed it SOC_TITLE
+  WORKSITE_CITY_1: 'WORKSITE_CITY',
+  WORKSITE_STATE_1: 'WORKSITE_STATE',
+  WAGE_RATE_OF_PAY_FROM_1: 'WAGE_RATE_OF_PAY_FROM',
+  WAGE_UNIT_OF_PAY_1: 'WAGE_UNIT_OF_PAY',
+  PREVAILING_WAGE_1: 'PREVAILING_WAGE',
+  PW_UNIT_OF_PAY_1: 'PW_UNIT_OF_PAY',
+  PW_WAGE_LEVEL_1: 'PW_WAGE_LEVEL',
 };
 
 /** True for pre-FLAG fiscal years (< 2020). */
@@ -47,7 +64,7 @@ export function isPreFlag(filingYear) {
  *
  * @param {Record<string, unknown>} record  one parsed XLSX row
  * @param {Record<string, string>} [aliases] header→canonical map (default iCERT)
- * @returns {string[]} the aliases actually applied (e.g. ['SOC_NAME->SOC_TITLE'])
+ * @returns {string[]} the aliases actually applied (e.g. ['PREVAILING_WAGE_1->PREVAILING_WAGE'])
  */
 export function normalizePreFlagRecord(record, aliases = ICERT_ALIASES) {
   const applied = [];
