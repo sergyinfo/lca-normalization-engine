@@ -147,6 +147,8 @@ function SiteFooter() {
           <Link href="/about" className="hover:text-foreground">About</Link>
           <span aria-hidden>·</span>
           <Link href="/methodology" className="hover:text-foreground">Methodology</Link>
+          <span aria-hidden>·</span>
+          <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
           {FEATURES.api ? (
             <>
               <span aria-hidden>·</span>
