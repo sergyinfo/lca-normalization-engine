@@ -50,9 +50,6 @@ export function AdPlaceholder({
         className,
       )}
     >
-      <div className="border-b bg-muted/30 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        Advertisement
-      </div>
       <div className="flex items-center justify-center p-3">
         <div
           style={{ minHeight }}
