@@ -25,12 +25,16 @@ if (!file) {
   process.exit(2);
 }
 
-const stream = await getXlsxStream({ filePath: file, sheet: 0, withHeader: true, ignoreEmpty: true });
+// Read the LITERAL header row (withHeader:false → first row's cell array). Do NOT
+// derive headers from a data row's object keys: xlstream drops keys for empty
+// trailing cells, so a column blank in row 1 would be under-reported (it was —
+// FY2019's first row hid ~226 columns, incl. all the PREVAILING_WAGE_N blocks).
+const stream = await getXlsxStream({ filePath: file, sheet: 0, withHeader: false, ignoreEmpty: false });
 let headers = null;
 for await (const row of stream) {
-  const obj = row.formatted?.obj ?? row.obj ?? row;
-  headers = Object.keys(obj);
-  break; // the first data row's keys ARE the header names
+  const arr = row.formatted?.arr ?? row.raw?.arr ?? [];
+  headers = arr.map((h) => String(h).trim()).filter(Boolean);
+  break; // row 0 is the header row
 }
 if (!headers || headers.length === 0) {
   console.error('no rows / no header row found');

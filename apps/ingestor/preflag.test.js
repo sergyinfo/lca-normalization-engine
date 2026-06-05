@@ -11,20 +11,28 @@ test('isPreFlag boundary at FY2020 (the FLAG cutover)', () => {
   assert.equal(isPreFlag(NaN), false);
 });
 
-test('aliases SOC_NAME -> SOC_TITLE and preserves the original', () => {
-  const row = { SOC_NAME: 'Software Developers' };
+test('maps the primary-worksite _1 block onto the canonical FLAG keys', () => {
+  // a slice of a real FY2019 wide row (primary worksite block)
+  const row = {
+    PREVAILING_WAGE_1: '95000', WAGE_RATE_OF_PAY_FROM_1: '110000',
+    WORKSITE_CITY_1: 'Austin', WORKSITE_STATE_1: 'TX', PW_WAGE_LEVEL_1: 'Level II',
+  };
   const applied = normalizePreFlagRecord(row);
-  assert.equal(row.SOC_TITLE, 'Software Developers');
-  assert.equal(row.SOC_NAME, 'Software Developers'); // non-destructive
-  assert.deepEqual(applied, ['SOC_NAME->SOC_TITLE']);
+  assert.equal(row.PREVAILING_WAGE, '95000');
+  assert.equal(row.WAGE_RATE_OF_PAY_FROM, '110000');
+  assert.equal(row.WORKSITE_CITY, 'Austin');
+  assert.equal(row.WORKSITE_STATE, 'TX');
+  assert.equal(row.PW_WAGE_LEVEL, 'Level II');
+  assert.equal(row.PREVAILING_WAGE_1, '95000'); // non-destructive: original kept
+  assert.ok(applied.includes('PREVAILING_WAGE_1->PREVAILING_WAGE'));
   assert.equal(row._schema_era, 'iCERT');
 });
 
 test('never overwrites an existing canonical key', () => {
-  const row = { SOC_NAME: 'old', SOC_TITLE: 'already' };
+  const row = { PREVAILING_WAGE_1: 'old', PREVAILING_WAGE: 'already' };
   const applied = normalizePreFlagRecord(row);
-  assert.equal(row.SOC_TITLE, 'already');
-  assert.deepEqual(applied, []);
+  assert.equal(row.PREVAILING_WAGE, 'already');
+  assert.ok(!applied.includes('PREVAILING_WAGE_1->PREVAILING_WAGE'));
 });
 
 test('no-op aliasing when the source header is absent', () => {
