@@ -18,6 +18,7 @@ import IORedis from 'ioredis';
 import pino from 'pino';
 import { randomUUID } from 'node:crypto';
 import { bulkCopyJsonb, ensureSchema, closePool, replaceFilingYear } from '@lca/db-lib';
+import { isPreFlag, normalizePreFlagRecord, ICERT_ALIASES } from './preflag.js';
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
@@ -55,6 +56,13 @@ async function processIngestJob(data) {
     await replaceFilingYear(filingYear);
   }
 
+  // Pre-FLAG (FY<2020) files use partly-different column headers; normalize them
+  // to the canonical FLAG keys the NLP + analytics read. No-op for FLAG-era files.
+  const preFlag = isPreFlag(filingYear);
+  if (preFlag) {
+    log.info({ filingYear, aliases: ICERT_ALIASES }, 'ingestor.preflag.normalize');
+  }
+
   let totalRows = 0;
   let batch = [];
   let batchIndex = 0;
@@ -72,6 +80,7 @@ async function processIngestJob(data) {
     const record = row.formatted?.obj ?? row.obj ?? row;
     record._source_file = sourceFile;
     record._filing_year = filingYear;
+    if (preFlag) normalizePreFlagRecord(record);
 
     batch.push(record);
     totalRows++;
