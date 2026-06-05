@@ -311,6 +311,10 @@ export class LcaDataPipelineStack extends Stack {
       `# Where files live + the container path the ingestor sees. Exported BEFORE`,
       `# 'compose up' so the ingestion-worker mounts the right dir.`,
       `export LOCAL_FILES_DIR=/opt/lca/data/incoming CONTAINER_MOUNT_DIR=/data`,
+      `# Raise worker concurrency for big (historical-backfill) loads — compose reads`,
+      `# these from the host env (NLP_WORKER_CONCURRENCY/INGESTOR_CONCURRENCY). Sized`,
+      `# for the c7g.4xlarge (16 vCPU); a normal one-quarter run barely needs them.`,
+      `export NLP_WORKER_CONCURRENCY=\${NLP_WORKER_CONCURRENCY:-6} INGESTOR_CONCURRENCY=\${INGESTOR_CONCURRENCY:-8}`,
       `mkdir -p $LOCAL_FILES_DIR`,
       ``,
       `# ----- Pull new DOL files from the S3 inbox -----`,
@@ -522,7 +526,10 @@ export class LcaDataPipelineStack extends Stack {
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C7G, ec2.InstanceSize.XLARGE2),
+      // c7g.4xlarge (16 vCPU / 32 GB) — headroom for the NLP barrier on large
+      // historical backfills (~5M rows). A one-quarter run doesn't need it, but the
+      // extra cost is only while a burst is actually running.
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C7G, ec2.InstanceSize.XLARGE4),
       role: ec2Role,
       securityGroup: sg,
       userData,
