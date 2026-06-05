@@ -9,6 +9,7 @@ import {
   SectorExplorer,
   type SectorExplorerRow,
 } from '@/components/SectorExplorer';
+import { AdSlot } from '@/components/AdSlot';
 
 export const metadata: Metadata = entityMetadata({
   title: 'H-1B Filings by Industry Sector',
@@ -49,6 +50,8 @@ export default function SectorIndex() {
       </section>
 
       <Summary summary={summary} />
+
+      <AdSlot name="sector-index-top" />
 
       <SectorExplorer rows={explorerRows} years={spark.years} />
     </>

@@ -329,6 +329,8 @@ export default async function SectorPage(
         />
         <SeeAlsoLinks kind="sector" />
       </div>
+
+      <AdSlot name="sector-bottom" />
     </>
   );
 }

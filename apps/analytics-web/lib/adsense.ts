@@ -19,6 +19,8 @@
  * The dynamic API routes don't have ads, so their env can rotate freely.
  */
 
+import { getSlotDef } from './ad-slots';
+
 // Public AdSense publisher id for h1b.report — not a secret (it ships in the
 // page source). Default to it so the loader + meta render without build-env
 // wiring; `ADSENSE_CLIENT_ID=none` disables, any other value overrides.
@@ -49,7 +51,9 @@ function getSlotMap(): Record<string, string> {
 }
 
 export function getAdSenseSlotId(name: string): string | null {
-  return getSlotMap()[name] ?? null;
+  // ADSENSE_SLOTS env wins (lets a deploy rotate ids); otherwise fall back to
+  // the id committed in the ad-slots registry. Either is enough to go live.
+  return getSlotMap()[name] ?? getSlotDef(name).id ?? null;
 }
 
 /** True when both the client id and at least one slot are configured. */

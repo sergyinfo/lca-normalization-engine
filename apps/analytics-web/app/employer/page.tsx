@@ -9,6 +9,7 @@ import {
   EmployerExplorer,
   type EmployerExplorerRow,
 } from '@/components/EmployerExplorer';
+import { AdSlot } from '@/components/AdSlot';
 
 export const metadata: Metadata = entityMetadata({
   title: 'Top H-1B Sponsors — Employer Index',
@@ -50,6 +51,8 @@ export default function EmployerIndex() {
       </section>
 
       <Summary summary={summary} />
+
+      <AdSlot name="employer-index-top" />
 
       <EmployerExplorer rows={explorerRows} years={spark.years} />
     </>

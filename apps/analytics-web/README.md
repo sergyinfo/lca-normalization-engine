@@ -75,8 +75,15 @@ Env vars used by the runtime app:
 | `NEXT_PUBLIC_SITE_URL`  | `https://h1b.report` | Canonical origin for sitemap, OG, JSON-LD |
 | `LCA_SQLITE_PATH`       | `./data/lca.db`      | Path to the read-only SQLite file |
 | `LCA_KEYS_DB_PATH`      | `./data/keys.db`     | Path to the mutable API-keys SQLite file |
-| `ADSENSE_CLIENT_ID`     | *(unset)*            | Google AdSense publisher id (`ca-pub-...`). When unset, all `<AdSlot>` placements render dev placeholders. |
-| `ADSENSE_SLOTS`         | `{}`                 | JSON object mapping AdSlot `name` → slot id, e.g. `{"home-top":"1234567890","employer-top":"9876543210"}`. A name without a mapping renders the placeholder. |
+| `ADSENSE_CLIENT_ID`     | `ca-pub-…` (h1b)     | Google AdSense publisher id. `none` disables the loader; any other value overrides the built-in default. |
+| `ADSENSE_SLOTS`         | `{}`                 | JSON map of AdSlot `name` → ad-unit id, e.g. `{"home-top":"1234567890"}`. Overrides ids set in the registry. |
+
+**Ad slots:** every placement on the site is listed in **`lib/ad-slots.ts`** (the
+single source of truth — name, where it appears, and ad-format). To wire a slot
+after AdSense approval, set its `id` there **or** via `ADSENSE_SLOTS`. Until an id
+is set, a slot renders a labeled placeholder in dev and nothing in prod (clean for
+review). All slots are natively styled (`<AdSlot>` → site card + "Advertisement"
+label). Entity pages are prerendered, so changing ids needs a rebuild.
 
 Env vars used by `scripts/generate-summaries.ts`:
 
