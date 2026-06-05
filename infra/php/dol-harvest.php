@@ -38,17 +38,34 @@ $USER_AGENT   = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 
 function logmsg($m) { echo '[' . gmdate('Y-m-d\TH:i:s\Z') . '] ' . $m . "\n"; }
 
-/** GET text (page HTML). Returns [status, body]. */
+/** A realistic browser header set (for accessing the public DOL data page). */
+function browser_headers() {
+    return [
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language: en-US,en;q=0.9',
+        'Upgrade-Insecure-Requests: 1',
+        'Sec-Fetch-Dest: document',
+        'Sec-Fetch-Mode: navigate',
+        'Sec-Fetch-Site: none',
+        'Sec-Fetch-User: ?1',
+        'sec-ch-ua: "Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'sec-ch-ua-mobile: ?0',
+        'sec-ch-ua-platform: "Windows"',
+    ];
+}
+
+/** GET text (page HTML). Returns [status, body]. (curl_close is a no-op in PHP 8+.) */
 function http_get_text($url, $ua) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => 120, CURLOPT_USERAGENT => $ua,
-        CURLOPT_HTTPHEADER => ['Accept: text/html,application/xhtml+xml'],
+        CURLOPT_ENCODING => '',                          // accept gzip/br, auto-decompress
+        CURLOPT_COOKIEFILE => '',                         // enable the in-memory cookie engine
+        CURLOPT_HTTPHEADER => browser_headers(),
     ]);
     $body = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
     return [$code, $body];
 }
 
@@ -59,10 +76,12 @@ function http_download($url, $ua, $destPath) {
     curl_setopt_array($ch, [
         CURLOPT_FILE => $fp, CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => 1200, CURLOPT_USERAGENT => $ua,
+        CURLOPT_ENCODING => '',
+        CURLOPT_COOKIEFILE => '',
+        CURLOPT_HTTPHEADER => ['Accept: */*', 'Accept-Language: en-US,en;q=0.9'],
     ]);
     curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
     fclose($fp);
     return $code;
 }
@@ -117,7 +136,6 @@ function aws_request($method, $service, $host, $uri, $headers, $payload, $region
     curl_setopt_array($ch, $opts);
     $body = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
     if (isset($fp)) fclose($fp);
     return [$code, $body];
 }
