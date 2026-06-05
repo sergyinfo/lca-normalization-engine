@@ -311,9 +311,9 @@ export class LcaDataPipelineStack extends Stack {
       `# Where files live + the container path the ingestor sees. Exported BEFORE`,
       `# 'compose up' so the ingestion-worker mounts the right dir.`,
       `export LOCAL_FILES_DIR=/opt/lca/data/incoming CONTAINER_MOUNT_DIR=/data`,
-      `# Raise worker concurrency for big (historical-backfill) loads — compose reads`,
-      `# these from the host env (NLP_WORKER_CONCURRENCY/INGESTOR_CONCURRENCY). Sized`,
-      `# for the c7g.4xlarge (16 vCPU); a normal one-quarter run barely needs them.`,
+      `# Worker concurrency (compose reads NLP_WORKER_CONCURRENCY/INGESTOR_CONCURRENCY`,
+      `# from the host env). Modest defaults that work on the c7g.2xlarge and scale`,
+      `# onto a bigger backfill box; overridable via env.`,
       `export NLP_WORKER_CONCURRENCY=\${NLP_WORKER_CONCURRENCY:-6} INGESTOR_CONCURRENCY=\${INGESTOR_CONCURRENCY:-8}`,
       `mkdir -p $LOCAL_FILES_DIR`,
       ``,
@@ -390,14 +390,28 @@ export class LcaDataPipelineStack extends Stack {
       `  exit 0`,
       `fi`,
       ``,
-      `# Barrier: wait for the ingest + NLP queues to drain (two consecutive empty`,
-      `# checks guard against a momentary lull mid-batch).`,
-      `cat > /tmp/qdepth.mjs <<'MJS'`,
+      `# Deferred NLP? Read the DeferNlp tag the launcher stamped (per-run). Deferred`,
+      `# = wait only for the INGEST queue at the barrier; the NLP worker keeps draining`,
+      `# nlp-tasks in the BACKGROUND on this kept-alive review box, and a later`,
+      `# Rebuild-preview picks up the normalised data. Full (default) = wait for both.`,
+      `DEFER_NLP=$(aws ec2 describe-tags --region $REGION \\`,
+      `  --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=DeferNlp" \\`,
+      `  --query 'Tags[0].Value' --output text 2>/dev/null || echo false)`,
+      `[ "$DEFER_NLP" = "None" ] && DEFER_NLP=false`,
+      `if [ "$DEFER_NLP" = "true" ]; then BARRIER_QUEUES="ingest-tasks"; else BARRIER_QUEUES="ingest-tasks nlp-tasks"; fi`,
+      `echo "defer NLP: $DEFER_NLP — barrier waits on: $BARRIER_QUEUES"`,
+      ``,
+      `# Barrier: wait for the relevant queue(s) to drain (two consecutive empty checks`,
+      `# guard against a momentary lull mid-batch). qdepth.mjs MUST live in a workspace`,
+      `# package dir so its bullmq/ioredis imports resolve — running it from /tmp made`,
+      `# the import fail, and the old '|| echo 1' then looped the barrier forever.`,
+      `QDEPTH=/opt/lca/apps/harvester/qdepth.mjs`,
+      `cat > "$QDEPTH" <<'MJS'`,
       `import { Queue } from 'bullmq';`,
       `import IORedis from 'ioredis';`,
       `const r = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });`,
       `let total = 0;`,
-      `for (const n of ['ingest-tasks','nlp-tasks']) {`,
+      `for (const n of process.argv.slice(2)) {`,
       `  const q = new Queue(n, { connection: r });`,
       `  const c = await q.getJobCounts('waiting','active','delayed','paused');`,
       `  total += (c.waiting||0)+(c.active||0)+(c.delayed||0)+(c.paused||0);`,
@@ -406,13 +420,20 @@ export class LcaDataPipelineStack extends Stack {
       `console.log(total);`,
       `await r.quit();`,
       `MJS`,
+      `# Sanity: the helper must actually run, else the barrier would loop forever.`,
+      `if ! node "$QDEPTH" $BARRIER_QUEUES >/dev/null 2>&1; then`,
+      `  aws sns publish --region $REGION --topic-arn ${notifyTopic.topicArn} \\`,
+      `    --subject "[LCA] burst barrier helper failed ($RELEASE)" \\`,
+      `    --message "qdepth.mjs could not run (dependency resolution?). Box stays up for debugging."`,
+      `  exit 1`,
+      `fi`,
       `EMPTY=0`,
       `while [ "$EMPTY" -lt 2 ]; do`,
       `  sleep 20`,
-      `  DEPTH=$(node /tmp/qdepth.mjs 2>/dev/null || echo 1)`,
+      `  DEPTH=$(node "$QDEPTH" $BARRIER_QUEUES 2>/dev/null || echo ERR)`,
       `  if [ "$DEPTH" = "0" ]; then EMPTY=$((EMPTY+1)); else EMPTY=0; fi`,
       `done`,
-      `echo "queues drained for $RELEASE"`,
+      `echo "barrier drained ($BARRIER_QUEUES) for $RELEASE"`,
       ``,
       `# Ingested into PG — archive the inbox files out of the way.`,
       `archive_inbox`,
@@ -526,10 +547,10 @@ export class LcaDataPipelineStack extends Stack {
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
-      // c7g.4xlarge (16 vCPU / 32 GB) — headroom for the NLP barrier on large
-      // historical backfills (~5M rows). A one-quarter run doesn't need it, but the
-      // extra cost is only while a burst is actually running.
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C7G, ec2.InstanceSize.XLARGE4),
+      // Default size; the Step Function (PrepareConfig) overrides InstanceType
+      // per-run from the trigger event — c7g.2xlarge for the regular harvester +
+      // quarterly path, a bigger box for a historical backfill.
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.C7G, ec2.InstanceSize.XLARGE2),
       role: ec2Role,
       securityGroup: sg,
       userData,
@@ -572,13 +593,17 @@ export class LcaDataPipelineStack extends Stack {
         MinCount: 1,
         MaxCount: 1,
         SubnetId: vpc.publicSubnets[0]!.subnetId,
+        // Per-run instance size from the trigger event (default c7g.2xlarge). A
+        // historical backfill passes a bigger one; quarterly runs use the default.
+        'InstanceType.$': '$.prep.cfg.instanceType',
         TagSpecifications: [{
           ResourceType: 'instance',
-          // The IAM condition above checks BurstWorker=true; project-wide
-          // tags propagate from the launch template automatically.
+          // BurstWorker drives the IAM self-terminate condition + single-flight.
+          // DeferNlp (per-run) tells the box to wait only for ingest at the barrier.
           Tags: [
             { Key: 'BurstWorker', Value: 'true' },
             { Key: 'Name',        Value: 'lca-burst-worker' },
+            { Key: 'DeferNlp', 'Value.$': '$.prep.cfg.deferNlp' },
           ],
         }],
       },
@@ -619,14 +644,27 @@ export class LcaDataPipelineStack extends Stack {
       ),
     });
 
-    const definition = checkRunning.next(
+    // Merge per-run overrides from the trigger event over safe defaults, so a
+    // single trigger can request a bigger box and/or deferred NLP:
+    //   instanceType — default c7g.2xlarge (regular: harvester + quarterly).
+    //   deferNlp     — default 'false' (full NLP barrier). 'true' = ingest-only.
+    // $.detail always exists (EventBridge passes the full event); JsonMerge lets
+    // the event's fields win and fills any it omits.
+    const prepConfig = new sfn.Pass(this, 'PrepareConfig', {
+      parameters: {
+        'cfg.$': "States.JsonMerge(States.StringToJson('{\"instanceType\":\"c7g.2xlarge\",\"deferNlp\":\"false\"}'), $.detail, false)",
+      },
+      resultPath: '$.prep',
+    });
+
+    const definition = prepConfig.next(checkRunning.next(
       new sfn.Choice(this, 'AlreadyRunning?')
         .when(
           sfn.Condition.isPresent('$.running.Reservations[0].Instances[0].InstanceId'),
           skip,
         )
         .otherwise(runEc2.addCatch(failure, { resultPath: '$.error' }).next(success)),
-    );
+    ));
 
     const stateMachine = new sfn.StateMachine(this, 'BuildPipeline', {
       stateMachineName: 'lca-build-pipeline',
