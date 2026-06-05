@@ -15,11 +15,11 @@ import type { ReactNode } from 'react';
 import { ADSENSE_CLIENT_ID, getAdSenseSlotId } from '@/lib/adsense';
 import { getSlotDef, type AdFormat } from '@/lib/ad-slots';
 import { cn } from '@/lib/utils';
+import { AdPlaceholder } from './AdPlaceholder';
 
 interface Props {
   name: string;
   className?: string;
-  children?: ReactNode;
 }
 
 const MIN_HEIGHT: Record<AdFormat, number> = {
@@ -47,7 +47,7 @@ function AdFrame({ format, className, children }: { format: AdFormat; className?
   );
 }
 
-export function AdSlot({ name, className, children }: Props) {
+export function AdSlot({ name, className }: Props) {
   const { format } = getSlotDef(name);
   const minHeight = MIN_HEIGHT[format];
   const slotId = ADSENSE_CLIENT_ID ? getAdSenseSlotId(name) : null;
@@ -74,17 +74,7 @@ export function AdSlot({ name, className, children }: Props) {
     );
   }
 
-  // No id yet: visible labeled placeholder in dev, nothing in production.
-  if (process.env.NODE_ENV === 'production') return null;
-  return (
-    <AdFrame format={format} className={className}>
-      <div
-        data-ad-slot={name}
-        style={{ minHeight }}
-        className="flex w-full items-center justify-center rounded border border-dashed border-border bg-muted/30 px-6 text-center text-xs text-muted-foreground"
-      >
-        {children ?? `Ad · ${name} · ${format}`}
-      </div>
-    </AdFrame>
-  );
+  // No id yet: a host-gated placeholder (visible on dev/localhost/preview hosts,
+  // hidden on the canonical prod domain) so you can see where each slot lands.
+  return <AdPlaceholder name={name} format={format} minHeight={minHeight} className={className} />;
 }
