@@ -2,9 +2,9 @@
  * Burst-on-demand data pipeline (human-gated release).
  *
  * DOL's WAF blocks AWS IP ranges, so release detection + download run OFF-AWS:
- * the PHP cron in infra/php scrapes DOL, uploads a new LCA Disclosure file to
- * the S3 inbox (s3://<scratch>/incoming/), and fires the `lca.manual/build.run`
- * EventBridge event. From there:
+ * the dol-watch agent on a residential machine (infra/mac) scrapes DOL, uploads a
+ * new Disclosure file to the S3 inbox (s3://<scratch>/incoming/), and fires the
+ * `lca.manual/build.run` EventBridge event. From there:
  *
  *   ManualRunRule ─► Step Functions:
  *     CheckBurstRunning → AlreadyRunning? (single-flight)
@@ -312,8 +312,8 @@ export class LcaDataPipelineStack extends Stack {
       `mkdir -p $LOCAL_FILES_DIR`,
       ``,
       `# ----- Pull new DOL files from the S3 inbox -----`,
-      `# DOL's WAF blocks AWS, so the release check + download run OFF-AWS (the PHP`,
-      `# cron in infra/php) and land here: s3://<scratch>/incoming/. Sync them; the`,
+      `# DOL's WAF blocks AWS, so the release check + download run OFF-AWS (the`,
+      `# dol-watch agent, infra/mac) and land here: s3://<scratch>/incoming/. Sync them; the`,
       `# harvester (LOCAL mode) applies the same scope/dedup/supersede logic.`,
       `INBOX="s3://${shared.ingestScratchBucket.bucketName}/incoming"`,
       `aws s3 sync "$INBOX/" "$LOCAL_FILES_DIR/" --exclude '*' --include '*.xlsx' --region $REGION`,
@@ -531,9 +531,9 @@ export class LcaDataPipelineStack extends Stack {
 
     // NOTE: the DOL-checker Lambda + daily schedule were REMOVED — DOL's WAF
     // blocks AWS IP ranges (403 to Lambda + EC2), so no AWS-resident checker can
-    // see new releases. Detection now runs OFF-AWS via the PHP cron (infra/php),
-    // which uploads the new file to the S3 inbox and fires the ManualRunRule
-    // (lca.manual / build.run) below. See infra/php/dol-harvest.php.
+    // see new releases. Detection now runs OFF-AWS via the dol-watch agent
+    // (infra/mac), which uploads the new file to the S3 inbox and fires the
+    // ManualRunRule (lca.manual / build.run) below. See infra/mac/README.md.
 
     // ---------------------------------------------------------------------
     // Step Functions state machine that orchestrates the build.
@@ -639,9 +639,9 @@ export class LcaDataPipelineStack extends Stack {
       resources: ['*'],
     }));
 
-    // The burst is triggered by the off-AWS PHP cron (it uploads a new LCA file
-    // to the S3 inbox, then fires this event). The single-flight guard in the
-    // state machine prevents a second box if one is already up.
+    // The burst is triggered by the off-AWS dol-watch agent (it uploads a new
+    // file to the S3 inbox, then fires this event). The single-flight guard in
+    // the state machine prevents a second box if one is already up.
     new events.Rule(this, 'ManualRunRule', {
       eventPattern: {
         source: ['lca.manual'],
