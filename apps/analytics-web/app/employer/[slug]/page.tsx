@@ -286,6 +286,8 @@ export default async function EmployerPage(
           __html: JSON.stringify(organizationJsonLd(e, `${SITE_URL}/employer/${slug}`)),
         }}
       />
+
+      <AdSlot name="employer-bottom" />
     </>
   );
 }

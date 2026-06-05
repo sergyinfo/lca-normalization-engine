@@ -333,6 +333,8 @@ export default async function OccupationPage(
           __html: JSON.stringify(occupationJsonLd(o, `${SITE_URL}/occupation/${slug}`)),
         }}
       />
+
+      <AdSlot name="occupation-bottom" />
     </>
   );
 }

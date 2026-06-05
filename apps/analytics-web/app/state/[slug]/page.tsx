@@ -296,6 +296,8 @@ export default async function StatePage(
           __html: JSON.stringify(placeJsonLd(s, `${SITE_URL}/state/${slug}`)),
         }}
       />
+
+      <AdSlot name="state-bottom" />
     </>
   );
 }

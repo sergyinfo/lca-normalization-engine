@@ -11,6 +11,7 @@ import { entityMetadata } from '@/lib/seo';
 import { Badge } from '@/components/ui/badge';
 import { Summary } from '@/components/Summary';
 import { StateExplorer, type StateExplorerRow } from '@/components/StateExplorer';
+import { AdSlot } from '@/components/AdSlot';
 
 export const metadata: Metadata = entityMetadata({
   title: 'H-1B Filings by State',
@@ -56,6 +57,8 @@ export default function StateIndex() {
       </section>
 
       <Summary summary={summary} />
+
+      <AdSlot name="state-index-top" />
 
       <StateExplorer rows={explorerRows} years={spark.years} />
     </>

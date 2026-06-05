@@ -136,6 +136,8 @@ export function RankingPage({
         </CardContent>
       </Card>
 
+      <AdSlot name={`${adSlotName}-bottom`} />
+
       <script
         type="application/ld+json"
         // eslint-disable-next-line react/no-danger

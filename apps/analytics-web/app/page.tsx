@@ -220,6 +220,8 @@ export default function HomePage() {
         </div>
       </section>
 
+      <AdSlot name="home-mid" />
+
       {/* ----- Top tables ------------------------------------------------- */}
       <section className="grid md:grid-cols-2 gap-6 pt-8">
         <Card>
@@ -298,6 +300,8 @@ export default function HomePage() {
           </CardContent>
         </Card>
       </section>
+
+      <AdSlot name="home-bottom" />
 
       <script
         type="application/ld+json"
