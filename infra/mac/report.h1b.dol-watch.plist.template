@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>report.h1b.dol-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__SCRIPT__</string>
+  </array>
+
+  <!-- Run once at login/load (catches up if a daily slot was missed while off) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- ...and once a day at 13:00 local. If the Mac is asleep at 13:00, launchd
+       runs it at the next wake — perfect for a laptop. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>13</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- Homebrew aws + system tools must be on PATH (launchd has a minimal one). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.dol-watch/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.dol-watch/launchd.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
