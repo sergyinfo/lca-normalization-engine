@@ -24,26 +24,31 @@ export const CANONICAL_KEYS = [
 ];
 
 /**
- * Pre-FLAG header → canonical FLAG key (confirmed against the real FY2019 file,
- * 260 columns, via inspect-headers.mjs).
+ * Pre-FLAG header → canonical FLAG key. Confirmed against the real FY2018 + FY2019
+ * files via inspect-headers.mjs — and they are NOT the same sub-format:
  *
- * The pre-FLAG disclosure file is a WIDE multi-worksite layout: each case carries
- * up to 10 worksites inline, each a block suffixed _1…_10 (WORKSITE_*_N,
- * WAGE_RATE_OF_PAY_*_N, PREVAILING_WAGE_N, PW_*_N). FLAG (FY2020+) normalized this
- * to ONE primary worksite per Disclosure row with unsuffixed names (the extra
- * worksites moved to the separate Worksites file we don't join — out of scope).
- * So we map the PRIMARY worksite block (_1) onto the canonical FLAG keys; the
- * _2…_10 blocks stay verbatim in the JSONB, unread (same as the FLAG worksite-join
- * being out of scope). Identical-name fields (CASE_STATUS, JOB_TITLE, SOC_CODE,
- * SOC_TITLE, EMPLOYER_NAME/CITY/STATE, NAICS_CODE) need no alias.
+ *  • FY2019 (260 cols) — WIDE multi-worksite: each case carries up to 10 worksites
+ *    inline, each a block suffixed _1…_10 (WORKSITE_*_N, WAGE_RATE_OF_PAY_*_N,
+ *    PREVAILING_WAGE_N, PW_*_N). FLAG (FY2020+) flattened this to ONE primary
+ *    worksite per Disclosure row with unsuffixed names. So we map the PRIMARY (_1)
+ *    block → canonical; _2…_10 stay verbatim in the JSONB, unread (same as the FLAG
+ *    worksite-join being out of scope). FY2019 already uses SOC_TITLE natively.
+ *  • FY2018 (52 cols) — NARROW: worksite/wage/PW are already unsuffixed (native),
+ *    but the SOC label is the older SOC_NAME (not SOC_TITLE).
  *
- * Genuinely absent in FY2019 (not aliasable): EMPLOYER_FEIN — so Layer-1 FEIN
- * dedup is skipped for that year and ER falls back to trigram/semantic.
+ * One combined map serves both: each alias only fires when its source key is present
+ * AND the canonical target is absent, so the _1 aliases no-op on FY2018 and the
+ * SOC_NAME alias no-ops on FY2019. Identical-name fields (CASE_STATUS, JOB_TITLE,
+ * SOC_CODE, EMPLOYER_NAME/CITY/STATE, NAICS_CODE) need no alias.
  *
- * CONFIRM against a real header row before trusting a NEW year:
+ * Genuinely absent in BOTH years (not aliasable): EMPLOYER_FEIN — so Layer-1 FEIN
+ * dedup is skipped for them and ER falls back to trigram/semantic.
+ *
+ * CONFIRM against a real header row before trusting a NEW year (sub-formats vary):
  *   node apps/ingestor/inspect-headers.mjs <file.xlsx>
  */
 export const ICERT_ALIASES = {
+  // FY2019 wide format — primary-worksite (_1) block → canonical FLAG keys
   WORKSITE_CITY_1: 'WORKSITE_CITY',
   WORKSITE_STATE_1: 'WORKSITE_STATE',
   WAGE_RATE_OF_PAY_FROM_1: 'WAGE_RATE_OF_PAY_FROM',
@@ -51,6 +56,8 @@ export const ICERT_ALIASES = {
   PREVAILING_WAGE_1: 'PREVAILING_WAGE',
   PW_UNIT_OF_PAY_1: 'PW_UNIT_OF_PAY',
   PW_WAGE_LEVEL_1: 'PW_WAGE_LEVEL',
+  // FY2018 narrow format — older SOC label (worksite/wage/PW are already unsuffixed)
+  SOC_NAME: 'SOC_TITLE',
 };
 
 /** True for pre-FLAG fiscal years (< 2020). */

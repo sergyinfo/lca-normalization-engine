@@ -28,6 +28,17 @@ test('maps the primary-worksite _1 block onto the canonical FLAG keys', () => {
   assert.equal(row._schema_era, 'iCERT');
 });
 
+test('FY2018 narrow format: SOC_NAME -> SOC_TITLE, _1 aliases no-op', () => {
+  // a slice of a real FY2018 narrow row (unsuffixed names, older SOC label)
+  const row = {
+    SOC_NAME: 'Software Developers', PREVAILING_WAGE: '95000', WORKSITE_STATE: 'TX',
+  };
+  const applied = normalizePreFlagRecord(row);
+  assert.equal(row.SOC_TITLE, 'Software Developers');
+  assert.equal(row.SOC_NAME, 'Software Developers'); // non-destructive
+  assert.deepEqual(applied, ['SOC_NAME->SOC_TITLE']); // only this fires for FY2018
+});
+
 test('never overwrites an existing canonical key', () => {
   const row = { PREVAILING_WAGE_1: 'old', PREVAILING_WAGE: 'already' };
   const applied = normalizePreFlagRecord(row);
