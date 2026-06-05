@@ -34,6 +34,9 @@ $START_YEAR   = 2020;                                               // matches t
 $FILE_REGEX   = '/LCA_Disclosure_Data_FY(20\d{2})/i';              // capture group 1 = year
 $STATE_FILE   = __DIR__ . '/dol-harvest.state';                    // last processed "YYYY-Q"
 $USER_AGENT   = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// One cookie jar shared across the page fetch + the file download — Akamai sets
+// a bot-clearance cookie on the page request that the file request needs too.
+$COOKIE_JAR   = sys_get_temp_dir() . '/dol-harvest-cookies.txt';
 // ---------------------------------------------------------------------------
 
 function logmsg($m) { echo '[' . gmdate('Y-m-d\TH:i:s\Z') . '] ' . $m . "\n"; }
@@ -55,13 +58,14 @@ function browser_headers() {
 }
 
 /** GET text (page HTML). Returns [status, body]. (curl_close is a no-op in PHP 8+.) */
-function http_get_text($url, $ua) {
+function http_get_text($url, $ua, $cookieJar) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => 120, CURLOPT_USERAGENT => $ua,
         CURLOPT_ENCODING => '',                          // accept gzip/br, auto-decompress
-        CURLOPT_COOKIEFILE => '',                         // enable the in-memory cookie engine
+        CURLOPT_COOKIEJAR => $cookieJar,                  // persist the clearance cookie
+        CURLOPT_COOKIEFILE => $cookieJar,
         CURLOPT_HTTPHEADER => browser_headers(),
     ]);
     $body = curl_exec($ch);
@@ -70,15 +74,18 @@ function http_get_text($url, $ua) {
 }
 
 /** Stream a URL to a local file. Returns http status. */
-function http_download($url, $ua, $destPath) {
+function http_download($url, $ua, $destPath, $cookieJar, $referer) {
     $fp = fopen($destPath, 'wb');
     $ch = curl_init($url);
+    $hdrs = browser_headers();
+    $hdrs[] = 'Referer: ' . $referer;
     curl_setopt_array($ch, [
         CURLOPT_FILE => $fp, CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => 1200, CURLOPT_USERAGENT => $ua,
         CURLOPT_ENCODING => '',
-        CURLOPT_COOKIEFILE => '',
-        CURLOPT_HTTPHEADER => ['Accept: */*', 'Accept-Language: en-US,en;q=0.9'],
+        CURLOPT_COOKIEJAR => $cookieJar,
+        CURLOPT_COOKIEFILE => $cookieJar,                 // send the cookie set on the page
+        CURLOPT_HTTPHEADER => $hdrs,
     ]);
     curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -141,7 +148,7 @@ function aws_request($method, $service, $host, $uri, $headers, $payload, $region
 }
 
 // ============================ MAIN =========================================
-[$code, $html] = http_get_text($DOL_URL, $USER_AGENT);
+[$code, $html] = http_get_text($DOL_URL, $USER_AGENT, $COOKIE_JAR);
 if ($code !== 200 || !$html) { logmsg("DOL fetch failed (HTTP $code) — aborting, no state change."); exit(1); }
 
 preg_match_all('/href="([^"]+\.xlsx)"/i', $html, $m);
@@ -164,7 +171,7 @@ if ($best['mark'] <= $state) { logmsg("No new release. Done."); exit(0); }
 // New release — stream-download the (cumulative) newest file to a temp file.
 $tmp = sys_get_temp_dir() . '/' . $best['name'];
 logmsg("New release. Downloading {$best['url']} -> $tmp");
-$dc = http_download($best['url'], $USER_AGENT, $tmp);
+$dc = http_download($best['url'], $USER_AGENT, $tmp, $COOKIE_JAR, $DOL_URL);
 if ($dc !== 200 || !is_file($tmp) || filesize($tmp) === 0) { logmsg("Download failed (HTTP $dc)."); @unlink($tmp); exit(1); }
 logmsg('Downloaded ' . number_format(filesize($tmp)) . ' bytes.');
 
