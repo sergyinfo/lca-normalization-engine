@@ -32,6 +32,7 @@ START_YEAR="${DOL_WATCH_START_YEAR:-2020}"
 STATE_DIR="$HOME/.dol-watch"
 STATE_FILE="$STATE_DIR/state"
 LOG_FILE="$STATE_DIR/dol-watch.log"
+COOKIE_JAR="$STATE_DIR/cookies.txt"
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
 # ---------------------------------------------------------------------------
 
@@ -50,11 +51,42 @@ aws() { "$AWS_BIN" --profile "$AWS_PROFILE_NAME" --region "$AWS_REGION" "$@"; }
 
 echo "[$(ts)] --- run start ---"
 
-# 1. Fetch the DOL page (residential IP -> 200; Akamai 403s datacenters).
-html="$(curl -fsS --compressed -A "$UA" \
-  -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' \
-  -H 'Accept-Language: en-US,en;q=0.9' \
-  "$DOL_URL")" || fail "DOL page fetch failed (curl exit $?) — IP blocked or page down"
+# Single-flight: never let two runs (login + daily, or an install kick) overlap
+# — concurrent requests look bursty to Akamai and get challenged.
+LOCK="$STATE_DIR/.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then echo "[$(ts)] another run in progress — exiting"; exit 0; fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
+# Akamai serves the residential IP a 200 *most* of the time, but occasionally a
+# JS challenge curl can't solve (intermittent 403). Retry with backoff (reusing
+# any cookie Akamai sets) before treating it as a real failure.
+HDRS=(-H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      -H 'Accept-Language: en-US,en;q=0.9')
+fetch_page() {  # echoes HTML on success; returns 1 after all retries fail
+  local a html
+  for a in 1 2 3 4; do
+    if html="$(curl -fsS --compressed -A "$UA" "${HDRS[@]}" \
+                 -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$DOL_URL")"; then
+      printf '%s' "$html"; return 0
+    fi
+    echo "[$(ts)] page fetch attempt $a/4 failed (Akamai challenge?) — backing off" >&2
+    sleep $(( a * 20 ))
+  done
+  return 1
+}
+download() {  # url dest ; retries on transient failure
+  local a
+  for a in 1 2 3; do
+    curl -fsS --compressed -A "$UA" -e "$DOL_URL" \
+      -c "$COOKIE_JAR" -b "$COOKIE_JAR" -o "$2" "$1" && return 0
+    echo "[$(ts)] download attempt $a/3 failed — backing off" >&2
+    sleep $(( a * 20 ))
+  done
+  return 1
+}
+
+# 1. Fetch the DOL page (residential IP; retried against Akamai's intermittent 403).
+html="$(fetch_page)" || fail "DOL page fetch failed after 4 tries — IP blocked or page down"
 
 # 2. Pick the newest in-scope LCA Disclosure file. Mark = "YYYY-Q" (annual = Q4).
 best_mark=""; best_url=""; best_name=""
@@ -83,8 +115,8 @@ fi
 # 3. New release — download (cumulative file; carry a Referer like a browser).
 tmp="${TMPDIR:-/tmp}/$best_name"
 echo "[$(ts)] new release -> downloading $best_url"
-curl -fsS --compressed -A "$UA" -e "$DOL_URL" -o "$tmp" "$best_url" \
-  || { rm -f "$tmp"; fail "Download failed for $best_name (HTTP error)"; }
+download "$best_url" "$tmp" \
+  || { rm -f "$tmp"; fail "Download failed for $best_name after retries"; }
 [ -s "$tmp" ] || { rm -f "$tmp"; fail "Downloaded file is empty: $best_name"; }
 bytes="$(stat -f%z "$tmp" 2>/dev/null || echo '?')"
 echo "[$(ts)] downloaded $bytes bytes"
