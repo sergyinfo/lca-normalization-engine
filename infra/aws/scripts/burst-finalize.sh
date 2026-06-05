@@ -15,6 +15,11 @@
 set -euo pipefail
 cd /opt/lca
 
+# build:sqlite (and any host-side pg client) reads from PG via DATABASE_URL — the db
+# container publishes 5432 to the host. refresh-views above goes through the container's
+# own psql so it didn't need this; build:sqlite does.
+export DATABASE_URL="postgresql://lca_user:lca_pass@localhost:5432/lca_db"
+
 DEV_FUNCTION=lca-analytics-web
 DEV_STACK=LcaServeStack
 
@@ -34,7 +39,10 @@ LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --qu
 aws s3 cp apps/analytics-web/data/lca.db "s3://$LCADB_BUCKET/candidates/$RELEASE/lca.db"
 
 # Build + push the arm64 Lambda image (--provenance/--sbom=false: Lambda rejects OCI attestations).
-ECR_URI=$(aws ecr describe-repositories --repository-names "$ECR_REPO" --query 'repositories[0].repositoryUri' --output text)
+# Construct the repo URI rather than `ecr describe-repositories` — the burst role has
+# grantPullPush (login + push) but NOT ecr:DescribeRepositories, and the URI is deterministic.
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO}"
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_URI"
 docker build --provenance=false --sbom=false -f apps/analytics-web/Dockerfile.lambda -t "$ECR_URI:latest" .
 docker push "$ECR_URI:latest"
@@ -74,7 +82,12 @@ operator.h1b.report {
   }
 }
 CADDY
-CLOUDFLARE_API_TOKEN=$CF_TOKEN /usr/local/bin/caddy start --config /etc/caddy/Caddyfile --adapter caddyfile
+# Detach caddy's stdio (</dev/null + log file): `caddy start` daemonizes, and the
+# daemon otherwise inherits this script's stdout/stderr pipe — which keeps the
+# wrapping user-data / SSM run from ever seeing EOF, so it hangs until timeout even
+# though the script finished. Redirecting lets the run report completion cleanly.
+CLOUDFLARE_API_TOKEN=$CF_TOKEN /usr/local/bin/caddy start --config /etc/caddy/Caddyfile --adapter caddyfile \
+  </dev/null >/var/log/caddy.log 2>&1
 
 # Upsert the operator.h1b.report A-record → this instance's public IP.
 ZONE_ID=$(curl -sf -H "Authorization: Bearer $CF_TOKEN" \
