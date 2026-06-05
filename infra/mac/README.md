@@ -87,5 +87,6 @@ Set them in the LaunchAgent's `EnvironmentVariables` if you ever need to overrid
   IP-reputation layer; only *residential* proxies bypass it, and those are
   evasion tooling (per-GB cost, dubious IP sourcing). Running on your own
   residential connection is the clean equivalent. See [[Operator-Release-Pipeline]].
-- This replaces the off-AWS `infra/php/dol-harvest.php` cron (kept for reference;
-  use whichever host you actually have).
+- This is the sole off-AWS uploader into the S3 inbox. (An earlier PHP-cron
+  variant was removed once we confirmed datacenter/shared-hosting IPs are blocked
+  the same way AWS is — a residential machine is required.)
