@@ -24,31 +24,37 @@ export const CANONICAL_KEYS = [
 ];
 
 /**
- * Pre-FLAG header → canonical FLAG key. Confirmed against the real FY2018 + FY2019
- * files via inspect-headers.mjs — and they are NOT the same sub-format:
+ * Pre-FLAG header → canonical FLAG key. Confirmed against the real FY2010–FY2019
+ * files via inspect-headers.mjs. Pre-FLAG spans three schema FAMILIES (the parse is
+ * identical for all — single sheet, one row per case — only column NAMES differ):
  *
- *  • FY2019 (260 cols) — WIDE multi-worksite: each case carries up to 10 worksites
- *    inline, each a block suffixed _1…_10 (WORKSITE_*_N, WAGE_RATE_OF_PAY_*_N,
- *    PREVAILING_WAGE_N, PW_*_N). FLAG (FY2020+) flattened this to ONE primary
- *    worksite per Disclosure row with unsuffixed names. So we map the PRIMARY (_1)
- *    block → canonical; _2…_10 stay verbatim in the JSONB, unread (same as the FLAG
- *    worksite-join being out of scope). FY2019 already uses SOC_TITLE natively.
- *  • FY2018 (52 cols) — NARROW: worksite/wage/PW are already unsuffixed (native),
- *    but the SOC label is the older SOC_NAME (not SOC_TITLE).
+ *  • FY2010–2014 "iCERT LCA_CASE_*" — every field renamed with an LCA_CASE_ prefix
+ *    (LCA_CASE_EMPLOYER_NAME, LCA_CASE_SOC_NAME, …); STATUS, PW_1/PW_UNIT_1 for the
+ *    case status + prevailing wage. FY2010 differs slightly (WORK_LOCATION_CITY1
+ *    instead of LCA_CASE_WORKLOC1_CITY; no wage-unit column). No FEIN, no wage level.
+ *  • FY2015–2018 "Disclosure_Data" narrow — mostly native; deltas: SOC_NAME (→SOC_TITLE,
+ *    '15–'18), NAIC_CODE (typo'd, '15–'16), bare WAGE_RATE_OF_PAY (→…_FROM, '15 only).
+ *  • FY2019 "Disclosure_Data" WIDE — up to 10 worksites inline, each a block suffixed
+ *    _1…_10. FLAG (FY2020+) flattened this to one primary worksite per row with
+ *    unsuffixed names, so we map the PRIMARY (_1) block → canonical; _2…_10 stay
+ *    verbatim in the JSONB, unread (the FLAG worksite-join is out of scope). FY2019
+ *    already uses SOC_TITLE natively.
  *
- * One combined map serves both: each alias only fires when its source key is present
- * AND the canonical target is absent, so the _1 aliases no-op on FY2018 and the
- * SOC_NAME alias no-ops on FY2019. Identical-name fields (CASE_STATUS, JOB_TITLE,
- * SOC_CODE, EMPLOYER_NAME/CITY/STATE, NAICS_CODE) need no alias.
+ * One combined map serves all of them: each alias fires ONLY when its source key is
+ * present AND the canonical target is absent (`normalizePreFlagRecord`), so families
+ * never collide — the _1 aliases no-op on narrow files, LCA_CASE_* no-ops on Disclosure
+ * files, etc. (And the whole map only runs for filing_year < 2020 — `isPreFlag` — so
+ * FLAG data is never touched.)
  *
- * Genuinely absent in BOTH years (not aliasable): EMPLOYER_FEIN — so Layer-1 FEIN
- * dedup is skipped for them and ER falls back to trigram/semantic.
+ * Genuinely absent, not aliasable: EMPLOYER_FEIN (ALL pre-FLAG years → Layer-1 FEIN
+ * dedup skipped, ER falls back to trigram/semantic); PW_WAGE_LEVEL (FY2010–2014, FY2016);
+ * WAGE_UNIT_OF_PAY (FY2010).
  *
- * CONFIRM against a real header row before trusting a NEW year (sub-formats vary):
+ * CONFIRM against a real header row before trusting a NEW year (families vary):
  *   node apps/ingestor/inspect-headers.mjs <file.xlsx>
  */
 export const ICERT_ALIASES = {
-  // FY2019 wide format — primary-worksite (_1) block → canonical FLAG keys
+  // --- FY2019 WIDE: primary-worksite (_1) block → canonical FLAG keys ---
   WORKSITE_CITY_1: 'WORKSITE_CITY',
   WORKSITE_STATE_1: 'WORKSITE_STATE',
   WAGE_RATE_OF_PAY_FROM_1: 'WAGE_RATE_OF_PAY_FROM',
@@ -56,8 +62,29 @@ export const ICERT_ALIASES = {
   PREVAILING_WAGE_1: 'PREVAILING_WAGE',
   PW_UNIT_OF_PAY_1: 'PW_UNIT_OF_PAY',
   PW_WAGE_LEVEL_1: 'PW_WAGE_LEVEL',
-  // FY2018 narrow format — older SOC label (worksite/wage/PW are already unsuffixed)
-  SOC_NAME: 'SOC_TITLE',
+
+  // --- FY2015–2018 Disclosure_Data deltas (else native) ---
+  SOC_NAME: 'SOC_TITLE',                      // FY2015–2018 (FY2019 native)
+  NAIC_CODE: 'NAICS_CODE',                     // FY2015–2016 typo'd header (FY2017+ native)
+  WAGE_RATE_OF_PAY: 'WAGE_RATE_OF_PAY_FROM',   // FY2015 (FY2016+ already _FROM)
+
+  // --- FY2010–2014 iCERT LCA_CASE_* family (full rename) ---
+  STATUS: 'CASE_STATUS',
+  LCA_CASE_EMPLOYER_NAME: 'EMPLOYER_NAME',
+  LCA_CASE_EMPLOYER_CITY: 'EMPLOYER_CITY',
+  LCA_CASE_EMPLOYER_STATE: 'EMPLOYER_STATE',
+  LCA_CASE_JOB_TITLE: 'JOB_TITLE',
+  LCA_CASE_SOC_CODE: 'SOC_CODE',
+  LCA_CASE_SOC_NAME: 'SOC_TITLE',
+  LCA_CASE_NAICS_CODE: 'NAICS_CODE',
+  LCA_CASE_WAGE_RATE_FROM: 'WAGE_RATE_OF_PAY_FROM',
+  LCA_CASE_WAGE_RATE_UNIT: 'WAGE_UNIT_OF_PAY',   // FY2011–2014 (FY2010 has no unit col)
+  LCA_CASE_WORKLOC1_CITY: 'WORKSITE_CITY',       // FY2011–2014
+  LCA_CASE_WORKLOC1_STATE: 'WORKSITE_STATE',
+  WORK_LOCATION_CITY1: 'WORKSITE_CITY',          // FY2010 variant
+  WORK_LOCATION_STATE1: 'WORKSITE_STATE',
+  PW_1: 'PREVAILING_WAGE',                       // iCERT prevailing wage
+  PW_UNIT_1: 'PW_UNIT_OF_PAY',
 };
 
 /** True for pre-FLAG fiscal years (< 2020). */

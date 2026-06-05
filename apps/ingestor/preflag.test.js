@@ -28,6 +28,36 @@ test('maps the primary-worksite _1 block onto the canonical FLAG keys', () => {
   assert.equal(row._schema_era, 'iCERT');
 });
 
+test('FY2010-2014 iCERT LCA_CASE_* family maps every core field', () => {
+  // a slice of a real FY2013 row (LCA_CASE_ prefixed names + PW_1 / STATUS)
+  const row = {
+    STATUS: 'CERTIFIED', LCA_CASE_EMPLOYER_NAME: 'ACME', LCA_CASE_SOC_CODE: '15-1132',
+    LCA_CASE_SOC_NAME: 'Software Developers', LCA_CASE_JOB_TITLE: 'Engineer',
+    LCA_CASE_WAGE_RATE_FROM: '110000', LCA_CASE_WAGE_RATE_UNIT: 'Year',
+    LCA_CASE_WORKLOC1_CITY: 'Austin', LCA_CASE_WORKLOC1_STATE: 'TX',
+    PW_1: '95000', PW_UNIT_1: 'Year', LCA_CASE_NAICS_CODE: '541511',
+  };
+  normalizePreFlagRecord(row);
+  assert.equal(row.CASE_STATUS, 'CERTIFIED');
+  assert.equal(row.EMPLOYER_NAME, 'ACME');
+  assert.equal(row.SOC_TITLE, 'Software Developers');
+  assert.equal(row.WAGE_RATE_OF_PAY_FROM, '110000');
+  assert.equal(row.PREVAILING_WAGE, '95000');
+  assert.equal(row.WORKSITE_CITY, 'Austin');
+  assert.equal(row.NAICS_CODE, '541511');
+});
+
+test('FY2010 worksite variant (WORK_LOCATION_*1) + FY2015 deltas (NAIC_CODE, bare wage)', () => {
+  const fy2010 = { WORK_LOCATION_CITY1: 'Reno', WORK_LOCATION_STATE1: 'NV' };
+  normalizePreFlagRecord(fy2010);
+  assert.equal(fy2010.WORKSITE_CITY, 'Reno');
+  assert.equal(fy2010.WORKSITE_STATE, 'NV');
+  const fy2015 = { NAIC_CODE: '541511', WAGE_RATE_OF_PAY: '120000' };
+  normalizePreFlagRecord(fy2015);
+  assert.equal(fy2015.NAICS_CODE, '541511');
+  assert.equal(fy2015.WAGE_RATE_OF_PAY_FROM, '120000');
+});
+
 test('FY2018 narrow format: SOC_NAME -> SOC_TITLE, _1 aliases no-op', () => {
   // a slice of a real FY2018 narrow row (unsuffixed names, older SOC label)
   const row = {
