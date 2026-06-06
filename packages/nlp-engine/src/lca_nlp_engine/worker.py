@@ -114,10 +114,13 @@ class NlpWorker:
 
         async def process_one() -> None:
             async with sem:
-                job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
-                if not job_id:
-                    return
+                job_id = None
                 try:
+                    # The pull is INSIDE the try: a transient brpoplpush/redis error
+                    # must not escape and kill the worker (see the loop guard below).
+                    job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
+                    if not job_id:
+                        return
                     job_data_str = await redis.hget(f"bull:nlp-tasks:{job_id}", "data")
                     if not job_data_str:
                         log.warning("nlp_worker.missing_job_data", job_id=job_id)
@@ -127,10 +130,19 @@ class NlpWorker:
                 except Exception:
                     log.exception("nlp_worker.job_failed", job_id=job_id)
                 finally:
-                    await redis.lrem(PROCESSING_KEY, 1, job_id)
+                    if job_id:
+                        await redis.lrem(PROCESSING_KEY, 1, job_id)
 
+        # Loop guard: a transient error in the pull/gather must NOT exit run(). Exiting
+        # makes the process restart and RELOAD the BERT model (~19s); over a long backfill
+        # that becomes a model-reload death spiral (observed: RestartCount=335, ~75% of CPU
+        # wasted on reloads, throughput ~17k/hr instead of ~90k/hr). Log and keep going.
         while self._running:
-            await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
+            try:
+                await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
+            except Exception:
+                log.exception("nlp_worker.loop_error")
+                await asyncio.sleep(1)
 
         await redis.aclose()
         if self._db_conn:
