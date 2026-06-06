@@ -115,7 +115,16 @@ async function main() {
   db.exec('ANALYZE');
   db.close();
   console.log(`[seo] Done. written=${written}, skipped=${skipped}, failed=${failed}`);
-  if (failed > 0) process.exitCode = 1;
+  // A handful of entities can come back empty from the batch (odd legal names,
+  // content filters) — that's cosmetic: the page falls back to default meta. Only
+  // treat it as a build failure if a large fraction failed (systemic: bad key / API
+  // down), not on sparse misses that would needlessly abort the candidate deploy.
+  const failRate = changed.length ? failed / changed.length : 0;
+  if (failed > 0) console.warn(`[seo] ${failed}/${changed.length} had no result (non-fatal; pages fall back to default meta).`);
+  if (failRate > 0.05) {
+    console.error(`[seo] ${(failRate * 100).toFixed(1)}% of summaries failed — treating as systemic.`);
+    process.exitCode = 1;
+  }
 }
 
 /** Idempotently add meta columns + drop the legacy kind CHECK (so page-level
