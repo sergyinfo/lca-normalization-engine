@@ -64,9 +64,25 @@ Dominated by the processor box-hours: ~6M rows ÷ throughput. On **spot** c7g.4x
 (~$0.20–0.30/hr) for ~30–35h ≈ **$7–11**. Self-terminates on completion; 72h watchdog
 caps a stuck/forgotten box. No always-on cost added (launched on demand only).
 
+## Throughput — profiled 2026-06-06 (READ THIS before sizing)
+- **Primary bug found + FIXED** (commit on branch): the nlp-worker was in a Docker
+  restart loop (`RestartCount=349`) — the job-pull `brpoplpush` sat outside the
+  try/except, so any transient redis/queue hiccup killed `run()`, the process exited,
+  and `restart: always` reloaded the BERT model (~19s) every ~26s → ~75% of CPU wasted,
+  throughput ~10/s. Hardened (loop guard + pull inside try). After fix: RestartCount
+  stable 0, ~**19 rec/s (~70k/hr)** measured.
+- **Secondary, NOT fixed:** even hardened, the worker only hits ~29% CPU. "concurrency=6"
+  is **asyncio** concurrency in ONE process — `classifier.predict_batch` + the per-record
+  `deduplicator.resolve` are SYNCHRONOUS/blocking, so they serialize on the event loop
+  (the 751% seen earlier was torch's internal BLAS threads for ONE batch). **Real
+  parallelism needs multiple worker PROCESSES (container replicas), not asyncio
+  concurrency.** So scale the processor with N `nlp-worker` replicas, each a process.
+
 ## Open items / decisions
-- **Concurrency vs box size:** `NLP_WORKER_CONCURRENCY` should track vCPUs. c7g.4xlarge
-  (16 vCPU) → ~12 workers → ~2× the 90k/hr measured on the 6-worker c7g.2xlarge.
+- **Scale via replicas, not NLP_WORKER_CONCURRENCY:** on a c7g.8xlarge (32 vCPU) run
+  ~6–8 `nlp-worker` replicas (compose `--scale nlp-worker=8` or deploy.replicas) →
+  ~6–8× the single-process ~70k/hr. Est: 6M rows ÷ (8×70k/hr) ≈ **~11h**; on one process
+  it's ~85h (~3.5 days). The 72h watchdog must exceed the chosen box's drain time.
 - **Spot interruption mid-drain:** safe by design (idempotent restore+sweep), but the
   re-restore loses in-flight write-back since the burst snapshot — acceptable (re-swept).
   If we want incremental durability, add a periodic re-snapshot inside the drain loop.
