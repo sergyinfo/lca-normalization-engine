@@ -26,8 +26,13 @@ DEV_FUNCTION=lca-analytics-web
 DEV_STACK=LcaServeStack
 
 # Refresh analytics matviews via the db container's psql. Non-fatal.
-docker compose exec -T db psql -U lca_user -d lca_db -v ON_ERROR_STOP=1 \
-  < apps/analytics-ui/db/refresh_views.sql || echo "WARN: refresh-views failed (continuing)"
+# Bootstrap (DROP + CREATE), not just REFRESH: the restored snapshot carries the OLD
+# matview definitions, so we recreate them from the current (fixed) analytics_views.sql
+# — this both applies definition fixes (e.g. the range-wage parse) and repopulates from
+# the now fully-classified data. No ON_ERROR_STOP so a single quirky view can't halt the
+# rest; the fixed wage parse means it shouldn't error at all.
+docker compose exec -T db psql -U lca_user -d lca_db \
+  < apps/analytics-ui/db/analytics_views.sql || echo "WARN: bootstrap-views failed (continuing)"
 
 # Rebuild the candidate lca.db (+ summaries) — now against the fully-classified DB.
 mkdir -p apps/analytics-web/data
