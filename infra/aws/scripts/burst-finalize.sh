@@ -35,6 +35,10 @@ pnpm --filter analytics-web build:sqlite
 LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
   LLM_PROVIDER=anthropic pnpm --filter analytics-web build:summaries
 
+# Forward-year forecast page (/h1b-2026): deterministic projection + one LLM call.
+LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
+  LLM_PROVIDER=anthropic pnpm --filter analytics-web build:forecast
+
 # Upload the CANDIDATE lca.db (staging key, never the prod key — Promote writes that).
 aws s3 cp apps/analytics-web/data/lca.db "s3://$LCADB_BUCKET/candidates/$RELEASE/lca.db"
 

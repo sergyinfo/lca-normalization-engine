@@ -148,6 +148,19 @@ async function main() {
   );
   console.log(`[build-sqlite]   site_kpis: 1 row`);
 
+  /* -- site_yearly: filings + median wage per fiscal year ------------------ */
+  const { rows: yearRows } = await pg.query<{ year: string; filings: string; median_wage: string | null }>(`
+    SELECT f.year, f.filings::text AS filings, w.median_wage::text AS median_wage
+    FROM   analytics.mv_filings_by_year f
+    LEFT JOIN analytics.mv_median_wage_by_year w ON w.year = f.year
+    ORDER  BY f.year
+  `);
+  const insYear = db.prepare(`INSERT INTO site_yearly (year, filings, median_wage) VALUES (?, ?, ?)`);
+  for (const r of yearRows) {
+    insYear.run(Number(r.year), Number(r.filings), r.median_wage != null ? Number(r.median_wage) : null);
+  }
+  console.log(`[build-sqlite]   site_yearly: ${yearRows.length} rows`);
+
   /* -- employers: top-N sponsors with outcome stats ----------------------- */
   const { rows: empRows } = await pg.query<{ id: string; canonical_name: string;
     employer_state: string | null; fein: string | null; filings: string;
