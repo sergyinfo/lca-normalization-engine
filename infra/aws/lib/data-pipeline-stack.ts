@@ -298,6 +298,26 @@ export class LcaDataPipelineStack extends Stack {
       `cd /opt/lca`,
       `pnpm install --frozen-lockfile`,
       ``,
+      `# ----- Decoupled NLP-processor mode (Mode=nlp-processor instance tag) -----`,
+      `# A separate triggered run (lca.manual / nlp.run) that owns the slow multi-day NLP`,
+      `# drain OFF the review path: restore snapshot -> sweep (100% enqueue) -> drain N`,
+      `# nlp-worker replicas -> re-snapshot + rebuild candidate -> self-terminate. Reuses`,
+      `# this box's bootstrap; the normal Mode=ingest flow below is left untouched.`,
+      `MODE=$(aws ec2 describe-tags --region $REGION --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Mode" --query 'Tags[0].Value' --output text 2>/dev/null || echo ingest)`,
+      `case "$MODE" in ""|None) MODE=ingest;; esac`,
+      `if [ "$MODE" = "nlp-processor" ]; then`,
+      `  RELEASE=$(date -u +%Y%m%d-%H%M%S)`,
+      `  NLP_REPLICAS=$(aws ec2 describe-tags --region $REGION --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=NlpReplicas" --query 'Tags[0].Value' --output text 2>/dev/null || echo 1)`,
+      `  case "$NLP_REPLICAS" in ""|None) NLP_REPLICAS=1;; esac`,
+      `  NOTIFY_TOPIC=${notifyTopic.topicArn} LLM_SECRET=${shared.llmApiKeySecret.secretName} \\`,
+      `    LCADB_BUCKET=${shared.lcaDbBucket.bucketName} ECR_REPO=${shared.lambdaImageRepo.repositoryName} \\`,
+      `    PGSNAP_BUCKET=${shared.pgSnapshotBucket.bucketName} \\`,
+      `    REGION=$REGION RELEASE=$RELEASE INSTANCE_ID=$INSTANCE_ID \\`,
+      `    NLP_REPLICAS=$NLP_REPLICAS NLP_WORKER_CONCURRENCY=\${NLP_WORKER_CONCURRENCY:-4} \\`,
+      `    bash /opt/lca/infra/aws/scripts/nlp-processor.sh`,
+      `  exit 0`,
+      `fi`,
+      ``,
       `# (The 36h cost watchdog was already armed inline right after INSTANCE_ID,`,
       `#  so it covers failures during clone/install too. The operator Shut-down`,
       `#  button does a clean teardown — DNS removal + SNS — sooner.)`,
@@ -486,6 +506,10 @@ export class LcaDataPipelineStack extends Stack {
             { Key: 'BurstWorker', Value: 'true' },
             { Key: 'Name',        Value: 'lca-burst-worker' },
             { Key: 'DeferNlp', 'Value.$': '$.prep.cfg.deferNlp' },
+            // Mode=nlp-processor → the box runs the decoupled NLP drain (nlp-processor.sh)
+            // instead of harvest/ingest; NlpReplicas = how many nlp-worker processes.
+            { Key: 'Mode',        'Value.$': '$.prep.cfg.mode' },
+            { Key: 'NlpReplicas', 'Value.$': '$.prep.cfg.nlpReplicas' },
           ],
         }],
       },
@@ -534,7 +558,7 @@ export class LcaDataPipelineStack extends Stack {
     // the event's fields win and fills any it omits.
     const prepConfig = new sfn.Pass(this, 'PrepareConfig', {
       parameters: {
-        'cfg.$': "States.JsonMerge(States.StringToJson('{\"instanceType\":\"c7g.2xlarge\",\"deferNlp\":\"false\"}'), $.detail, false)",
+        'cfg.$': "States.JsonMerge(States.StringToJson('{\"instanceType\":\"c7g.2xlarge\",\"deferNlp\":\"false\",\"mode\":\"ingest\",\"nlpReplicas\":\"1\"}'), $.detail, false)",
       },
       resultPath: '$.prep',
     });
@@ -587,7 +611,10 @@ export class LcaDataPipelineStack extends Stack {
     new events.Rule(this, 'ManualRunRule', {
       eventPattern: {
         source: ['lca.manual'],
-        detailType: ['build.run'],
+        // build.run = normal ingest burst (dol-watch / upload-dol.sh).
+        // nlp.run   = decoupled NLP-processor run (detail carries mode=nlp-processor,
+        //             instanceType=c7g.8xlarge, nlpReplicas=8). Same single-flight guard.
+        detailType: ['build.run', 'nlp.run'],
       },
       targets: [new targets.SfnStateMachine(stateMachine)],
     });
