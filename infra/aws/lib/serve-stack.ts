@@ -170,6 +170,29 @@ export class LcaServeStack extends Stack {
       queryStringBehavior: cf.OriginRequestQueryStringBehavior.all(),
     });
 
+    // Next.js App Router serves TWO representations of the same URL: the HTML
+    // document AND the React Server Component ("Flight") payload. The client asks
+    // for the RSC variant via the `RSC: 1` header (plus a `?_rsc=` query on link
+    // prefetches). The managed CACHING_OPTIMIZED policy keys the cache on the URL
+    // only — so CloudFront caches one variant and serves it for the other, and
+    // visitors intermittently see raw RSC text instead of the page. Fix: vary the
+    // cache key on the RSC headers (+ query) so the two variants cache separately.
+    const pageCachePolicy = new cf.CachePolicy(this, 'PageCachePolicy', {
+      comment: 'Next.js pages — vary on RSC headers so Flight payloads and HTML cache separately',
+      headerBehavior: cf.CacheHeaderBehavior.allowList(
+        'RSC', 'Next-Router-Prefetch', 'Next-Router-State-Tree', 'Next-Url',
+      ),
+      queryStringBehavior: cf.CacheQueryStringBehavior.all(),
+      cookieBehavior: cf.CacheCookieBehavior.none(),
+      enableAcceptEncodingGzip: true,
+      enableAcceptEncodingBrotli: true,
+      // Honour the origin's Cache-Control (Next sends s-maxage on SSG pages,
+      // no-store on dynamic) — like CACHING_OPTIMIZED, just with RSC variance.
+      minTtl: Duration.seconds(0),
+      defaultTtl: Duration.seconds(0),
+      maxTtl: Duration.days(365),
+    });
+
     // Canonical-host redirect (viewer-request CloudFront Function). The
     // distribution always answers on its *.cloudfront.net domain too, which
     // would serve duplicate content. 301 any request whose Host isn't an
@@ -234,7 +257,7 @@ export class LcaServeStack extends Stack {
         // genuinely-dynamic routes still hit the Lambda. The edge Functions
         // (canonical redirect / noindex) run on every viewer request/response,
         // cache hit or miss, so they keep working on cached pages.
-        cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
+        cachePolicy: pageCachePolicy,
         viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         originRequestPolicy: lambdaOriginRequestPolicy,
         responseHeadersPolicy: securityHeaders,
