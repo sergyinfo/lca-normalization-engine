@@ -79,11 +79,11 @@ WITH wages AS (
   SELECT
     r.data->>'soc_code' AS soc_code,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS annual_wage
   FROM   lca_records r
@@ -111,11 +111,11 @@ CREATE MATERIALIZED VIEW analytics.mv_median_wage_by_year AS
 WITH wages AS (
   SELECT r.filing_year::int AS year,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS annual_wage
   FROM lca_records r
@@ -135,11 +135,11 @@ CREATE MATERIALIZED VIEW analytics.mv_wage_by_soc_year AS
 WITH wages AS (
   SELECT r.data->>'soc_code' AS soc_code, r.filing_year::int AS year,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS annual_wage
   FROM lca_records r
@@ -386,11 +386,11 @@ WITH wages AS (
   SELECT r.data->>'soc_code'                  AS soc_code,
          coalesce(r.data->>'PW_WAGE_LEVEL','?') AS wage_level,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS annual_wage
   FROM   lca_records r
@@ -420,11 +420,11 @@ WITH wages AS (
   SELECT r.data->>'soc_code'                            AS soc_code,
          r.data->>'WORKSITE_STATE'                       AS state,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS annual_wage
   FROM   lca_records r
@@ -456,19 +456,19 @@ CREATE MATERIALIZED VIEW analytics.mv_wage_premium_by_soc AS
 WITH pairs AS (
   SELECT r.data->>'soc_code'                            AS soc_code,
     CASE upper(coalesce(r.data->>'WAGE_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'WAGE_RATE_OF_PAY_FROM', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'WAGE_RATE_OF_PAY_FROM', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS offered_wage,
     CASE upper(coalesce(r.data->>'PW_UNIT_OF_PAY', 'Year'))
-      WHEN 'YEAR'      THEN nullif(regexp_replace(r.data->>'PREVAILING_WAGE', '[^0-9.]', '', 'g'), '')::numeric
-      WHEN 'HOUR'      THEN nullif(regexp_replace(r.data->>'PREVAILING_WAGE', '[^0-9.]', '', 'g'), '')::numeric * 2080
-      WHEN 'WEEK'      THEN nullif(regexp_replace(r.data->>'PREVAILING_WAGE', '[^0-9.]', '', 'g'), '')::numeric * 52
-      WHEN 'MONTH'     THEN nullif(regexp_replace(r.data->>'PREVAILING_WAGE', '[^0-9.]', '', 'g'), '')::numeric * 12
-      WHEN 'BI-WEEKLY' THEN nullif(regexp_replace(r.data->>'PREVAILING_WAGE', '[^0-9.]', '', 'g'), '')::numeric * 26
+      WHEN 'YEAR'      THEN nullif(substring(replace(r.data->>'PREVAILING_WAGE', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric
+      WHEN 'HOUR'      THEN nullif(substring(replace(r.data->>'PREVAILING_WAGE', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 2080
+      WHEN 'WEEK'      THEN nullif(substring(replace(r.data->>'PREVAILING_WAGE', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 52
+      WHEN 'MONTH'     THEN nullif(substring(replace(r.data->>'PREVAILING_WAGE', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 12
+      WHEN 'BI-WEEKLY' THEN nullif(substring(replace(r.data->>'PREVAILING_WAGE', ',', '') from '[0-9]+(?:[.][0-9]+)?'), '')::numeric * 26
       ELSE NULL
     END AS prevailing_wage
   FROM   lca_records r
