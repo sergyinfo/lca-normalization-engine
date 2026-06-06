@@ -17,8 +17,9 @@
 #   REGION RELEASE INSTANCE_ID NOTIFY_TOPIC
 #   LLM_SECRET LCADB_BUCKET ECR_REPO PGSNAP_BUCKET PGSNAP_KEY(optional, default latest.pgdump)
 # Optional:
-#   NLP_WORKER_CONCURRENCY (default 6)   LCA_PARTITION_START_YEAR (default 2010)
-#   DRAIN_MAX_HOURS (default 60)         SELF_TERMINATE (default true)
+#   NLP_REPLICAS (default 1)             NLP_WORKER_CONCURRENCY (default 6)
+#   LCA_PARTITION_START_YEAR (def 2010)  DRAIN_MAX_HOURS (default 60)
+#   SELF_TERMINATE (default true)
 set -euo pipefail
 cd /opt/lca
 
@@ -41,8 +42,12 @@ docker compose exec -T db pg_restore --no-owner --no-acl --clean --if-exists \
 LCA_PARTITION_START_YEAR="${LCA_PARTITION_START_YEAR:-2010}" \
   node apps/cli-tool/index.js db:init
 
-# 3. Workers — NLP only (data is already ingested; no harvester/ingestion-worker here).
-docker compose up -d nlp-worker
+# 3. Workers — NLP only (data is already ingested; no harvester/ingestion-worker here),
+#    scaled to NLP_REPLICAS processes. One worker is a single asyncio process whose
+#    classify/resolve calls block the event loop (~70k/hr ceiling), so throughput scales
+#    by running N replica PROCESSES, not by raising NLP_WORKER_CONCURRENCY. The workers
+#    coordinate across replicas via a Postgres advisory lock.
+docker compose up -d --scale nlp-worker="${NLP_REPLICAS:-1}" nlp-worker
 
 # 4. Sweep: enqueue EVERY unclassified, non-quarantined row (guarantees 100% coverage
 #    regardless of what ingest enqueued). Fresh queue on this box → no --drain needed.

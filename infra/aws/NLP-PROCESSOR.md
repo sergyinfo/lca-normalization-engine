@@ -1,8 +1,28 @@
-# Decoupled NLP processor — design (NOT yet deployed)
+# Decoupled NLP processor — DEPLOYED (mode-branch on the burst stack)
 
-Status: **scripts written + syntax-checked; CDK construct specified here but NOT
-written/deployed.** Deploy is gated on review + an explicit cost OK (it launches an
-EC2 instance). Authored 2026-06-05 while implementing the all-years backfill plan.
+Status: **DEPLOYED 2026-06-06** to `LcaDataPipelineStack`. Implemented as a *mode branch*
+on the existing burst launch template (not a separate template) to reuse the proven
+bootstrap/SFN/single-flight and keep the change additive — the normal `Mode=ingest` path
+is untouched. The deploy added **no running instance** (cost is only at trigger time).
+
+## How to trigger it
+Fire a `lca.manual` / `nlp.run` EventBridge event (same single-flight guard as the burst
+— it won't start if a burst/processor is already running):
+```
+aws --profile h1b-report events put-events --entries '[{
+  "Source":"lca.manual","DetailType":"nlp.run",
+  "Detail":"{\"mode\":\"nlp-processor\",\"instanceType\":\"c7g.8xlarge\",\"nlpReplicas\":\"8\"}"
+}]'
+```
+The box boots → reads its `Mode`/`NlpReplicas` tags → runs `nlp-processor.sh`:
+restore snapshot → `db:init` → `--scale nlp-worker=8` → sweep (100% enqueue) → drain →
+`nlp-finalize.sh` (rebuild candidate + **re-snapshot** + SNS "promotable") → self-terminate.
+36h watchdog applies (drain ≈ 11h on 8 replicas, comfortably inside it).
+
+> Runtime scripts (`nlp-processor.sh`, `docker-compose.yml`) are cloned from `develop` at
+> launch — they MUST be merged to develop before firing `nlp.run`.
+
+## Original design notes (superseded by the mode-branch above, kept for context)
 
 ## Why
 The burst box ingests all years and builds the candidate in **hours**, but classifying
