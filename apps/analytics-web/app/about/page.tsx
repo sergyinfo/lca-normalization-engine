@@ -6,15 +6,20 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { entityMetadata } from '@/lib/seo';
+import { getSiteKpis } from '@/lib/queries';
 
-export const metadata: Metadata = entityMetadata({
-  title: 'About — the H-1B & LCA data project',
-  description:
-    'How h1b.report turns 12 million Labor Condition Applications from the US Department of Labor into a searchable, deduplicated database of US H-1B sponsors and salaries.',
-  path: '/about',
-});
+export function generateMetadata(): Metadata {
+  const k = getSiteKpis();
+  return entityMetadata({
+    title: 'About — the H-1B & LCA data project',
+    description:
+      `How h1b.report turns ${Math.round(k.total_records / 1e6)} million Labor Condition Applications from the US Department of Labor into a searchable, deduplicated database of US H-1B sponsors and salaries.`,
+    path: '/about',
+  });
+}
 
 export default function AboutPage() {
+  const kpis = getSiteKpis();
   return (
     <article className="mx-auto max-w-3xl">
       <p className="mb-2 text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -38,7 +43,7 @@ export default function AboutPage() {
           <strong className="text-foreground">h1b.report</strong> takes those releases and turns
           them into something a human can actually use: search any company in milliseconds, see
           every role and worksite, compare wages against the federal prevailing-wage tiers, and
-          read trend lines back to fiscal year 2002.
+          read trend lines back to fiscal year {kpis.first_year}.
         </p>
       </section>
 

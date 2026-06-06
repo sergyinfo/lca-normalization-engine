@@ -200,6 +200,76 @@ export function getSiteKpis(): SiteKpis {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Site yearly trend + forward-year forecast                                  */
+/* -------------------------------------------------------------------------- */
+
+export interface SiteYearlyRow {
+  year: number;
+  filings: number;
+  median_wage: number | null;
+}
+
+export function getSiteYearly(): SiteYearlyRow[] {
+  return queryAll<SiteYearlyRow>(
+    `SELECT year, filings, median_wage FROM site_yearly ORDER BY year ASC`,
+  );
+}
+
+/** The LLM-written narrative stored in site_forecast.content_json. */
+export interface ForecastContent {
+  meta_title: string;
+  meta_description: string;
+  intro: string;
+  filings_outlook: string;
+  wage_outlook: string;
+  sponsors_outlook: string;
+  occupations_outlook: string;
+  bottom_line: string;
+}
+
+export interface Forecast {
+  year: number;
+  generated_at: number;
+  base_first_year: number;
+  base_last_year: number;
+  proj_filings: number;
+  proj_filings_lo: number;
+  proj_filings_hi: number;
+  proj_median_wage: number | null;
+  cagr_pct: number | null;
+  model: string | null;
+  content: ForecastContent;
+}
+
+interface ForecastRowRaw {
+  year: number;
+  generated_at: number;
+  base_first_year: number;
+  base_last_year: number;
+  proj_filings: number;
+  proj_filings_lo: number;
+  proj_filings_hi: number;
+  proj_median_wage: number | null;
+  cagr_pct: number | null;
+  content_json: string;
+  model: string | null;
+}
+
+/** The forecast for a given target year, or null if none (e.g. that year's real
+ *  data has landed and the forecast moved on — the route 301s in that case). */
+export function getForecast(year: number): Forecast | null {
+  let row: ForecastRowRaw | null = null;
+  try {
+    row = queryOne<ForecastRowRaw>(`SELECT * FROM site_forecast WHERE year = ?`, year);
+  } catch {
+    return null; // table absent on older snapshots
+  }
+  if (!row) return null;
+  const { content_json, ...rest } = row;
+  return { ...rest, content: JSON.parse(content_json) as ForecastContent };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Employer                                                                   */
 /* -------------------------------------------------------------------------- */
 
