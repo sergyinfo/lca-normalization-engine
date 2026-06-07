@@ -38,16 +38,14 @@ export function HomeYearProvider({
   return <Ctx.Provider value={{ years, selected, setSelected }}>{children}</Ctx.Provider>;
 }
 
-/** The year picker itself — full button strip + "All years", wired to context. */
+/** The year picker — a labelled segmented control, wired to context. */
 export function HomeYearBar() {
   const { years, selected, setSelected } = useHomeYear();
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card/50 px-4 py-3">
-      <p className="text-sm text-muted-foreground">
-        {selected === 'all'
-          ? 'Showing all fiscal years (2010 onward).'
-          : `Showing fiscal year ${selected}. Pick another year or “All years”.`}
-      </p>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Fiscal year
+      </span>
       <YearSelector years={years} selected={selected} onSelect={setSelected} />
     </div>
   );
