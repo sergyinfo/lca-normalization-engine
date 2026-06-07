@@ -18,6 +18,33 @@ real public traffic.
 - **Self-hostable**: `output: 'standalone'` produces a single `node server.js`
   bundle suitable for a Hetzner / DigitalOcean VPS.
 
+## Year-view (fiscal-year filtering)
+
+Data spans **FY2010–2025**, so the dashboard defaults to the latest year instead
+of a 16-year average. All of it is **in-browser toggling on the same SSG pages —
+no new routes, no `useSearchParams`** (which would bail the page out of static
+generation); state is held in React + synced to `?fy=` via `history`, defaulting
+to the latest FY so the first paint matches the pre-rendered HTML.
+
+- **Homepage** (`app/page.tsx`): a full year picker (2025 default / any previous
+  year / All years) re-scopes the KPI strip, highest-paying-occupations chart,
+  industry-mix donut, top-states bar, and the top-sponsor/occupation tables. A
+  client Context provider (`components/home/HomeYearContext.tsx`) wraps the page
+  so server components (`Summary`, ad slots) pass through untouched; small client
+  islands (`HomeKpiStrip`/`HomeCharts`/`HomeTopTables`) read the selected year.
+  The server shapes one display-ready bundle per scope (`'all'` + each year).
+- **Entity pages** (employer/occupation/state/sector): a lighter **latest-FY /
+  All-years** toggle (`components/YearSelector.tsx` → `LatestAllToggle`) on the
+  hero, via `components/hero/*HeroClient.tsx`.
+- **Data model**: per-year tables in `lca.db` — `employer_yearly` (+outcome
+  counts), `occupation_yearly` (+P25/P75), `state_yearly`, `sector_yearly`,
+  `site_yearly` (+`sponsors`/`socs`), and `site_top_paying_occ_yearly`; queried
+  via `getHomeTop*ByYear` / `get{Employer,Occupation}Yearly` in `lib/queries.ts`.
+  Built from the `analytics.mv_*_by_year` matviews.
+- **Caveat**: occupation/SOC coverage is most complete FY2020+; a large share of
+  the FY2010–2019 backfill is not yet SOC-classified (see the methodology page),
+  so pre-2020 occupation breakdowns undercount — filings + wages are unaffected.
+
 ```
 apps/analytics-web/
 ├── app/                    # Next.js App Router routes
