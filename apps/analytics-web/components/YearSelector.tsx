@@ -1,25 +1,32 @@
 'use client';
 
 /**
- * YearSelector — fiscal-year filter for entity hero stats.
+ * YearSelector — fiscal-year filter rendered as a single segmented control
+ * (a row of connected pills inside one bordered "track"): the most-recent N
+ * years + "All years", with older years tucked into a compact dropdown segment.
+ * One control, one shape, no redundant copy.
  *
- * Renders the most-recent N years as buttons + an "All years" toggle; older
- * years collapse into a native <select> (no extra dep, SSG-safe). Pure render
- * component: the parent owns the selected year via `useYearParam`.
- *
- * Why not `useSearchParams`? In the Next.js 15 App Router, reading
- * `useSearchParams` inside a client component bails the surrounding page out of
- * static generation — and these entity pages are SSG (`dynamicParams = false`).
- * So we mirror `usePagination`: default to the latest year (matching the SSG
- * HTML), and sync `?fy=` via `window.history` in effects only. A deep link to
- * `?fy=2018` paints the latest year first, then re-renders — fine, the latest
- * year is the canonical content.
+ * Why not `useSearchParams`? In the Next.js 15 App Router, reading it inside a
+ * client component bails the surrounding page out of static generation — and
+ * these pages are SSG. So state defaults to the latest year (matching the SSG
+ * HTML) and syncs `?fy=` via `window.history` in effects only (see
+ * `useYearParam`).
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { ChevronDown } from 'lucide-react';
 
 export type YearValue = number | 'all';
+
+/** One pill inside the segmented track. */
+const seg = (active: boolean): string =>
+  'cursor-pointer rounded-md px-2.5 py-1 text-sm font-medium tabular-nums whitespace-nowrap transition-colors ' +
+  (active
+    ? 'bg-primary text-primary-foreground shadow-sm'
+    : 'text-muted-foreground hover:bg-muted hover:text-foreground');
+
+/** The bordered track that holds the pills. */
+const TRACK = 'inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg border bg-card p-1';
 
 export interface YearSelectorProps {
   /** Available years (any order). */
@@ -28,7 +35,7 @@ export interface YearSelectorProps {
   selected: YearValue;
   /** Called when the user picks a year (or 'all'). */
   onSelect: (y: YearValue) => void;
-  /** How many of the most-recent years to show as buttons (rest go in a select). */
+  /** How many of the most-recent years to show as pills (rest go in the dropdown). */
   maxButtons?: number;
 }
 
@@ -40,81 +47,56 @@ export function YearSelector({ years, selected, onSelect, maxButtons = 6 }: Year
   const olderActive = typeof selected === 'number' && older.includes(selected);
 
   return (
-    <div
-      className="flex flex-wrap items-center gap-1.5"
-      role="group"
-      aria-label="Filter stats by fiscal year"
-    >
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground mr-1">
-        Fiscal year
-      </span>
-
+    <div role="group" aria-label="Filter by fiscal year" className={TRACK}>
       {older.length > 0 ? (
-        <select
-          aria-label="Earlier fiscal years"
-          className="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          value={olderActive ? String(selected) : ''}
-          onChange={(e) => { if (e.target.value) onSelect(Number(e.target.value)); }}
-        >
-          <option value="">Earlier…</option>
-          {older.map((y) => <option key={y} value={y}>FY{y}</option>)}
-        </select>
+        <div className="relative shrink-0">
+          <select
+            aria-label="Earlier fiscal years"
+            className={`${seg(olderActive)} appearance-none bg-transparent pr-6 focus:outline-none`}
+            value={olderActive ? String(selected) : ''}
+            onChange={(e) => { if (e.target.value) onSelect(Number(e.target.value)); }}
+          >
+            <option value="" disabled>Earlier</option>
+            {[...older].reverse().map((y) => <option key={y} value={y}>FY{y}</option>)}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-1 top-1/2 size-3.5 -translate-y-1/2 opacity-60" />
+        </div>
       ) : null}
 
       {recent.map((y) => (
-        <Button
-          key={y}
-          type="button"
-          size="sm"
-          variant={selected === y ? 'default' : 'outline'}
-          aria-pressed={selected === y}
-          onClick={() => onSelect(y)}
-        >
-          FY{y}
-        </Button>
+        <button key={y} type="button" aria-pressed={selected === y}
+          onClick={() => onSelect(y)} className={`${seg(selected === y)} shrink-0`}>
+          {y}
+        </button>
       ))}
 
-      <Button
-        type="button"
-        size="sm"
-        variant={selected === 'all' ? 'default' : 'outline'}
-        aria-pressed={selected === 'all'}
-        onClick={() => onSelect('all')}
-      >
+      <button type="button" aria-pressed={selected === 'all'}
+        onClick={() => onSelect('all')} className={`${seg(selected === 'all')} shrink-0`}>
         All years
-      </Button>
+      </button>
     </div>
   );
 }
 
 /**
- * Lightweight two-way toggle: latest FY vs. All years. Used on entity pages,
- * where the full year picker is intentionally reserved for the homepage — here
- * we only contrast "the latest year" against "all years (2010 onward)".
+ * Lightweight two-way toggle: latest FY vs. All years, as a 2-pill segmented
+ * control matching YearSelector. Used on entity pages, where the full year
+ * picker is intentionally reserved for the homepage.
  */
 export function LatestAllToggle({
   latestYear, selected, onSelect,
 }: { latestYear: number; selected: YearValue; onSelect: (y: YearValue) => void }) {
   const latestActive = selected !== 'all';
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Fiscal year view">
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground mr-1">View</span>
-      <Button
-        type="button" size="sm"
-        variant={latestActive ? 'default' : 'outline'}
-        aria-pressed={latestActive}
-        onClick={() => onSelect(latestYear)}
-      >
+    <div role="group" aria-label="Fiscal year view" className={TRACK}>
+      <button type="button" aria-pressed={latestActive}
+        onClick={() => onSelect(latestYear)} className={`${seg(latestActive)} shrink-0`}>
         FY{latestYear}
-      </Button>
-      <Button
-        type="button" size="sm"
-        variant={selected === 'all' ? 'default' : 'outline'}
-        aria-pressed={selected === 'all'}
-        onClick={() => onSelect('all')}
-      >
+      </button>
+      <button type="button" aria-pressed={selected === 'all'}
+        onClick={() => onSelect('all')} className={`${seg(selected === 'all')} shrink-0`}>
         All years
-      </Button>
+      </button>
     </div>
   );
 }
