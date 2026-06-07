@@ -213,12 +213,77 @@ export interface SiteYearlyRow {
   year: number;
   filings: number;
   median_wage: number | null;
+  sponsors: number | null;
+  socs: number | null;
 }
 
 export function getSiteYearly(): SiteYearlyRow[] {
   return queryAll<SiteYearlyRow>(
-    `SELECT year, filings, median_wage FROM site_yearly ORDER BY year ASC`,
+    `SELECT year, filings, median_wage, sponsors, socs FROM site_yearly ORDER BY year ASC`,
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Homepage per-year leaderboards (compact flat arrays, filtered client-side  */
+/* by the selected fiscal year). Derived from the existing per-year tables.   */
+/* -------------------------------------------------------------------------- */
+
+export interface HomeYearEmployerRow { year: number; slug: string; canonical_name: string; filings: number }
+export interface HomeYearOccupationRow { year: number; slug: string; soc_code: string; soc_title: string | null; filings: number }
+export interface HomeYearPayingRow { year: number; soc_code: string; soc_title: string | null; slug: string | null; p50_wage: number | null }
+export interface HomeYearSectorRow { year: number; naics2: string; label: string; filings: number }
+export interface HomeYearStateRow { year: number; code: string; name: string; filings: number }
+
+/** Top sponsors per FY (≤perYear each) from employer_yearly + employer. */
+export function getHomeTopEmployersByYear(perYear = 10): HomeYearEmployerRow[] {
+  return queryAll<HomeYearEmployerRow>(
+    `WITH ranked AS (
+       SELECT ey.year, e.slug, e.canonical_name, ey.filings,
+              row_number() OVER (PARTITION BY ey.year ORDER BY ey.filings DESC) AS rk
+       FROM employer_yearly ey JOIN employer e ON e.slug = ey.employer_slug
+     )
+     SELECT year, slug, canonical_name, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
+}
+
+/** Top occupations by filings per FY (≤perYear each) from occupation_yearly + occupation. */
+export function getHomeTopOccupationsByYear(perYear = 10): HomeYearOccupationRow[] {
+  return queryAll<HomeYearOccupationRow>(
+    `WITH ranked AS (
+       SELECT oy.year, o.slug, o.soc_code, o.soc_title, oy.filings,
+              row_number() OVER (PARTITION BY oy.year ORDER BY oy.filings DESC) AS rk
+       FROM occupation_yearly oy JOIN occupation o ON o.soc_code = oy.soc_code
+       WHERE oy.filings IS NOT NULL
+     )
+     SELECT year, slug, soc_code, soc_title, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
+}
+
+/** Top-paying occupations per FY (precomputed in site_top_paying_occ_yearly). */
+export function getHomeTopPayingByYear(): HomeYearPayingRow[] {
+  return queryAll<HomeYearPayingRow>(
+    `SELECT year, soc_code, soc_title, slug, p50_wage
+       FROM site_top_paying_occ_yearly ORDER BY year, rank ASC`);
+}
+
+/** All tracked sectors per FY (for the donut) from sector_yearly + sector. */
+export function getHomeSectorsByYear(): HomeYearSectorRow[] {
+  return queryAll<HomeYearSectorRow>(
+    `SELECT sy.year, sy.naics2, s.label, sy.filings
+       FROM sector_yearly sy JOIN sector s ON s.naics2 = sy.naics2
+      ORDER BY sy.year, sy.filings DESC`);
+}
+
+/** Top hiring states per FY (≤perYear each) from state_yearly + state. */
+export function getHomeTopStatesByYear(perYear = 12): HomeYearStateRow[] {
+  return queryAll<HomeYearStateRow>(
+    `WITH ranked AS (
+       SELECT sy.year, sy.state_code AS code, st.name, sy.filings,
+              row_number() OVER (PARTITION BY sy.year ORDER BY sy.filings DESC) AS rk
+       FROM state_yearly sy JOIN state st ON st.code = sy.state_code
+     )
+     SELECT year, code, name, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
 }
 
 /** The LLM-written narrative stored in site_forecast.content_json. */

@@ -88,6 +88,38 @@ export function YearSelector({ years, selected, onSelect, maxButtons = 6 }: Year
 }
 
 /**
+ * Lightweight two-way toggle: latest FY vs. All years. Used on entity pages,
+ * where the full year picker is intentionally reserved for the homepage — here
+ * we only contrast "the latest year" against "all years (2010 onward)".
+ */
+export function LatestAllToggle({
+  latestYear, selected, onSelect,
+}: { latestYear: number; selected: YearValue; onSelect: (y: YearValue) => void }) {
+  const latestActive = selected !== 'all';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Fiscal year view">
+      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground mr-1">View</span>
+      <Button
+        type="button" size="sm"
+        variant={latestActive ? 'default' : 'outline'}
+        aria-pressed={latestActive}
+        onClick={() => onSelect(latestYear)}
+      >
+        FY{latestYear}
+      </Button>
+      <Button
+        type="button" size="sm"
+        variant={selected === 'all' ? 'default' : 'outline'}
+        aria-pressed={selected === 'all'}
+        onClick={() => onSelect('all')}
+      >
+        All years
+      </Button>
+    </div>
+  );
+}
+
+/**
  * Year-filter state synced to `?fy=`. Defaults to `defaultYear` (the latest FY,
  * which the SSG HTML renders), so a fresh load with no query string matches the
  * server markup. `?fy=all` and `?fy=2018` are restored on mount + on back/forward.

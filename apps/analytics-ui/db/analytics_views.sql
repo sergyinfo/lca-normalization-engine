@@ -128,6 +128,23 @@ WHERE  annual_wage BETWEEN 20000 AND 1000000
 GROUP  BY year;
 
 -- ---------------------------------------------------------------------------
+-- Distinct sponsors + occupations per year — feeds the homepage KPI strip when
+-- a single fiscal year is selected (filings + median wage already come from
+-- mv_filings_by_year + mv_median_wage_by_year). One scan, ~16 rows.
+-- ---------------------------------------------------------------------------
+DROP MATERIALIZED VIEW IF EXISTS analytics.mv_site_dims_by_year CASCADE;
+CREATE MATERIALIZED VIEW analytics.mv_site_dims_by_year AS
+SELECT filing_year::int                                          AS year,
+       count(DISTINCT data->>'canonical_employer_id')::bigint    AS sponsors,
+       count(DISTINCT data->>'soc_code')::bigint                 AS socs
+FROM   lca_records
+WHERE  filing_year IS NOT NULL
+GROUP  BY filing_year;
+
+CREATE INDEX IF NOT EXISTS mv_site_dims_by_year_idx
+  ON analytics.mv_site_dims_by_year (year);
+
+-- ---------------------------------------------------------------------------
 -- Median wage by (SOC, year) — wage growth lines
 -- ---------------------------------------------------------------------------
 DROP MATERIALIZED VIEW IF EXISTS analytics.mv_wage_by_soc_year CASCADE;

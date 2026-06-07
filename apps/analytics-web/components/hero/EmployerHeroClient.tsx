@@ -9,7 +9,7 @@
 
 import type { ReactNode } from 'react';
 import { EntityHero, type KpiTile } from '@/components/EntityHero';
-import { YearSelector, useYearParam } from '@/components/YearSelector';
+import { LatestAllToggle, useYearParam } from '@/components/YearSelector';
 import { fmt, fmtPct } from '@/lib/format';
 import type { EmployerYearlyRow } from '@/lib/queries';
 
@@ -61,7 +61,7 @@ export function EmployerHeroClient({
     <div className="space-y-4">
       <EntityHero eyebrow={eyebrow} chips={chips} updatedAt={updatedAt} title={title} subtitle={subtitle} kpis={kpis} />
       {years.length > 1 ? (
-        <YearSelector years={years} selected={selected} onSelect={setSelected} />
+        <LatestAllToggle latestYear={latest} selected={selected} onSelect={setSelected} />
       ) : null}
     </div>
   );

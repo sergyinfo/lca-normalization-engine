@@ -5,27 +5,27 @@ import {
 } from 'lucide-react';
 
 import {
-  getSiteKpis, listTopEmployers, listTopOccupations,
-  listHighestPayingOccupations, listTopSectors, listTopStates,
-  getEntitySummary,
+  getSiteKpis, getSiteYearly, listTopEmployers, listTopOccupations,
+  listHighestPayingOccupations, listTopSectors, listTopStates, getEntitySummary,
+  getHomeTopEmployersByYear, getHomeTopOccupationsByYear, getHomeTopPayingByYear,
+  getHomeSectorsByYear, getHomeTopStatesByYear,
 } from '@/lib/queries';
-import { fmt, fmtUsd } from '@/lib/format';
+import { fmt } from '@/lib/format';
 import { websiteJsonLd, datasetJsonLd } from '@/lib/seo';
 import { SITE_URL, SITE_NAME } from '@/lib/site';
 import { FEATURES } from '@/lib/features';
 import { AdSlot } from '@/components/AdSlot';
 import { Summary } from '@/components/Summary';
-import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
-} from '@/components/ui/card';
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { HomeWageChartClient } from '@/components/charts/HomeWageChartClient';
-import { DonutChartClient } from '@/components/charts/DonutChartClient';
-import { HorizontalBarSvg } from '@/components/charts/HorizontalBarSvg';
+import { HomeYearProvider, HomeYearBar } from '@/components/home/HomeYearContext';
+import { HomeKpiStrip } from '@/components/home/HomeKpiStrip';
+import { HomeCharts } from '@/components/home/HomeCharts';
+import { HomeTopTables } from '@/components/home/HomeTopTables';
+import type {
+  Scoped, HomeKpiBundle, HomeChartBundle, HomeTableBundle, DonutSlice,
+} from '@/components/home/bundles';
 
 export const metadata: Metadata = {
   title: 'H-1B Sponsors, Salaries & LCA Data',
@@ -42,46 +42,97 @@ const browseLinks = [
   { href: '/rankings',   label: 'Rankings',    icon: Trophy,    desc: '"Best of" leaderboards' },
 ];
 
+const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+/** Top-8 sectors + a bucketed "Other" slice for the donut. */
+function buildDonut(rows: Array<{ label: string; filings: number }>): { donut: DonutSlice[]; donutTotal: number } {
+  const donutTotal = rows.reduce((s, x) => s + x.filings, 0);
+  const top = rows.slice(0, 8).map((s) => ({ label: s.label, value: s.filings }));
+  const rest = rows.slice(8);
+  const donut: DonutSlice[] = rest.length > 0
+    ? [...top, { label: 'Other sectors', value: rest.reduce((s, x) => s + x.filings, 0), color: 'hsl(220 14% 78%)' }]
+    : top;
+  return { donut, donutTotal };
+}
+
 export default function HomePage() {
   const kpis = getSiteKpis();
   const summary = getEntitySummary('site', 'home');
-  const topEmployers   = listTopEmployers(10);
-  const topOccupations = listTopOccupations(10);
+  const siteYearly = getSiteYearly();
+  const years = siteYearly.map((y) => y.year);
+  const lastYear = years.length ? Math.max(...years) : kpis.last_year;
+
+  // ----- all-time (current) lists -----
   const wageRank       = listHighestPayingOccupations(8);
   const topSectorsAll  = listTopSectors(30);
   const topStatesAll   = listTopStates(12);
+  const topEmployers   = listTopEmployers(10);
+  const topOccupations = listTopOccupations(10);
 
-  const wageChartData = wageRank.map((o) => ({
-    label: (o.soc_title ?? o.soc_code).length > 32
-      ? (o.soc_title ?? o.soc_code).slice(0, 30) + '…'
-      : (o.soc_title ?? o.soc_code),
-    value: o.p50_wage ?? 0,
-  }));
+  // ----- per-year flat arrays → grouped by year -----
+  const group = <T extends { year: number }>(rows: T[]): Record<number, T[]> => {
+    const m: Record<number, T[]> = {};
+    for (const r of rows) (m[r.year] ??= []).push(r);
+    return m;
+  };
+  const payByYear = group(getHomeTopPayingByYear());
+  const secByYear = group(getHomeSectorsByYear());
+  const stByYear  = group(getHomeTopStatesByYear(12));
+  const empByYear = group(getHomeTopEmployersByYear(10));
+  const occByYear = group(getHomeTopOccupationsByYear(10));
 
-  // Donut: top 8 sectors + bucketed "Other".
-  const sectorTotal = topSectorsAll.reduce((s, x) => s + x.filings, 0);
-  const sectorTop = topSectorsAll.slice(0, 8);
-  const sectorRest = topSectorsAll.slice(8);
-  const sectorDonut = [
-    ...sectorTop.map((s) => ({ label: s.label, value: s.filings })),
-    ...(sectorRest.length > 0 ? [{
-      label: 'Other sectors',
-      value: sectorRest.reduce((sum, x) => sum + x.filings, 0),
-      color: 'hsl(220 14% 78%)',
-    }] : []),
-  ];
+  // ----- KPI bundles -----
+  const kpiByYear: Record<number, HomeKpiBundle> = {};
+  for (const y of siteYearly) {
+    kpiByYear[y.year] = { disclosures: y.filings, sponsors: y.sponsors, socs: y.socs, median_wage: y.median_wage };
+  }
+  const kpiBundles: Scoped<HomeKpiBundle> = {
+    all: { disclosures: kpis.total_records, sponsors: kpis.canonical_employers, socs: kpis.distinct_socs, median_wage: kpis.median_wage },
+    byYear: kpiByYear,
+  };
 
-  // State bar — show full names + state code in the hint.
-  const stateBar = topStatesAll.map((s) => ({
-    label: s.name,
-    value: s.filings,
-    hint: s.code,
-  }));
+  // ----- chart bundles -----
+  const allDonut = buildDonut(topSectorsAll.map((s) => ({ label: s.label, filings: s.filings })));
+  const chartByYear: Record<number, HomeChartBundle> = {};
+  for (const yr of years) {
+    const d = buildDonut((secByYear[yr] ?? []).map((s) => ({ label: s.label, filings: s.filings })));
+    chartByYear[yr] = {
+      wage: (payByYear[yr] ?? []).map((p) => ({ label: trunc(p.soc_title ?? p.soc_code, 32), value: p.p50_wage ?? 0 })),
+      donut: d.donut,
+      donutTotal: d.donutTotal,
+      states: (stByYear[yr] ?? []).map((s) => ({ label: s.name, value: s.filings, hint: s.code })),
+    };
+  }
+  const chartBundles: Scoped<HomeChartBundle> = {
+    all: {
+      wage: wageRank.map((o) => ({ label: trunc(o.soc_title ?? o.soc_code, 32), value: o.p50_wage ?? 0 })),
+      donut: allDonut.donut,
+      donutTotal: allDonut.donutTotal,
+      states: topStatesAll.map((s) => ({ label: s.name, value: s.filings, hint: s.code })),
+    },
+    byYear: chartByYear,
+  };
+
+  // ----- table bundles -----
+  const tableByYear: Record<number, HomeTableBundle> = {};
+  for (const yr of years) {
+    tableByYear[yr] = {
+      employers: (empByYear[yr] ?? []).map((e) => ({ slug: e.slug, canonical_name: e.canonical_name, filings: e.filings })),
+      occupations: (occByYear[yr] ?? []).map((o) => ({ slug: o.slug, soc_code: o.soc_code, soc_title: o.soc_title, filings: o.filings })),
+    };
+  }
+  const tableBundles: Scoped<HomeTableBundle> = {
+    all: {
+      employers: topEmployers.map((e) => ({ slug: e.slug, canonical_name: e.canonical_name, filings: e.filings })),
+      occupations: topOccupations.map((o) => ({ slug: o.slug, soc_code: o.soc_code, soc_title: o.soc_title, filings: o.filings })),
+    },
+    byYear: tableByYear,
+  };
 
   return (
     <>
-      {/* ----- Hero ------------------------------------------------------- */}
-      <section className="space-y-5 pb-12 pt-4">
+      {/* ----- Hero (all-time framing) ----------------------------------- */}
+      <section className="space-y-5 pb-10 pt-4">
         <Badge variant="secondary" className="rounded-full gap-1.5">
           <Sparkles className="size-3" />
           FY{kpis.first_year}–FY{kpis.last_year} · {fmt(kpis.total_records)} disclosures
@@ -101,9 +152,7 @@ export default function HomePage() {
         </p>
         <div className="flex flex-wrap gap-3 pt-3">
           <Button asChild size="lg" className="rounded-full px-6">
-            <Link href="/rankings">
-              Browse rankings <ArrowRight className="size-4" />
-            </Link>
+            <Link href="/rankings">Browse rankings <ArrowRight className="size-4" /></Link>
           </Button>
           {FEATURES.api ? (
             <Button asChild size="lg" variant="outline" className="rounded-full px-6">
@@ -113,193 +162,52 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ----- KPI strip -------------------------------------------------- */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3 pb-12">
-        <KpiTile label="Disclosures"        value={fmt(kpis.total_records)}        sub={`FY${kpis.first_year}–FY${kpis.last_year}`} />
-        <KpiTile label="Canonical sponsors" value={fmt(kpis.canonical_employers)}  sub="dedup'd across spellings" />
-        <KpiTile label="Occupations"        value={fmt(kpis.distinct_socs)}        sub="SOC codes covered" />
-        <KpiTile label="Median wage"        value={fmtUsd(kpis.median_wage)}       sub="across all filings" accent />
-      </section>
+      {/* ----- Year-aware dashboard (2025 default; pick a year / all years) - */}
+      <HomeYearProvider years={years} defaultYear={lastYear}>
+        <HomeYearBar />
 
-      <Summary summary={summary} />
+        <section className="pt-6 pb-12">
+          <HomeKpiStrip bundles={kpiBundles} firstYear={kpis.first_year} lastYear={kpis.last_year} />
+        </section>
 
-      <AdSlot name="home-top" />
+        <Summary summary={summary} />
 
-      {/* ----- Wage chart ------------------------------------------------- */}
-      <section className="pt-12">
-        <Card className="overflow-hidden">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Highest-paying H-1B occupations</CardTitle>
-              <CardDescription>
-                Median annual prevailing wage across the top 8 SOCs by wage.
-              </CardDescription>
-            </div>
-            <Button asChild variant="ghost" size="sm" className="hidden md:inline-flex">
-              <Link href="/highest-paying-h1b-jobs">
-                Full ranking <ArrowRight className="size-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <HomeWageChartClient data={wageChartData} />
-          </CardContent>
-        </Card>
-      </section>
+        <AdSlot name="home-top" />
 
-      {/* ----- Two-up: sector mix donut + state leaderboard --------------- */}
-      <section className="grid lg:grid-cols-12 gap-6 pt-10">
-        <Card className="lg:col-span-5">
-          <CardHeader>
-            <CardTitle>Industry mix</CardTitle>
-            <CardDescription>
-              Share of H-1B filings by NAICS 2-digit sector — where the
-              program concentrates in the US economy.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChartClient
-              data={sectorDonut}
-              size={220}
-              centerLabel="filings"
-              centerValue={fmt(sectorTotal)}
-            />
-          </CardContent>
-        </Card>
-        <Card className="lg:col-span-7">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Top hiring states</CardTitle>
-              <CardDescription>
-                Filings by worksite state — California and Texas alone absorb a
-                massive share of the program.
-              </CardDescription>
-            </div>
-            <Button asChild variant="ghost" size="sm" className="hidden md:inline-flex">
-              <Link href="/top-h1b-states">
-                Full ranking <ArrowRight className="size-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <HorizontalBarSvg
-              data={stateBar}
-              labelWidth={150}
-              rowHeight={26}
-              gradient={['hsl(217 91% 55%)', 'hsl(190 95% 50%)']}
-            />
-          </CardContent>
-        </Card>
-      </section>
+        <HomeCharts bundles={chartBundles} />
 
-      {/* ----- Browse rail ------------------------------------------------ */}
-      <section className="space-y-4 pt-12 pb-4">
-        <div className="flex items-end justify-between gap-4">
-          <h2 className="text-2xl font-semibold tracking-tight">Browse the dataset</h2>
-          <p className="text-sm text-muted-foreground hidden md:block">
-            Five lenses on the same FY{kpis.first_year}–FY{kpis.last_year} corpus.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {browseLinks.map((b) => {
-            const Icon = b.icon;
-            return (
-              <Link key={b.href} href={b.href} className="group">
-                <Card className="h-full transition-all hover:border-primary/30 hover:shadow-md hover:-translate-y-0.5">
-                  <CardContent className="p-4 flex flex-col gap-2">
-                    <div className="size-9 rounded-md bg-secondary flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                      <Icon className="size-4" />
-                    </div>
-                    <div className="font-medium text-sm">{b.label}</div>
-                    <div className="text-xs text-muted-foreground">{b.desc}</div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
+        {/* ----- Browse rail (static) ----- */}
+        <section className="space-y-4 pt-12 pb-4">
+          <div className="flex items-end justify-between gap-4">
+            <h2 className="text-2xl font-semibold tracking-tight">Browse the dataset</h2>
+            <p className="text-sm text-muted-foreground hidden md:block">
+              Five lenses on the same FY{kpis.first_year}–FY{kpis.last_year} corpus.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {browseLinks.map((b) => {
+              const Icon = b.icon;
+              return (
+                <Link key={b.href} href={b.href} className="group">
+                  <Card className="h-full transition-all hover:border-primary/30 hover:shadow-md hover:-translate-y-0.5">
+                    <CardContent className="p-4 flex flex-col gap-2">
+                      <div className="size-9 rounded-md bg-secondary flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                        <Icon className="size-4" />
+                      </div>
+                      <div className="font-medium text-sm">{b.label}</div>
+                      <div className="text-xs text-muted-foreground">{b.desc}</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
 
-      <AdSlot name="home-mid" />
+        <AdSlot name="home-mid" />
 
-      {/* ----- Top tables ------------------------------------------------- */}
-      <section className="grid md:grid-cols-2 gap-6 pt-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>Top H-1B sponsors</CardTitle>
-            <CardDescription>Canonical employers by total filings</CardDescription>
-          </CardHeader>
-          <CardContent className="px-0 pb-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">#</TableHead>
-                  <TableHead>Employer</TableHead>
-                  <TableHead className="text-right">Filings</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {topEmployers.map((e, i) => (
-                  <TableRow key={e.slug}>
-                    <TableCell className="text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                    <TableCell>
-                      <Link href={`/employer/${e.slug}`} className="font-medium hover:text-primary">
-                        {e.canonical_name}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(e.filings)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="border-t p-3">
-              <Link href="/top-h1b-sponsors" className="text-sm text-primary hover:underline inline-flex items-center gap-1">
-                View top 100 <ArrowRight className="size-3" />
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Top H-1B occupations</CardTitle>
-            <CardDescription>SOC codes by total filings</CardDescription>
-          </CardHeader>
-          <CardContent className="px-0 pb-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">#</TableHead>
-                  <TableHead>SOC</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="text-right">Filings</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {topOccupations.map((o, i) => (
-                  <TableRow key={o.soc_code}>
-                    <TableCell className="text-muted-foreground tabular-nums">{i + 1}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      <Link href={`/occupation/${o.slug}`} className="hover:text-primary">{o.soc_code}</Link>
-                    </TableCell>
-                    <TableCell>
-                      <Link href={`/occupation/${o.slug}`} className="font-medium hover:text-primary">
-                        {o.soc_title}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{fmt(o.filings)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="border-t p-3">
-              <Link href="/top-h1b-occupations" className="text-sm text-primary hover:underline inline-flex items-center gap-1">
-                View top 100 <ArrowRight className="size-3" />
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+        <HomeTopTables bundles={tableBundles} />
+      </HomeYearProvider>
 
       <AdSlot name="home-bottom" />
 
@@ -317,23 +225,5 @@ export default function HomePage() {
         }}
       />
     </>
-  );
-}
-
-function KpiTile({
-  label, value, sub, accent = false,
-}: { label: string; value: string; sub: string; accent?: boolean }) {
-  return (
-    <Card className={accent ? 'border-primary/30 bg-secondary/50' : undefined}>
-      <CardContent className="p-4 space-y-1">
-        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          {label}
-        </div>
-        <div className={`text-3xl font-bold tabular-nums leading-none ${accent ? 'text-primary' : ''}`}>
-          {value}
-        </div>
-        <div className="text-xs text-muted-foreground pt-1">{sub}</div>
-      </CardContent>
-    </Card>
   );
 }

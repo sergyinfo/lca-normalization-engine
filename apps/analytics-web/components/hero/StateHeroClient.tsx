@@ -8,7 +8,7 @@
  */
 
 import { EntityHero, type KpiTile } from '@/components/EntityHero';
-import { YearSelector, useYearParam } from '@/components/YearSelector';
+import { LatestAllToggle, useYearParam } from '@/components/YearSelector';
 import { fmt } from '@/lib/format';
 import type { HeroChrome } from '@/components/hero/EmployerHeroClient';
 
@@ -51,7 +51,7 @@ export function StateHeroClient({
     <div className="space-y-4">
       <EntityHero eyebrow={eyebrow} chips={chips} updatedAt={updatedAt} title={title} subtitle={subtitle} kpis={kpis} />
       {years.length > 1 ? (
-        <YearSelector years={years} selected={selected} onSelect={setSelected} />
+        <LatestAllToggle latestYear={latest} selected={selected} onSelect={setSelected} />
       ) : null}
     </div>
   );
