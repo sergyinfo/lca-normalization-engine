@@ -55,6 +55,10 @@ export interface EmployerTopSocRow {
 export interface EmployerYearlyRow {
   year: number;
   filings: number;
+  certified: number;
+  withdrawn: number;
+  cert_withdrawn: number;
+  denied: number;
 }
 
 export interface OccupationRow {
@@ -95,7 +99,9 @@ export interface OccupationTopEmployerRow {
 export interface OccupationYearlyRow {
   year: number;
   filings: number | null;
+  p25_wage: number | null;
   median_wage: number | null;
+  p75_wage: number | null;
 }
 
 export interface StateRow {
@@ -327,7 +333,8 @@ export function getEmployerTopSocs(slug: string): EmployerTopSocRow[] {
 
 export function getEmployerYearly(slug: string): EmployerYearlyRow[] {
   return queryAll<EmployerYearlyRow>(
-    `SELECT year, filings FROM employer_yearly WHERE employer_slug = ? ORDER BY year ASC`,
+    `SELECT year, filings, certified, withdrawn, cert_withdrawn, denied
+       FROM employer_yearly WHERE employer_slug = ? ORDER BY year ASC`,
     slug);
 }
 
@@ -374,7 +381,7 @@ export function getOccupationTopEmployers(socCode: string): OccupationTopEmploye
 
 export function getOccupationYearly(socCode: string): OccupationYearlyRow[] {
   return queryAll<OccupationYearlyRow>(
-    `SELECT year, filings, median_wage FROM occupation_yearly
+    `SELECT year, filings, p25_wage, median_wage, p75_wage FROM occupation_yearly
       WHERE soc_code = ? ORDER BY year ASC`, socCode);
 }
 

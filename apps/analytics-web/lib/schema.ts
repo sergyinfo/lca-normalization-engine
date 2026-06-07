@@ -49,11 +49,18 @@ CREATE TABLE IF NOT EXISTS employer_top_soc (
 );
 CREATE INDEX IF NOT EXISTS employer_top_soc_idx ON employer_top_soc(employer_slug, rank);
 
--- Per-employer yearly volume (≤6 rows per employer).
+-- Per-employer yearly volume + outcome counts (one row per employer-year).
+-- The outcome counts let the entity hero re-scope certified/withdrawn/denied %
+-- to a selected fiscal year; % is derived in JS so rounding matches the all-time
+-- columns on the employer table.
 CREATE TABLE IF NOT EXISTS employer_yearly (
-  employer_slug TEXT NOT NULL,
-  year          INTEGER NOT NULL,
-  filings       INTEGER NOT NULL,
+  employer_slug  TEXT NOT NULL,
+  year           INTEGER NOT NULL,
+  filings        INTEGER NOT NULL,
+  certified      INTEGER NOT NULL DEFAULT 0,
+  withdrawn      INTEGER NOT NULL DEFAULT 0,
+  cert_withdrawn INTEGER NOT NULL DEFAULT 0,
+  denied         INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (employer_slug, year)
 );
 
@@ -102,12 +109,14 @@ CREATE TABLE IF NOT EXISTS occupation_top_employer (
   PRIMARY KEY (soc_code, employer_slug)
 );
 
--- Per-occupation yearly median wage.
+-- Per-occupation yearly wage percentiles (drives the year-scoped occupation hero).
 CREATE TABLE IF NOT EXISTS occupation_yearly (
   soc_code    TEXT NOT NULL,
   year        INTEGER NOT NULL,
   filings     INTEGER,
+  p25_wage    INTEGER,
   median_wage INTEGER,
+  p75_wage    INTEGER,
   PRIMARY KEY (soc_code, year)
 );
 

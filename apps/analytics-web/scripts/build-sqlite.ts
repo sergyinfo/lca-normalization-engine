@@ -269,22 +269,26 @@ async function main() {
     }
     console.log(`[build-sqlite]   employer_top_soc: ${empSocs.length} rows`);
 
-    /* -- employer yearly volume (from mv_employer_growth_by_year) ------- */
+    /* -- employer yearly volume + outcome counts (mv_employer_growth_by_year) - */
     const { rows: empYears } = await pg.query<{ canonical_id: string;
-      year: number; filings: string }>(`
-      SELECT canonical_id::text, year, filings::text
+      year: number; filings: string; certified: string; withdrawn: string;
+      cert_withdrawn: string; denied: string }>(`
+      SELECT canonical_id::text, year, filings::text,
+             certified::text, withdrawn::text, cert_withdrawn::text, denied::text
       FROM   analytics.mv_employer_growth_by_year
       WHERE  canonical_id::text = ANY($1::text[])
       ORDER  BY canonical_id, year
     `, [ids]);
     const insEmpYear = db.prepare(`INSERT OR IGNORE INTO employer_yearly
-      (employer_slug, year, filings) VALUES (?, ?, ?)`);
+      (employer_slug, year, filings, certified, withdrawn, cert_withdrawn, denied)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
     // Manual reduction since SQLite has no MIN()/MAX() in UPDATE SET.
     const empYearRange = new Map<string, { min: number; max: number }>();
     for (const r of empYears) {
       const slug = canonicalToSlug.get(r.canonical_id);
       if (!slug) continue;
-      insEmpYear.run(slug, Number(r.year), Number(r.filings));
+      insEmpYear.run(slug, Number(r.year), Number(r.filings),
+        Number(r.certified), Number(r.withdrawn), Number(r.cert_withdrawn), Number(r.denied));
       const ex = empYearRange.get(slug);
       if (!ex) empYearRange.set(slug, { min: r.year, max: r.year });
       else { ex.min = Math.min(ex.min, r.year); ex.max = Math.max(ex.max, r.year); }
@@ -377,16 +381,18 @@ async function main() {
 
     /* -- occupation_yearly ---------------------------------------------- */
     const { rows: occYears } = await pg.query<{ soc_code: string; year: number;
-      n: string | null; median_wage: number | null }>(`
-      SELECT soc_code, year, n::text, median_wage
+      n: string | null; p25_wage: number | null; median_wage: number | null;
+      p75_wage: number | null }>(`
+      SELECT soc_code, year, n::text, p25_wage, median_wage, p75_wage
       FROM   analytics.mv_wage_by_soc_year
       WHERE  soc_code = ANY($1::text[]) ORDER BY soc_code, year
     `, [occCodes]);
     const insOccYear = db.prepare(`INSERT INTO occupation_yearly
-      (soc_code, year, filings, median_wage) VALUES (?, ?, ?, ?)`);
+      (soc_code, year, filings, p25_wage, median_wage, p75_wage) VALUES (?, ?, ?, ?, ?, ?)`);
     for (const r of occYears) {
       insOccYear.run(r.soc_code, Number(r.year),
-        r.n != null ? Number(r.n) : null, r.median_wage ?? null);
+        r.n != null ? Number(r.n) : null,
+        r.p25_wage ?? null, r.median_wage ?? null, r.p75_wage ?? null);
     }
     console.log(`[build-sqlite]   occupation_yearly: ${occYears.length} rows`);
   }
@@ -688,12 +694,19 @@ async function main() {
     }
     console.log(`[build-sqlite]   employer_top_soc (tail): ${tailSocCount} rows`);
 
-    /* -- tail employers: yearly trend ------------------------------------ */
+    /* -- tail employers: yearly trend + outcome counts ------------------- */
+    // Mirror the FILTER logic from mv_employer_growth_by_year (which is top-300
+    // only) so tail employers also carry per-year outcome counts for the hero.
     const { rows: tailYears } = await pg.query<{ canonical_id: string;
-      year: number; filings: string }>(`
+      year: number; filings: string; certified: string; withdrawn: string;
+      cert_withdrawn: string; denied: string }>(`
       SELECT r.data->>'canonical_employer_id' AS canonical_id,
              r.filing_year::int               AS year,
-             count(*)::text                    AS filings
+             count(*)::text                    AS filings,
+             count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Certified')::text            AS certified,
+             count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Withdrawn')::text            AS withdrawn,
+             count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Certified - Withdrawn')::text AS cert_withdrawn,
+             count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Denied')::text               AS denied
       FROM   lca_records r
       WHERE  r.data->>'canonical_employer_id' = ANY($1::text[])
         AND  r.filing_year IS NOT NULL
@@ -701,13 +714,15 @@ async function main() {
       ORDER  BY 1, 2
     `, [tailIdList]);
     const insTailYear = db.prepare(`INSERT OR IGNORE INTO employer_yearly
-      (employer_slug, year, filings) VALUES (?, ?, ?)`);
+      (employer_slug, year, filings, certified, withdrawn, cert_withdrawn, denied)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
     const tailYearRange = new Map<string, { min: number; max: number }>();
     let tailYearCount = 0;
     for (const r of tailYears) {
       const slug = canonicalToSlug.get(r.canonical_id);
       if (!slug) continue;
-      insTailYear.run(slug, Number(r.year), Number(r.filings));
+      insTailYear.run(slug, Number(r.year), Number(r.filings),
+        Number(r.certified), Number(r.withdrawn), Number(r.cert_withdrawn), Number(r.denied));
       tailYearCount += 1;
       const ex = tailYearRange.get(slug);
       if (!ex) tailYearRange.set(slug, { min: r.year, max: r.year });
