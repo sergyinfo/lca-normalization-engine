@@ -248,7 +248,23 @@ CREATE TABLE IF NOT EXISTS redirects (
 CREATE TABLE IF NOT EXISTS site_yearly (
   year        INTEGER PRIMARY KEY,
   filings     INTEGER NOT NULL,
-  median_wage INTEGER
+  median_wage INTEGER,
+  sponsors    INTEGER,   -- distinct canonical employers active that FY (homepage KPI)
+  socs        INTEGER    -- distinct SOC occupations that FY (homepage KPI)
+);
+
+-- Top-paying occupations per fiscal year (homepage "highest-paying" chart when a
+-- single year is picked). Distinct from occupation_yearly, which is by filings;
+-- the highest-wage SOCs are often niche and outside the by-filings top-N.
+CREATE TABLE IF NOT EXISTS site_top_paying_occ_yearly (
+  year       INTEGER NOT NULL,
+  soc_code   TEXT    NOT NULL,
+  soc_title  TEXT,
+  slug       TEXT,            -- occupation page slug, NULL if outside the curated set (no link)
+  p50_wage   INTEGER,
+  n_wages    INTEGER,
+  rank       INTEGER NOT NULL,
+  PRIMARY KEY (year, soc_code)
 );
 
 -- Forward-year forecast (e.g. FY2026 before any FY2026 data exists). Numbers are

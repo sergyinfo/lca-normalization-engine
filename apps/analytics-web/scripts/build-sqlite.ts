@@ -148,16 +148,22 @@ async function main() {
   );
   console.log(`[build-sqlite]   site_kpis: 1 row`);
 
-  /* -- site_yearly: filings + median wage per fiscal year ------------------ */
-  const { rows: yearRows } = await pg.query<{ year: string; filings: string; median_wage: string | null }>(`
-    SELECT f.year, f.filings::text AS filings, w.median_wage::text AS median_wage
+  /* -- site_yearly: filings + median wage + sponsors/socs per fiscal year -- */
+  const { rows: yearRows } = await pg.query<{ year: string; filings: string;
+    median_wage: string | null; sponsors: string | null; socs: string | null }>(`
+    SELECT f.year, f.filings::text AS filings, w.median_wage::text AS median_wage,
+           d.sponsors::text AS sponsors, d.socs::text AS socs
     FROM   analytics.mv_filings_by_year f
     LEFT JOIN analytics.mv_median_wage_by_year w ON w.year = f.year
+    LEFT JOIN analytics.mv_site_dims_by_year   d ON d.year = f.year
     ORDER  BY f.year
   `);
-  const insYear = db.prepare(`INSERT INTO site_yearly (year, filings, median_wage) VALUES (?, ?, ?)`);
+  const insYear = db.prepare(`INSERT INTO site_yearly (year, filings, median_wage, sponsors, socs) VALUES (?, ?, ?, ?, ?)`);
   for (const r of yearRows) {
-    insYear.run(Number(r.year), Number(r.filings), r.median_wage != null ? Number(r.median_wage) : null);
+    insYear.run(Number(r.year), Number(r.filings),
+      r.median_wage != null ? Number(r.median_wage) : null,
+      r.sponsors != null ? Number(r.sponsors) : null,
+      r.socs != null ? Number(r.socs) : null);
   }
   console.log(`[build-sqlite]   site_yearly: ${yearRows.length} rows`);
 
@@ -311,14 +317,44 @@ async function main() {
   const insOcc = db.prepare(`INSERT INTO occupation
     (soc_code, slug, soc_title, filings, n_wages, p25_wage, p50_wage, p75_wage, rank)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  // soc_code -> page slug, for the curated (top-N) occupations only; used to
+  // link the homepage per-year "top-paying" rows that resolve to a real page.
+  const occSlugByCode = new Map<string, string>();
   occRows.forEach((r, i) => {
-    insOcc.run(r.soc_code, toOccupationSlug(r.soc_code, r.soc_title),
+    const slug = toOccupationSlug(r.soc_code, r.soc_title);
+    occSlugByCode.set(r.soc_code, slug);
+    insOcc.run(r.soc_code, slug,
       r.soc_title, Number(r.filings),
       r.n != null ? Number(r.n) : null,
       r.p25 ?? null, r.p50 ?? null, r.p75 ?? null, i + 1);
   });
   const occCodes = occRows.map((r) => r.soc_code);
   console.log(`[build-sqlite]   occupation: ${occRows.length} rows`);
+
+  /* -- site_top_paying_occ_yearly: top-8 occupations by median wage / FY ---- */
+  // Homepage "highest-paying" chart, per fiscal year. Sourced from the per-year
+  // wage matview (not occupation_yearly, which is by filings). Slug links only
+  // when the SOC is in the curated occupation set above.
+  const { rows: payRows } = await pg.query<{ year: string; soc_code: string;
+    soc_title: string | null; p50_wage: string | null; n: string; rk: number }>(`
+    WITH ranked AS (
+      SELECT w.year, w.soc_code, w.p50_wage, w.n,
+             row_number() OVER (PARTITION BY w.year ORDER BY w.p50_wage DESC) AS rk
+      FROM   analytics.mv_wage_by_soc_year w
+      WHERE  w.n >= 50 AND w.p50_wage IS NOT NULL
+    )
+    SELECT r.year, r.soc_code,
+           (SELECT s.soc_title FROM analytics.mv_soc_summary s WHERE s.soc_code = r.soc_code LIMIT 1) AS soc_title,
+           r.p50_wage::text AS p50_wage, r.n::text AS n, r.rk::int AS rk
+    FROM   ranked r WHERE r.rk <= 8 ORDER BY r.year, r.rk
+  `);
+  const insPay = db.prepare(`INSERT OR IGNORE INTO site_top_paying_occ_yearly
+    (year, soc_code, soc_title, slug, p50_wage, n_wages, rank) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+  for (const r of payRows) {
+    insPay.run(Number(r.year), r.soc_code, r.soc_title, occSlugByCode.get(r.soc_code) ?? null,
+      r.p50_wage != null ? Number(r.p50_wage) : null, Number(r.n), Number(r.rk));
+  }
+  console.log(`[build-sqlite]   site_top_paying_occ_yearly: ${payRows.length} rows`);
 
   if (occCodes.length > 0) {
     /* -- occupation_level ------------------------------------------------ */
