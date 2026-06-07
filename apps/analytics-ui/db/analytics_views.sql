@@ -147,7 +147,9 @@ WITH wages AS (
 )
 SELECT soc_code, year,
        count(annual_wage)::bigint                                         AS n,
-       percentile_cont(0.50) WITHIN GROUP (ORDER BY annual_wage)::int     AS median_wage
+       percentile_cont(0.25) WITHIN GROUP (ORDER BY annual_wage)::int     AS p25_wage,
+       percentile_cont(0.50) WITHIN GROUP (ORDER BY annual_wage)::int     AS median_wage,
+       percentile_cont(0.75) WITHIN GROUP (ORDER BY annual_wage)::int     AS p75_wage
 FROM   wages
 WHERE  annual_wage BETWEEN 20000 AND 1000000
 GROUP  BY soc_code, year;
@@ -367,7 +369,11 @@ WITH top_sponsors AS (
 SELECT ts.id                                AS canonical_id,
        ce.canonical_name                    AS canonical_name,
        r.filing_year::int                   AS year,
-       count(*)::bigint                     AS filings
+       count(*)::bigint                     AS filings,
+       count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Certified')::bigint            AS certified,
+       count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Withdrawn')::bigint            AS withdrawn,
+       count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Certified - Withdrawn')::bigint AS cert_withdrawn,
+       count(*) FILTER (WHERE r.data->>'CASE_STATUS' = 'Denied')::bigint               AS denied
 FROM   lca_records r
 JOIN   canonical_employers ce ON ce.id::text = r.data->>'canonical_employer_id'
 JOIN   top_sponsors ts ON ts.id = ce.id
@@ -516,7 +522,7 @@ ranked AS (
 SELECT state, canonical_id, canonical_name, filings, state_filings,
        round(100.0 * filings / NULLIF(state_filings,0), 2) AS share_pct
 FROM   ranked
-WHERE  rk <= 3;
+WHERE  rk <= 15;
 
 CREATE INDEX IF NOT EXISTS mv_state_concentration_idx
   ON analytics.mv_state_concentration (state, share_pct DESC);

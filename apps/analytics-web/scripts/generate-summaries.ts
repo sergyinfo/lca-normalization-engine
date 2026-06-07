@@ -166,9 +166,21 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
     const slug = String(r.slug);
     const topSocs = db.prepare(`SELECT soc_code, soc_title, filings FROM employer_top_soc
                                   WHERE employer_slug = ? ORDER BY rank LIMIT 5`).all(slug);
-    const yearly  = db.prepare(`SELECT year, filings FROM employer_yearly
-                                  WHERE employer_slug = ? ORDER BY year`).all(slug);
-    jobs.push({ kind: 'employer', slug, payload: { ...r, top_socs: topSocs, yearly_volume: yearly } });
+    const yearly  = db.prepare(`SELECT year, filings, certified, withdrawn, cert_withdrawn, denied
+                                  FROM employer_yearly WHERE employer_slug = ? ORDER BY year`)
+                      .all(slug) as Array<Record<string, number>>;
+    const ly = yearly.at(-1);
+    const latest_year = ly ? {
+      year: ly.year, filings: ly.filings,
+      certified_pct: pct(ly.certified, ly.filings),
+      withdrawn_pct: pct(ly.withdrawn, ly.filings),
+      denied_pct: pct(ly.denied, ly.filings),
+    } : null;
+    jobs.push({ kind: 'employer', slug, payload: {
+      ...r, top_socs: topSocs,
+      yearly_volume: yearly.map((y) => ({ year: y.year, filings: y.filings })),
+      latest_year,
+    } });
   }
 
   const occs = db.prepare(`SELECT soc_code, slug, soc_title, filings, n_wages,
@@ -182,7 +194,15 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
                                      WHERE soc_code = ? ORDER BY rank LIMIT 5`).all(code);
     const topEmps  = db.prepare(`SELECT canonical_name, filings FROM occupation_top_employer
                                     WHERE soc_code = ? ORDER BY rank LIMIT 5`).all(code);
-    jobs.push({ kind: 'occupation', slug, payload: { ...r, wage_levels: levels, top_states: topStates, top_employers: topEmps } });
+    const oy = db.prepare(`SELECT year, filings, p25_wage, median_wage, p75_wage
+                             FROM occupation_yearly WHERE soc_code = ? ORDER BY year`)
+                 .all(code) as Array<Record<string, number>>;
+    const oly = oy.at(-1);
+    const latest_year = oly ? {
+      year: oly.year, filings: oly.filings,
+      p25_wage: oly.p25_wage, median_wage: oly.median_wage, p75_wage: oly.p75_wage,
+    } : null;
+    jobs.push({ kind: 'occupation', slug, payload: { ...r, wage_levels: levels, top_states: topStates, top_employers: topEmps, latest_year } });
   }
 
   const states = db.prepare(`SELECT code, slug, name, filings FROM state`).all();
@@ -195,15 +215,28 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
     const topSocs = db.prepare(`SELECT soc_code, soc_title, filings
                                   FROM state_top_occupation WHERE state_code = ?
                                   ORDER BY rank LIMIT 5`).all(code);
-    jobs.push({ kind: 'state', slug, payload: { ...r, top_employers: topEmps, top_occupations: topSocs } });
+    const sy = db.prepare(`SELECT year, filings FROM state_yearly WHERE state_code = ? ORDER BY year`)
+                 .all(code) as Array<Record<string, number>>;
+    const sly = sy.at(-1);
+    const latest_year = sly ? { year: sly.year, filings: sly.filings } : null;
+    jobs.push({ kind: 'state', slug, payload: { ...r, top_employers: topEmps, top_occupations: topSocs, latest_year } });
   }
 
   const secs = db.prepare(`SELECT naics2, slug, label, filings, employers FROM sector`).all();
   for (const r of secs as Array<Record<string, unknown>>) {
-    jobs.push({ kind: 'sector', slug: String(r.slug), payload: r });
+    const cy = db.prepare(`SELECT year, filings FROM sector_yearly WHERE naics2 = ? ORDER BY year`)
+                 .all(String(r.naics2)) as Array<Record<string, number>>;
+    const cly = cy.at(-1);
+    const latest_year = cly ? { year: cly.year, filings: cly.filings } : null;
+    jobs.push({ kind: 'sector', slug: String(r.slug), payload: { ...r, latest_year } });
   }
 
   return jobs;
+}
+
+/** Percentage (0–100, one decimal) of n over d; null when d is 0. */
+function pct(n: number, d: number): number | null {
+  return d > 0 ? Math.round((1000 * n) / d) / 10 : null;
 }
 
 /** Page-level summaries: index pages, ranking pages, and featured comparisons. */

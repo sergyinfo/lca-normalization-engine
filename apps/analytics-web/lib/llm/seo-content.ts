@@ -24,7 +24,7 @@ import { z } from 'zod';
 
 /** Bump to force a full regeneration when the prompt/schema changes (folded
  *  into the per-entity data_hash, so unchanged prompts skip unchanged data). */
-export const PROMPT_VERSION = 'v2-haiku-seo-meta';
+export const PROMPT_VERSION = 'v3-latest-year-recency';
 
 export const TITLE_MAX = 60;
 export const DESC_MAX = 155;
@@ -54,7 +54,8 @@ For that entity, produce:
 - keywords: 3 to 6 short search phrases a user might plausibly type to reach this page.
 
 Rules:
-- Only use figures that appear in the data payload. NEVER invent or estimate numbers.
+- When the payload includes a "latest_year" object, LEAD the summary with that most-recent fiscal year — e.g. "In FY2025, <entity> ..." with that year's figures (filings, wages, or certification rate as given) — since that is what readers look for first. Then give all-time context (totals, range of years) for perspective. If "latest_year" is absent, summarize the all-time figures.
+- Only use figures that appear in the data payload. NEVER invent or estimate numbers. Do not compute year-over-year changes unless both years' figures are in the payload.
 - Write in English. Avoid filler like "in conclusion" or "this analysis shows".
 - The character limits matter — keep the title and description within them.`;
 
