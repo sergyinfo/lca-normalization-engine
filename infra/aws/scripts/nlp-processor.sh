@@ -64,25 +64,10 @@ else
 #    coordinate across replicas via a Postgres advisory lock.
 docker compose up -d --scale nlp-worker="${NLP_REPLICAS:-1}" nlp-worker
 
-# 4. Sweep: enqueue EVERY unclassified, non-quarantined row (guarantees 100% coverage
-#    regardless of what ingest enqueued). Fresh queue on this box → no --drain needed.
-#    base64 so text COPY escaping can't corrupt the embedded JSON.
-SWEEP_SQL="COPY (SELECT replace(encode(convert_to(json_build_object(
-  'nlp_id', data->>'_nlp_id', 'filing_year', filing_year,
-  'job_title',      COALESCE(data->>'JOB_TITLE', data->>'job_title',''),
-  'employer_name',  COALESCE(data->>'EMPLOYER_NAME', data->>'employer_name',''),
-  'employer_state', COALESCE(data->>'EMPLOYER_STATE', data->>'employer_state'),
-  'employer_city',  COALESCE(data->>'EMPLOYER_CITY', data->>'employer_city'),
-  'fein',           COALESCE(data->>'EMPLOYER_FEIN', data->>'employer_fein')
-  )::text,'UTF8'),'base64'), E'\n','')
-  FROM lca_records r
-  WHERE NOT (data ? 'soc_code')
-    AND NOT EXISTS (SELECT 1 FROM staging.quarantine_records q
-                     WHERE q.raw_data->>'_nlp_id' = r.data->>'_nlp_id')
-  ) TO STDOUT"
-echo "[nlp-processor] sweeping unclassified rows -> nlp-tasks"
-docker compose exec -T db psql -U lca_user -d lca_db -tA -c "$SWEEP_SQL" \
-  | node apps/ingestor/sweep-enqueue.mjs
+# 4. Sweep: enqueue EVERY unclassified, non-quarantined row (guarantees 100%
+#    coverage regardless of what ingest enqueued). Global (SWEEP_FILING_YEARS unset)
+#    — the processor's job IS the full backlog. Shared with the quarterly burst.
+bash /opt/lca/infra/aws/scripts/burst-sweep.sh
 
 # 5. Drain barrier: wait until nlp-tasks is empty for two consecutive checks (write-back
 #    is per-job, so a brief read of 0 between jobs is possible — confirm twice). Capped
@@ -102,6 +87,13 @@ while :; do
   fi
   sleep 120
 done
+
+# 5b. Coverage check — warn-only on the backfill (a few un-processable rows over a
+#     multi-million backlog are expected; this surfaces the count without aborting
+#     the re-snapshot). The quarterly burst uses the same check in HARD-FAIL mode.
+COVERAGE_WARN_ONLY=true COVERAGE_MAX_UNCLASSIFIED="${COVERAGE_MAX_UNCLASSIFIED:-5000}" \
+  NOTIFY_TOPIC="$NOTIFY_TOPIC" REGION="$REGION" RELEASE="$RELEASE" \
+  bash /opt/lca/infra/aws/scripts/assert-coverage.sh || true
 fi  # end rebuild-only guard (NLP_REPLICAS=0 skips workers/sweep/drain)
 
 # 6. Finalize-after-NLP: rebuild candidate + re-snapshot (the persist step) + notify.
