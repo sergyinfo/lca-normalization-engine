@@ -51,9 +51,16 @@ trap 'notify "[LCA] promote FAILED" "ec2-promote.sh failed on $(hostname). Check
 export DATABASE_URL="postgresql://lca_user:lca_pass@localhost:5432/lca_db"
 pnpm --filter @lca/cli analytics:refresh-views
 pnpm --filter analytics-web build:sqlite
+# Seed entity_summary from the last candidate so build:summaries only re-runs the
+# LLM for entities whose data actually changed (build:sqlite makes a fresh db, so
+# without this every promote regenerates ALL summaries). Tolerant of a missing prior.
+SUMMARY_SEED_DB=""
+if aws s3 cp "s3://$LCA_BUCKET/candidates/last/lca.db" /tmp/prev-lca.db --region "$REGION" 2>/dev/null; then
+  SUMMARY_SEED_DB=/tmp/prev-lca.db
+fi
 LLM_API_KEY=$(aws secretsmanager get-secret-value --region "$REGION" \
   --secret-id lca/llm-api-key --query SecretString --output text) \
-LLM_PROVIDER=anthropic \
+LLM_PROVIDER=anthropic SUMMARY_SEED_DB="$SUMMARY_SEED_DB" \
   pnpm --filter analytics-web build:summaries
 
 # 3. Upload to the PROD key (this is the only place the prod lca.db is written).
