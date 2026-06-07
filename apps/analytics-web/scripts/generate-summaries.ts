@@ -22,6 +22,7 @@
 import 'dotenv/config';
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +41,7 @@ async function main() {
   db.exec('PRAGMA journal_mode = MEMORY');
   db.exec('PRAGMA synchronous = OFF');
   ensureSchema(db);
+  seedFromPrior(db);
 
   const useApi = isAnthropicConfigured();
   console.log(`[seo] provider=${useApi ? 'anthropic' : 'stub'} mode=${useApi ? MODE : 'stub'} prompt=${PROMPT_VERSION}`);
@@ -124,6 +126,34 @@ async function main() {
   if (failRate > 0.05) {
     console.error(`[seo] ${(failRate * 100).toFixed(1)}% of summaries failed — treating as systemic.`);
     process.exitCode = 1;
+  }
+}
+
+/**
+ * Optionally seed `entity_summary` from a prior lca.db (path in $SUMMARY_SEED_DB)
+ * so the skip-if-unchanged path only regenerates entities whose data actually
+ * changed. build-sqlite produces a fresh db each run, so without this every
+ * rebuild re-runs the LLM for all entities; with it, an unchanged corpus costs
+ * ~zero API calls. No-op (→ full regeneration) when the env is unset, the file
+ * is missing, or the prior schema is incompatible. Runs before collectJobs so
+ * the seeded data_hash rows are visible to the skip check.
+ */
+function seedFromPrior(db: DatabaseSync) {
+  const seed = process.env.SUMMARY_SEED_DB;
+  if (!seed) return;
+  if (!fs.existsSync(seed)) { console.log(`[seo] seed db not found (${seed}) — full regen.`); return; }
+  try {
+    db.exec(`ATTACH DATABASE '${seed.replace(/'/g, "''")}' AS seed`);
+    db.exec(`INSERT OR IGNORE INTO entity_summary
+      (kind, slug, summary_md, meta_title, meta_description, keywords, data_hash, generated_at, model)
+      SELECT kind, slug, summary_md, meta_title, meta_description, keywords, data_hash, generated_at, model
+      FROM   seed.entity_summary`);
+    const n = (db.prepare('SELECT count(*) c FROM entity_summary').get() as { c: number }).c;
+    db.exec('DETACH DATABASE seed');
+    console.log(`[seo] seeded ${n} prior summaries from ${seed} — unchanged entities will skip.`);
+  } catch (err) {
+    try { db.exec('DETACH DATABASE seed'); } catch { /* not attached */ }
+    console.warn(`[seo] seed skipped (${(err as Error).message}) — continuing with full regen.`);
   }
 }
 
