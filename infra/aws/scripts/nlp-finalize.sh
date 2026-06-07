@@ -37,8 +37,21 @@ docker compose exec -T db psql -U lca_user -d lca_db \
 # Rebuild the candidate lca.db (+ summaries) — now against the fully-classified DB.
 mkdir -p apps/analytics-web/data
 pnpm --filter analytics-web build:sqlite
+
+# Seed entity_summary from the previous candidate so build:summaries only
+# re-runs the LLM for entities whose data actually changed (build:sqlite always
+# produces a fresh db, so without this every rebuild regenerates ALL summaries).
+# Tolerant: first ever run / missing object → no seed → full regen.
+SUMMARY_SEED_DB=""
+if aws s3 cp "s3://$LCADB_BUCKET/candidates/last/lca.db" /tmp/prev-lca.db 2>/dev/null; then
+  SUMMARY_SEED_DB=/tmp/prev-lca.db
+  echo "nlp-finalize: seeding summaries from previous candidate (candidates/last/lca.db)"
+else
+  echo "nlp-finalize: no previous candidate to seed from — full summary regen"
+fi
 LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
-  LLM_PROVIDER=anthropic pnpm --filter analytics-web build:summaries
+  LLM_PROVIDER=anthropic SUMMARY_SEED_DB="$SUMMARY_SEED_DB" \
+  pnpm --filter analytics-web build:summaries
 
 # Forward-year forecast page (/h1b-2026): deterministic projection + one LLM call.
 LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
@@ -46,6 +59,8 @@ LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --qu
 
 # Upload the SOC-complete candidate (staging key; Promote writes the prod key).
 aws s3 cp apps/analytics-web/data/lca.db "s3://$LCADB_BUCKET/candidates/$RELEASE/lca.db"
+# Stable pointer to the newest candidate so the NEXT run can seed summaries.
+aws s3 cp apps/analytics-web/data/lca.db "s3://$LCADB_BUCKET/candidates/last/lca.db"
 
 # Build + push the arm64 Lambda image. Construct the ECR URI (role has push, not
 # ecr:DescribeRepositories); --provenance/--sbom=false (Lambda rejects OCI attestations).
