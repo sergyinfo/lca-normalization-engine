@@ -338,10 +338,10 @@ async function main() {
   const { rows: payRows } = await pg.query<{ year: string; soc_code: string;
     soc_title: string | null; p50_wage: string | null; n: string; rk: number }>(`
     WITH ranked AS (
-      SELECT w.year, w.soc_code, w.p50_wage, w.n,
-             row_number() OVER (PARTITION BY w.year ORDER BY w.p50_wage DESC) AS rk
+      SELECT w.year, w.soc_code, w.median_wage AS p50_wage, w.n,
+             row_number() OVER (PARTITION BY w.year ORDER BY w.median_wage DESC) AS rk
       FROM   analytics.mv_wage_by_soc_year w
-      WHERE  w.n >= 50 AND w.p50_wage IS NOT NULL
+      WHERE  w.n >= 50 AND w.median_wage IS NOT NULL
     )
     SELECT r.year, r.soc_code,
            (SELECT s.soc_title FROM analytics.mv_soc_summary s WHERE s.soc_code = r.soc_code LIMIT 1) AS soc_title,
