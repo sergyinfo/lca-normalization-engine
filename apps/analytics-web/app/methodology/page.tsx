@@ -98,6 +98,15 @@ export default function MethodologyPage() {
         than silently dropped. Where automated classification is uncertain, the record is
         flagged for human review instead of being assigned a low-confidence label.
       </p>
+      <p className="mt-4 text-muted-foreground">
+        <strong className="text-foreground">Occupation coverage by era.</strong> Filing counts and
+        wage figures are complete for every year. Occupation (SOC) classification, however, is most
+        complete for <strong className="text-foreground">FY2020 onward</strong>; a substantial share
+        of the older <strong className="text-foreground">FY2010–2019</strong> backfill is not yet
+        SOC-classified. So when you scope a pre-2020 year, occupation breakdowns and SOC-based wage
+        stats undercount — the per-year <em>filings</em> and overall <em>wage</em> figures for those
+        years are unaffected. We are backfilling the remaining classifications.
+      </p>
 
       <h2 className="mt-16 text-2xl font-semibold tracking-tight">Wage methodology</h2>
       <p className="mt-4 text-muted-foreground">

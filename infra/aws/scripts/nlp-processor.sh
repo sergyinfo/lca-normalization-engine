@@ -47,6 +47,16 @@ docker compose exec -T db pg_restore --no-owner --no-acl --clean --if-exists \
 LCA_PARTITION_START_YEAR="${LCA_PARTITION_START_YEAR:-2010}" \
   node apps/cli-tool/index.js db:init
 
+# Rebuild-only mode (NLP_REPLICAS=0): skip workers/sweep/drain and go straight to
+# the finalize/rebuild. Use this for analytics-only rebuilds (e.g. the year-view
+# dashboard) that must NOT re-sweep an unclassified backlog — the FY2010-2019
+# backfill has ~2.9M rows without a soc_code, and sweeping them would kick off a
+# multi-day BERT drain instead of a ~quick rebuild. (Classify that backlog with a
+# normal NLP_REPLICAS>=1 run when you actually want to fill the SOC gap.)
+if [ "${NLP_REPLICAS:-1}" = "0" ]; then
+  echo "[nlp-processor] NLP_REPLICAS=0 — rebuild-only: skipping workers/sweep/drain"
+else
+
 # 3. Workers — NLP only (data is already ingested; no harvester/ingestion-worker here),
 #    scaled to NLP_REPLICAS processes. One worker is a single asyncio process whose
 #    classify/resolve calls block the event loop (~70k/hr ceiling), so throughput scales
@@ -92,6 +102,7 @@ while :; do
   fi
   sleep 120
 done
+fi  # end rebuild-only guard (NLP_REPLICAS=0 skips workers/sweep/drain)
 
 # 6. Finalize-after-NLP: rebuild candidate + re-snapshot (the persist step) + notify.
 NOTIFY_TOPIC="$NOTIFY_TOPIC" LLM_SECRET="$LLM_SECRET" LCADB_BUCKET="$LCADB_BUCKET" \
