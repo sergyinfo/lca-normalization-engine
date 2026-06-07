@@ -9,15 +9,39 @@ is untouched. The deploy added **no running instance** (cost is only at trigger 
 Fire a `lca.manual` / `nlp.run` EventBridge event (same single-flight guard as the burst
 — it won't start if a burst/processor is already running):
 ```
-aws --profile h1b-report events put-events --entries '[{
+# Full NLP run — classify the unclassified backlog, then rebuild + re-snapshot.
+aws --profile h1b-report events put-events --region us-east-1 --entries '[{
   "Source":"lca.manual","DetailType":"nlp.run",
-  "Detail":"{\"mode\":\"nlp-processor\",\"instanceType\":\"c7g.8xlarge\",\"nlpReplicas\":\"8\"}"
+  "Detail":"{\"mode\":\"nlp-processor\",\"instanceType\":\"c7g.4xlarge\",\"nlpReplicas\":\"6\"}"
 }]'
 ```
 The box boots → reads its `Mode`/`NlpReplicas` tags → runs `nlp-processor.sh`:
-restore snapshot → `db:init` → `--scale nlp-worker=8` → sweep (100% enqueue) → drain →
+restore snapshot → `db:init` → `--scale nlp-worker=N` → sweep (100% enqueue) → drain →
 `nlp-finalize.sh` (rebuild candidate + **re-snapshot** + SNS "promotable") → self-terminate.
-36h watchdog applies (drain ≈ 11h on 8 replicas, comfortably inside it).
+
+> **Account on-demand vCPU limit = 16** — so the biggest usable box is **c7g.4xlarge**
+> (16 vCPU); `c7g.8xlarge` (32) **fails to launch**. Wait for any prior box to be fully
+> `terminated` (not just `shutting-down`, which still holds vCPU) before re-firing.
+> Throughput ≈ ~70k rows/hr/replica; 6 replicas ≈ ~6h for the ~2.9M-row backlog.
+
+### Rebuild-only mode (`nlpReplicas=0`) — analytics rebuild WITHOUT classifying
+For year-view / analytics rebuilds where you must **not** re-classify, fire with
+`nlpReplicas=0`. `nlp-processor.sh` then **skips workers/sweep/drain** and goes straight to
+`nlp-finalize.sh` (bootstrap-views → build-sqlite → summaries → re-snapshot → dev deploy).
+```
+aws --profile h1b-report events put-events --region us-east-1 --entries '[{
+  "Source":"lca.manual","DetailType":"nlp.run",
+  "Detail":"{\"mode\":\"nlp-processor\",\"instanceType\":\"c7g.4xlarge\",\"nlpReplicas\":\"0\"}"
+}]'
+```
+**Why this exists:** the FY2010–2019 backfill has **~2.94M rows with no `soc_code`** (titles +
+`_nlp_id` present — just never classified; see PROJECT_STATUS 2026-06-07). A normal run
+*sweeps* those into a multi-day BERT drain, which is wrong when you only want to rebuild the
+analytics surface. `nlpReplicas=0` produces the candidate in ~1.5–2.5h with no churn.
+
+> `nlp-finalize.sh` **seeds summaries** from `candidates/last/lca.db` (`SUMMARY_SEED_DB`)
+> so an unchanged corpus skips the LLM, and writes `candidates/last/lca.db` after upload
+> for the next run. First run after this landed has nothing to seed → full regen.
 
 > Runtime scripts (`nlp-processor.sh`, `docker-compose.yml`) are cloned from `develop` at
 > launch — they MUST be merged to develop before firing `nlp.run`.
