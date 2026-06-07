@@ -543,4 +543,77 @@ much more expensive stage.
 
 ---
 
-*Last updated: 2026-05-04*
+## All-Years Coverage Audit (2026-06-07)
+
+Everything above was measured on the **FY2020–2025** corpus (~3.83M rows). When
+the project later backfilled the full history (**FY2010–2025, 9.12M rows**), an
+audit revealed that the *classifier* was fine but **coverage was not** — a
+distinction worth recording, because it is a classic way to be wrong about being
+"done".
+
+### What changed
+
+The all-years ingest roughly tripled the corpus (3.83M → 9.12M). The plan was to
+re-use the exact Stage 0→1→2 pipeline and let the decoupled NLP processor's
+"sweep" (`apps/ingestor/sweep-enqueue.mjs` → BullMQ → workers) enqueue every
+unclassified row for 100% coverage. After the all-years run, the project state
+*claimed* "all-years NLP complete".
+
+### What we found
+
+A live query against the restored snapshot (read-only `psql` over SSM) told a
+different story:
+
+| Metric | Count | % of 9.12M |
+|---|---:|---:|
+| Rows with a `soc_code` | ~6.00M | ~66% |
+| **Rows with no `soc_code`** | **3,117,304** | **~34%** |
+| ↳ pre-FLAG **FY2010–2019** | **2,935,466** | — |
+| ↳ FLAG FY2020+ | 181,838 | — |
+| Quarantine (`low_soc_confidence`) | 277,305 | ~3% |
+
+The ~277k quarantine (low Stage-2 confidence) is the expected, healthy residual —
+consistent with the older 4.7% on a smaller base. The **~2.94M unclassified
+FY2010–2019 rows are the surprise**: they have **job titles *and* `_nlp_id`**
+(372 empty titles out of 3.1M) — i.e. they are fully classifiable — and they are
+**not in quarantine**. They were simply **never run through the classifier at all.**
+
+### Why it happened
+
+Not a Stage-1/2 quality problem. An **orchestration / coverage** problem: the
+all-years processor's sweep only ever drained ~1k jobs (per its own depth log,
+`1021 → 0`), so the 2010–2019 backfill's classification step effectively never
+executed. The exact root cause (an enqueue path that skipped the pre-FLAG
+partitions, or a sweep that ran against a smaller intermediate dataset) is still
+open and is on the Q1-readiness audit list — it must be closed before the next
+quarterly run, or the same gap recurs.
+
+### What we learned
+
+- **"The queue drained" is not "everything was classified".** An empty queue that
+  *processed everything* and an empty queue that *was never filled* look
+  identical from the worker's side. Completeness has to be **verified against the
+  end state** (`count(*) … WHERE NOT (data ? 'soc_code')`), not inferred from a
+  drained queue or a "success" exit. This single check would have caught it weeks
+  earlier; it is now the canonical post-run assertion.
+- **Separate "low confidence" from "never attempted".** Quarantine answers "the
+  model was unsure"; it says nothing about rows the model never saw. Both must be
+  measured.
+
+### Decision
+
+- **Ship the public year-view now, with an honest caveat** rather than block on a
+  multi-day reclassification — per-year *filings* and *wages* are SOC-independent
+  and complete; only pre-2020 occupation breakdowns under-count, and the
+  methodology page says so.
+- **Add a rebuild-only mode** (`nlp-processor.sh` `NLP_REPLICAS=0`) so an
+  analytics rebuild does *not* sweep the unclassified backlog into an accidental
+  multi-day drain.
+- **Fix the gap deliberately** with one `nlpReplicas=6` processor run (~6h, local
+  BERT, **$0 LLM** — the model is on-box) which sweeps + classifies the ~2.94M
+  rows; the confident picks write back, the rest fall to quarantine for Stage 3.
+  This also corrects production on the next promote.
+
+---
+
+*Last updated: 2026-06-07*
