@@ -38,24 +38,33 @@ docker compose exec -T db psql -U lca_user -d lca_db \
 mkdir -p apps/analytics-web/data
 pnpm --filter analytics-web build:sqlite
 
-# Seed entity_summary from the previous candidate so build:summaries only
-# re-runs the LLM for entities whose data actually changed (build:sqlite always
-# produces a fresh db, so without this every rebuild regenerates ALL summaries).
-# Tolerant: first ever run / missing object → no seed → full regen.
-SUMMARY_SEED_DB=""
-if aws s3 cp "s3://$LCADB_BUCKET/candidates/last/lca.db" /tmp/prev-lca.db 2>/dev/null; then
-  SUMMARY_SEED_DB=/tmp/prev-lca.db
-  echo "nlp-finalize: seeding summaries from previous candidate (candidates/last/lca.db)"
+# Summaries + forecast (LLM). SKIP_SUMMARIES=true (set by the processor for the
+# CLASSIFY passes) skips the LLM entirely: a backfill's job is to classify + persist
+# the snapshot, not to regenerate the SEO candidate — and the Anthropic Message
+# Batches queue can stall a large batch for hours, which must NOT hold the
+# re-snapshot hostage. Pages keep their seeded summaries / fall back to default meta;
+# the final rebuild-only pass (NLP_REPLICAS=0) regenerates them for the promote.
+if [ "${SKIP_SUMMARIES:-false}" = "true" ]; then
+  echo "nlp-finalize: SKIP_SUMMARIES=true — skipping build:summaries + build:forecast (backfill pass)"
 else
-  echo "nlp-finalize: no previous candidate to seed from — full summary regen"
-fi
-LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
-  LLM_PROVIDER=anthropic SUMMARY_SEED_DB="$SUMMARY_SEED_DB" \
-  pnpm --filter analytics-web build:summaries
+  # Seed entity_summary from the previous candidate so build:summaries only
+  # re-runs the LLM for entities whose data actually changed. Tolerant: first run
+  # / missing object → no seed → full regen.
+  SUMMARY_SEED_DB=""
+  if aws s3 cp "s3://$LCADB_BUCKET/candidates/last/lca.db" /tmp/prev-lca.db 2>/dev/null; then
+    SUMMARY_SEED_DB=/tmp/prev-lca.db
+    echo "nlp-finalize: seeding summaries from previous candidate (candidates/last/lca.db)"
+  else
+    echo "nlp-finalize: no previous candidate to seed from — full summary regen"
+  fi
+  LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
+    LLM_PROVIDER=anthropic SUMMARY_SEED_DB="$SUMMARY_SEED_DB" \
+    pnpm --filter analytics-web build:summaries
 
-# Forward-year forecast page (/h1b-2026): deterministic projection + one LLM call.
-LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
-  LLM_PROVIDER=anthropic pnpm --filter analytics-web build:forecast
+  # Forward-year forecast page (/h1b-2026): deterministic projection + one LLM call.
+  LLM_API_KEY=$(aws secretsmanager get-secret-value --secret-id "$LLM_SECRET" --query SecretString --output text) \
+    LLM_PROVIDER=anthropic pnpm --filter analytics-web build:forecast
+fi
 
 # Upload the SOC-complete candidate (staging key; Promote writes the prod key).
 aws s3 cp apps/analytics-web/data/lca.db "s3://$LCADB_BUCKET/candidates/$RELEASE/lca.db"

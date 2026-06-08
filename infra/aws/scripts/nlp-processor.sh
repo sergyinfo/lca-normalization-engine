@@ -97,8 +97,13 @@ COVERAGE_WARN_ONLY=true COVERAGE_MAX_UNCLASSIFIED="${COVERAGE_MAX_UNCLASSIFIED:-
 fi  # end rebuild-only guard (NLP_REPLICAS=0 skips workers/sweep/drain)
 
 # 6. Finalize-after-NLP: rebuild candidate + re-snapshot (the persist step) + notify.
+# A CLASSIFY pass (NLP_REPLICAS>=1) skips the summaries LLM batch — its job is to
+# persist the freshly-classified snapshot, and a large Anthropic batch can stall for
+# hours (it must not hold the re-snapshot hostage). The rebuild-only pass
+# (NLP_REPLICAS=0) regenerates summaries for the promote candidate.
+if [ "${NLP_REPLICAS:-1}" = "0" ]; then SKIP_SUMMARIES=false; else SKIP_SUMMARIES=true; fi
 NOTIFY_TOPIC="$NOTIFY_TOPIC" LLM_SECRET="$LLM_SECRET" LCADB_BUCKET="$LCADB_BUCKET" \
-  ECR_REPO="$ECR_REPO" PGSNAP_BUCKET="$PGSNAP_BUCKET" \
+  ECR_REPO="$ECR_REPO" PGSNAP_BUCKET="$PGSNAP_BUCKET" SKIP_SUMMARIES="$SKIP_SUMMARIES" \
   REGION="$REGION" RELEASE="$RELEASE" INSTANCE_ID="$INSTANCE_ID" \
   bash /opt/lca/infra/aws/scripts/nlp-finalize.sh
 
