@@ -92,6 +92,14 @@ jobs:
             aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
           fi
 
+      # Fail fast (with an actionable message) if the pulled db lags the code —
+      # otherwise a missing column surfaces ~30s into `docker build` as a cryptic
+      # SSG prerender crash. node:sqlite needs Node ≥ 22.5; the script is dep-free.
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Verify baked lca.db matches lib/schema.ts
+        run: node apps/analytics-web/scripts/check-db-schema.mjs apps/analytics-web/data/lca.db
+
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
 
