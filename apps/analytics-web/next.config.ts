@@ -28,10 +28,18 @@ const LCA_DB_PATH   = path.join(__dirname, 'data', 'lca.db');
  * Defensive: tolerates a missing lca.db or a missing redirects table
  * (very-old snapshots) so the build never fails over this.
  */
+// The forecast page lives at the year-agnostic /h1b-forecast. Any old year-stamped
+// URL (e.g. /h1b-2026, /h1b-2027) 301s there so links never break on rollover.
+const FORECAST_YEAR_REDIRECT = {
+  source: '/h1b-:year(\\d{4})',
+  destination: '/h1b-forecast',
+  permanent: true,
+};
+
 async function loadRedirects() {
   if (!existsSync(LCA_DB_PATH)) {
     console.warn('[next.config] No lca.db at build time — skipping redirects');
-    return [];
+    return [FORECAST_YEAR_REDIRECT];
   }
   try {
     const db = new DatabaseSync(LCA_DB_PATH, { readOnly: true });
@@ -45,14 +53,17 @@ async function loadRedirects() {
     if (rows.length > 0) {
       console.log(`[next.config] Loaded ${rows.length} redirect rules from lca.db`);
     }
-    return rows.map((r) => ({
-      source: r.source_path,
-      destination: r.target_path,
-      permanent: true,           // 301 Moved Permanently — preserves link equity
-    }));
+    return [
+      FORECAST_YEAR_REDIRECT,
+      ...rows.map((r) => ({
+        source: r.source_path,
+        destination: r.target_path,
+        permanent: true,           // 301 Moved Permanently — preserves link equity
+      })),
+    ];
   } catch (err) {
     console.warn('[next.config] Failed to load redirects:', err);
-    return [];
+    return [FORECAST_YEAR_REDIRECT];
   }
 }
 

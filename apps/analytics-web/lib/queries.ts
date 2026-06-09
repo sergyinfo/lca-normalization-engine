@@ -340,6 +340,23 @@ export function getForecast(year: number): Forecast | null {
   return { ...rest, content: JSON.parse(content_json) as ForecastContent };
 }
 
+/**
+ * The current forward-year forecast (single most-recent row), whatever its year.
+ * Drives the year-agnostic /h1b-forecast route + footer so the page never breaks
+ * when the forecast rolls (FY2026 → FY2027 …) — no hardcoded year.
+ */
+export function getCurrentForecast(): Forecast | null {
+  let row: ForecastRowRaw | null = null;
+  try {
+    row = queryOne<ForecastRowRaw>(`SELECT * FROM site_forecast ORDER BY year DESC LIMIT 1`);
+  } catch {
+    return null; // table absent on older snapshots
+  }
+  if (!row) return null;
+  const { content_json, ...rest } = row;
+  return { ...rest, content: JSON.parse(content_json) as ForecastContent };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Employer                                                                   */
 /* -------------------------------------------------------------------------- */

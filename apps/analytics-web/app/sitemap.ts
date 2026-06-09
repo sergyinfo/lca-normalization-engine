@@ -17,7 +17,7 @@
 import type { MetadataRoute } from 'next';
 import {
   listAllEmployerSlugs, listAllOccupationSlugs,
-  listAllStateSlugs, listAllSectorSlugs, getSiteKpis, getForecast,
+  listAllStateSlugs, listAllSectorSlugs, getSiteKpis, getCurrentForecast,
 } from '@/lib/queries';
 import { SITE_URL } from '@/lib/site';
 
@@ -47,10 +47,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: url('/cleanest-h1b-sponsors'),     lastModified, changeFrequency: 'monthly', priority: 0.9 },
   ];
 
-  // Forward-year forecast page — included only while it's still a forecast (once
-  // that year's real data lands the route 301s and this drops from the sitemap).
-  const forecast: MetadataRoute.Sitemap = getForecast(2026)
-    ? [{ url: url('/h1b-2026'), lastModified, changeFrequency: 'weekly' as const, priority: 0.8 }]
+  // Forward-year forecast page (year-agnostic URL). Included only while a forecast
+  // row exists; if it's ever absent the route 301s home and this drops out.
+  const forecast: MetadataRoute.Sitemap = getCurrentForecast()
+    ? [{ url: url('/h1b-forecast'), lastModified, changeFrequency: 'weekly' as const, priority: 0.8 }]
     : [];
 
   const employers   = listAllEmployerSlugs().map((slug) => ({
