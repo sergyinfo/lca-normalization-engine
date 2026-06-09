@@ -88,13 +88,19 @@ export function withArchiveDb<T>(label: string, fn: () => T | Promise<T>): T | P
  * shape (unlike better-sqlite3), so we hand-cast results. Centralising here
  * keeps the `as unknown as T` cast confined to one file.
  */
+// node:sqlite returns each row as a NULL-PROTOTYPE object. React refuses to pass
+// null-prototype objects (or class instances) from a Server Component to a Client
+// Component ("Only plain objects … can be passed"), which fails the SSG build for
+// any page that hands a raw row to a 'use client' component. Spreading each row
+// into a plain object here fixes the whole class at the source.
 export function queryAll<T>(sql: string, ...params: unknown[]): T[] {
   const stmt = getDb().prepare(sql) as StatementSync;
-  return stmt.all(...(params as never[])) as unknown as T[];
+  return (stmt.all(...(params as never[])) as Record<string, unknown>[])
+    .map((r) => ({ ...r })) as unknown as T[];
 }
 
 export function queryOne<T>(sql: string, ...params: unknown[]): T | null {
   const stmt = getDb().prepare(sql) as StatementSync;
-  const row = stmt.get(...(params as never[]));
-  return (row as unknown as T) ?? null;
+  const row = stmt.get(...(params as never[])) as Record<string, unknown> | undefined;
+  return row ? ({ ...row } as unknown as T) : null;
 }

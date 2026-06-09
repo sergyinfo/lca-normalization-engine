@@ -55,6 +55,10 @@ export interface EmployerTopSocRow {
 export interface EmployerYearlyRow {
   year: number;
   filings: number;
+  certified: number;
+  withdrawn: number;
+  cert_withdrawn: number;
+  denied: number;
 }
 
 export interface OccupationRow {
@@ -95,7 +99,9 @@ export interface OccupationTopEmployerRow {
 export interface OccupationYearlyRow {
   year: number;
   filings: number | null;
+  p25_wage: number | null;
   median_wage: number | null;
+  p75_wage: number | null;
 }
 
 export interface StateRow {
@@ -200,6 +206,141 @@ export function getSiteKpis(): SiteKpis {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Site yearly trend + forward-year forecast                                  */
+/* -------------------------------------------------------------------------- */
+
+export interface SiteYearlyRow {
+  year: number;
+  filings: number;
+  median_wage: number | null;
+  sponsors: number | null;
+  socs: number | null;
+}
+
+export function getSiteYearly(): SiteYearlyRow[] {
+  return queryAll<SiteYearlyRow>(
+    `SELECT year, filings, median_wage, sponsors, socs FROM site_yearly ORDER BY year ASC`,
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Homepage per-year leaderboards (compact flat arrays, filtered client-side  */
+/* by the selected fiscal year). Derived from the existing per-year tables.   */
+/* -------------------------------------------------------------------------- */
+
+export interface HomeYearEmployerRow { year: number; slug: string; canonical_name: string; filings: number }
+export interface HomeYearOccupationRow { year: number; slug: string; soc_code: string; soc_title: string | null; filings: number }
+export interface HomeYearPayingRow { year: number; soc_code: string; soc_title: string | null; slug: string | null; p50_wage: number | null }
+export interface HomeYearSectorRow { year: number; naics2: string; label: string; filings: number }
+export interface HomeYearStateRow { year: number; code: string; name: string; filings: number }
+
+/** Top sponsors per FY (≤perYear each) from employer_yearly + employer. */
+export function getHomeTopEmployersByYear(perYear = 10): HomeYearEmployerRow[] {
+  return queryAll<HomeYearEmployerRow>(
+    `WITH ranked AS (
+       SELECT ey.year, e.slug, e.canonical_name, ey.filings,
+              row_number() OVER (PARTITION BY ey.year ORDER BY ey.filings DESC) AS rk
+       FROM employer_yearly ey JOIN employer e ON e.slug = ey.employer_slug
+     )
+     SELECT year, slug, canonical_name, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
+}
+
+/** Top occupations by filings per FY (≤perYear each) from occupation_yearly + occupation. */
+export function getHomeTopOccupationsByYear(perYear = 10): HomeYearOccupationRow[] {
+  return queryAll<HomeYearOccupationRow>(
+    `WITH ranked AS (
+       SELECT oy.year, o.slug, o.soc_code, o.soc_title, oy.filings,
+              row_number() OVER (PARTITION BY oy.year ORDER BY oy.filings DESC) AS rk
+       FROM occupation_yearly oy JOIN occupation o ON o.soc_code = oy.soc_code
+       WHERE oy.filings IS NOT NULL
+     )
+     SELECT year, slug, soc_code, soc_title, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
+}
+
+/** Top-paying occupations per FY (precomputed in site_top_paying_occ_yearly). */
+export function getHomeTopPayingByYear(): HomeYearPayingRow[] {
+  return queryAll<HomeYearPayingRow>(
+    `SELECT year, soc_code, soc_title, slug, p50_wage
+       FROM site_top_paying_occ_yearly ORDER BY year, rank ASC`);
+}
+
+/** All tracked sectors per FY (for the donut) from sector_yearly + sector. */
+export function getHomeSectorsByYear(): HomeYearSectorRow[] {
+  return queryAll<HomeYearSectorRow>(
+    `SELECT sy.year, sy.naics2, s.label, sy.filings
+       FROM sector_yearly sy JOIN sector s ON s.naics2 = sy.naics2
+      ORDER BY sy.year, sy.filings DESC`);
+}
+
+/** Top hiring states per FY (≤perYear each) from state_yearly + state. */
+export function getHomeTopStatesByYear(perYear = 12): HomeYearStateRow[] {
+  return queryAll<HomeYearStateRow>(
+    `WITH ranked AS (
+       SELECT sy.year, sy.state_code AS code, st.name, sy.filings,
+              row_number() OVER (PARTITION BY sy.year ORDER BY sy.filings DESC) AS rk
+       FROM state_yearly sy JOIN state st ON st.code = sy.state_code
+     )
+     SELECT year, code, name, filings FROM ranked WHERE rk <= ? ORDER BY year, filings DESC`,
+    perYear);
+}
+
+/** The LLM-written narrative stored in site_forecast.content_json. */
+export interface ForecastContent {
+  meta_title: string;
+  meta_description: string;
+  intro: string;
+  filings_outlook: string;
+  wage_outlook: string;
+  sponsors_outlook: string;
+  occupations_outlook: string;
+  bottom_line: string;
+}
+
+export interface Forecast {
+  year: number;
+  generated_at: number;
+  base_first_year: number;
+  base_last_year: number;
+  proj_filings: number;
+  proj_filings_lo: number;
+  proj_filings_hi: number;
+  proj_median_wage: number | null;
+  cagr_pct: number | null;
+  model: string | null;
+  content: ForecastContent;
+}
+
+interface ForecastRowRaw {
+  year: number;
+  generated_at: number;
+  base_first_year: number;
+  base_last_year: number;
+  proj_filings: number;
+  proj_filings_lo: number;
+  proj_filings_hi: number;
+  proj_median_wage: number | null;
+  cagr_pct: number | null;
+  content_json: string;
+  model: string | null;
+}
+
+/** The forecast for a given target year, or null if none (e.g. that year's real
+ *  data has landed and the forecast moved on — the route 301s in that case). */
+export function getForecast(year: number): Forecast | null {
+  let row: ForecastRowRaw | null = null;
+  try {
+    row = queryOne<ForecastRowRaw>(`SELECT * FROM site_forecast WHERE year = ?`, year);
+  } catch {
+    return null; // table absent on older snapshots
+  }
+  if (!row) return null;
+  const { content_json, ...rest } = row;
+  return { ...rest, content: JSON.parse(content_json) as ForecastContent };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Employer                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -257,7 +398,8 @@ export function getEmployerTopSocs(slug: string): EmployerTopSocRow[] {
 
 export function getEmployerYearly(slug: string): EmployerYearlyRow[] {
   return queryAll<EmployerYearlyRow>(
-    `SELECT year, filings FROM employer_yearly WHERE employer_slug = ? ORDER BY year ASC`,
+    `SELECT year, filings, certified, withdrawn, cert_withdrawn, denied
+       FROM employer_yearly WHERE employer_slug = ? ORDER BY year ASC`,
     slug);
 }
 
@@ -304,7 +446,7 @@ export function getOccupationTopEmployers(socCode: string): OccupationTopEmploye
 
 export function getOccupationYearly(socCode: string): OccupationYearlyRow[] {
   return queryAll<OccupationYearlyRow>(
-    `SELECT year, filings, median_wage FROM occupation_yearly
+    `SELECT year, filings, p25_wage, median_wage, p75_wage FROM occupation_yearly
       WHERE soc_code = ? ORDER BY year ASC`, socCode);
 }
 

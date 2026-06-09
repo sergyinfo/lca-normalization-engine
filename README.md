@@ -408,7 +408,17 @@ snapshot of the canonicalised corpus and never touches Postgres at runtime.
 | Theming | Tailwind 4 + shadcn/ui + Geist + dark mode (next-themes) with CSS-variable theming so every chart tooltip flips correctly | `app/globals.css`, `components/charts/recharts-shared.ts` |
 | SEO canonicals | `metadataBase` + per-route `entityMetadata({ path })`. Archives canonical to live + `noindex`. `/search?q=…` is `noindex, follow`. Compare pages fold `A/B` and `B/A` onto the alphabetically-sorted canonical. Pagination naturally strips `?page=N` because metadata is route-static. | `lib/seo.ts`, `app/layout.tsx` |
 
-Quarterly rebuild on the VPS path is one command:
+**Shipping code (the live AWS path):** a **branch-per-environment** GitHub Actions
+workflow (`.github/workflows/build-and-deploy.yml`, OIDC → `github-actions-deploy`,
+no stored keys) handles code deploys — merge a PR to **`develop`** → it builds the
+arm64 Lambda image and deploys to **dev.h1b.report**; merge `develop` → **`production`**
+→ deploys to **h1b.report**. ~4 min each, no local Docker or EC2 box. CI bakes
+`lca.db` from the freshest S3 candidate and a schema guard (`scripts/check-db-schema.mjs`)
+fails fast if the baked db lags `lib/schema.ts`. *Data/schema* changes still need a
+box rebuild first (CI has no Postgres). Details: [`DEPLOY.md` §3.2](DEPLOY.md#32-code-lifecycle)
+and [`infra/aws/README.md` §CI/CD](infra/aws/README.md#cicd--automated-code-deploys-github-actions).
+
+Quarterly rebuild on the legacy single-VPS path is one command:
 
 ```bash
 ./scripts/release.sh           # full rebuild + deploy (~5 min)

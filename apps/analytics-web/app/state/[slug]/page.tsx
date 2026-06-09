@@ -6,13 +6,15 @@ import { ArrowLeft } from 'lucide-react';
 import {
   getStateBySlug, getStateTopEmployers, getStateTopOccupations, getStateYearly,
   getEntitySummary, getEntityMeta, listAllStateSlugs, getSiteKpis, listTopStates,
+  getSiteYearly,
 } from '@/lib/queries';
 import { fmt, fmtPct } from '@/lib/format';
 import { entityMetadata, placeJsonLd } from '@/lib/seo';
 import { loadArticle } from '@/lib/article';
 import { SITE_URL } from '@/lib/site';
 
-import { EntityHero } from '@/components/EntityHero';
+import type { KpiTile } from '@/components/EntityHero';
+import { StateHeroClient } from '@/components/hero/StateHeroClient';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
@@ -101,7 +103,7 @@ export default async function StatePage(
       <PageMinimap />
 
       <section data-section-id="hero" data-section-label="Overview">
-      <EntityHero
+      <StateHeroClient
         eyebrow="US state"
         chips={chips}
         updatedAt={kpis.generated_at}
@@ -115,24 +117,26 @@ export default async function StatePage(
             sponsors below.
           </>
         }
-        kpis={[
-          { label: 'Total filings',  value: fmt(s.filings),     sub: `Rank #${s.rank} nationally`, accent: true },
-          { label: 'National share', value: `${sharePct.toFixed(1)}%`, sub: 'of US H-1B filings' },
+        rank={s.rank}
+        allTime={{ filings: s.filings, sharePct }}
+        stateYearly={yearly.map((y) => ({ year: y.year, filings: y.filings }))}
+        siteYearly={getSiteYearly().map((y) => ({ year: y.year, filings: y.filings }))}
+        tailKpis={[
           ...(topEmployerShare != null ? [{
             label: 'Top sponsor share',
             value: `${topEmployerShare.toFixed(1)}%`,
-            sub: topEmps[0]!.canonical_name.length > 18
-              ? topEmps[0]!.canonical_name.slice(0, 16) + '…'
-              : topEmps[0]!.canonical_name,
+            sub: (topEmps[0]!.canonical_name.length > 16
+              ? topEmps[0]!.canonical_name.slice(0, 14) + '…'
+              : topEmps[0]!.canonical_name) + ' · all years',
           }] : []),
           ...(topSoc ? [{
             label: 'Top occupation',
             value: topSoc.soc_code,
-            sub: (topSoc.soc_title ?? '').length > 22
-              ? (topSoc.soc_title ?? '').slice(0, 20) + '…'
-              : (topSoc.soc_title ?? '—'),
+            sub: ((topSoc.soc_title ?? '').length > 18
+              ? (topSoc.soc_title ?? '').slice(0, 16) + '…'
+              : (topSoc.soc_title ?? '—')) + ' · all years',
           }] : []),
-        ]}
+        ] satisfies KpiTile[]}
       />
       </section>
 

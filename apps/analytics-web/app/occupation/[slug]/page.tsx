@@ -13,7 +13,7 @@ import { entityMetadata, occupationJsonLd } from '@/lib/seo';
 import { loadArticle } from '@/lib/article';
 import { SITE_URL } from '@/lib/site';
 
-import { EntityHero } from '@/components/EntityHero';
+import { OccupationHeroClient } from '@/components/hero/OccupationHeroClient';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
@@ -102,7 +102,7 @@ export default async function OccupationPage(
       <PageMinimap />
 
       <section data-section-id="hero" data-section-label="Overview">
-      <EntityHero
+      <OccupationHeroClient
         eyebrow="H-1B salary guide"
         chips={chips}
         updatedAt={getSiteKpis().generated_at}
@@ -116,12 +116,14 @@ export default async function OccupationPage(
             Labor Condition Applications filed with the US Department of Labor.
           </>
         }
-        kpis={[
-          { label: 'Median wage', value: fmtUsd(o.p50_wage), sub: 'P50 across filings', accent: true },
-          { label: 'P25 wage',    value: fmtUsd(o.p25_wage), sub: 'lower quartile' },
-          { label: 'P75 wage',    value: fmtUsd(o.p75_wage), sub: 'upper quartile' },
-          { label: 'Filings',     value: fmt(o.filings),     sub: `Rank #${o.rank}` },
-        ]}
+        rank={o.rank}
+        allTime={{
+          filings: o.filings,
+          p25_wage: o.p25_wage,
+          p50_wage: o.p50_wage,
+          p75_wage: o.p75_wage,
+        }}
+        yearly={yearly}
       />
       </section>
 

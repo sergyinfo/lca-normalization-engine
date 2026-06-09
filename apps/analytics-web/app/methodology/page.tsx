@@ -7,6 +7,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { entityMetadata, datasetJsonLd } from '@/lib/seo';
 import { SITE_URL } from '@/lib/site';
+import { getSiteKpis } from '@/lib/queries';
 
 const PAGE_PATH = '/methodology';
 const PAGE_DESCRIPTION =
@@ -20,6 +21,7 @@ export const metadata: Metadata = entityMetadata({
 
 export default function MethodologyPage() {
   const jsonLd = datasetJsonLd(`${SITE_URL}${PAGE_PATH}`, PAGE_DESCRIPTION);
+  const kpis = getSiteKpis();
 
   return (
     <article className="mx-auto max-w-3xl">
@@ -57,9 +59,11 @@ export default function MethodologyPage() {
         Certified-Withdrawn, Denied).
       </p>
       <p className="mt-4 text-muted-foreground">
-        h1b.report covers every release back to fiscal year 2002 — approximately 12 million
-        certified records across 420,000+ unique sponsoring employers and 825 SOC occupation
-        codes. New releases are picked up automatically within 24 hours of DOL publication.
+        h1b.report covers every release back to fiscal year {kpis.first_year} — approximately{' '}
+        {Math.round(kpis.total_records / 1e6)} million records across{' '}
+        {kpis.canonical_employers.toLocaleString()}+ unique sponsoring employers and{' '}
+        {kpis.distinct_socs} SOC occupation codes. New releases are picked up automatically within
+        24 hours of DOL publication.
       </p>
 
       <h2 className="mt-16 text-2xl font-semibold tracking-tight">
@@ -93,6 +97,15 @@ export default function MethodologyPage() {
         Records that fail validation against the published DOL schema are held for review rather
         than silently dropped. Where automated classification is uncertain, the record is
         flagged for human review instead of being assigned a low-confidence label.
+      </p>
+      <p className="mt-4 text-muted-foreground">
+        <strong className="text-foreground">Occupation coverage by era.</strong> Filing counts and
+        wage figures are complete for every year. Occupation (SOC) classification, however, is most
+        complete for <strong className="text-foreground">FY2020 onward</strong>; a substantial share
+        of the older <strong className="text-foreground">FY2010–2019</strong> backfill is not yet
+        SOC-classified. So when you scope a pre-2020 year, occupation breakdowns and SOC-based wage
+        stats undercount — the per-year <em>filings</em> and overall <em>wage</em> figures for those
+        years are unaffected. We are backfilling the remaining classifications.
       </p>
 
       <h2 className="mt-16 text-2xl font-semibold tracking-tight">Wage methodology</h2>

@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "build:sqlite": "tsx scripts/build-sqlite.ts",
     "build:summaries": "tsx scripts/generate-summaries.ts",
-    "build:data": "pnpm run build:sqlite && pnpm run build:summaries",
+    "build:forecast": "tsx scripts/generate-forecast.ts",
+    "build:data": "pnpm run build:sqlite && pnpm run build:summaries && pnpm run build:forecast",
     "keys:create": "tsx scripts/manage-keys.ts create",
     "keys:list": "tsx scripts/manage-keys.ts list",
     "keys:revoke": "tsx scripts/manage-keys.ts revoke"

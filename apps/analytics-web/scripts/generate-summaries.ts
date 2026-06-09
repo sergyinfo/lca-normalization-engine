@@ -22,6 +22,7 @@
 import 'dotenv/config';
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +41,7 @@ async function main() {
   db.exec('PRAGMA journal_mode = MEMORY');
   db.exec('PRAGMA synchronous = OFF');
   ensureSchema(db);
+  seedFromPrior(db);
 
   const useApi = isAnthropicConfigured();
   console.log(`[seo] provider=${useApi ? 'anthropic' : 'stub'} mode=${useApi ? MODE : 'stub'} prompt=${PROMPT_VERSION}`);
@@ -115,7 +117,44 @@ async function main() {
   db.exec('ANALYZE');
   db.close();
   console.log(`[seo] Done. written=${written}, skipped=${skipped}, failed=${failed}`);
-  if (failed > 0) process.exitCode = 1;
+  // A handful of entities can come back empty from the batch (odd legal names,
+  // content filters) — that's cosmetic: the page falls back to default meta. Only
+  // treat it as a build failure if a large fraction failed (systemic: bad key / API
+  // down), not on sparse misses that would needlessly abort the candidate deploy.
+  const failRate = changed.length ? failed / changed.length : 0;
+  if (failed > 0) console.warn(`[seo] ${failed}/${changed.length} had no result (non-fatal; pages fall back to default meta).`);
+  if (failRate > 0.05) {
+    console.error(`[seo] ${(failRate * 100).toFixed(1)}% of summaries failed — treating as systemic.`);
+    process.exitCode = 1;
+  }
+}
+
+/**
+ * Optionally seed `entity_summary` from a prior lca.db (path in $SUMMARY_SEED_DB)
+ * so the skip-if-unchanged path only regenerates entities whose data actually
+ * changed. build-sqlite produces a fresh db each run, so without this every
+ * rebuild re-runs the LLM for all entities; with it, an unchanged corpus costs
+ * ~zero API calls. No-op (→ full regeneration) when the env is unset, the file
+ * is missing, or the prior schema is incompatible. Runs before collectJobs so
+ * the seeded data_hash rows are visible to the skip check.
+ */
+function seedFromPrior(db: DatabaseSync) {
+  const seed = process.env.SUMMARY_SEED_DB;
+  if (!seed) return;
+  if (!fs.existsSync(seed)) { console.log(`[seo] seed db not found (${seed}) — full regen.`); return; }
+  try {
+    db.exec(`ATTACH DATABASE '${seed.replace(/'/g, "''")}' AS seed`);
+    db.exec(`INSERT OR IGNORE INTO entity_summary
+      (kind, slug, summary_md, meta_title, meta_description, keywords, data_hash, generated_at, model)
+      SELECT kind, slug, summary_md, meta_title, meta_description, keywords, data_hash, generated_at, model
+      FROM   seed.entity_summary`);
+    const n = (db.prepare('SELECT count(*) c FROM entity_summary').get() as { c: number }).c;
+    db.exec('DETACH DATABASE seed');
+    console.log(`[seo] seeded ${n} prior summaries from ${seed} — unchanged entities will skip.`);
+  } catch (err) {
+    try { db.exec('DETACH DATABASE seed'); } catch { /* not attached */ }
+    console.warn(`[seo] seed skipped (${(err as Error).message}) — continuing with full regen.`);
+  }
 }
 
 /** Idempotently add meta columns + drop the legacy kind CHECK (so page-level
@@ -157,9 +196,21 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
     const slug = String(r.slug);
     const topSocs = db.prepare(`SELECT soc_code, soc_title, filings FROM employer_top_soc
                                   WHERE employer_slug = ? ORDER BY rank LIMIT 5`).all(slug);
-    const yearly  = db.prepare(`SELECT year, filings FROM employer_yearly
-                                  WHERE employer_slug = ? ORDER BY year`).all(slug);
-    jobs.push({ kind: 'employer', slug, payload: { ...r, top_socs: topSocs, yearly_volume: yearly } });
+    const yearly  = db.prepare(`SELECT year, filings, certified, withdrawn, cert_withdrawn, denied
+                                  FROM employer_yearly WHERE employer_slug = ? ORDER BY year`)
+                      .all(slug) as Array<Record<string, number>>;
+    const ly = yearly.at(-1);
+    const latest_year = ly ? {
+      year: ly.year, filings: ly.filings,
+      certified_pct: pct(ly.certified, ly.filings),
+      withdrawn_pct: pct(ly.withdrawn, ly.filings),
+      denied_pct: pct(ly.denied, ly.filings),
+    } : null;
+    jobs.push({ kind: 'employer', slug, payload: {
+      ...r, top_socs: topSocs,
+      yearly_volume: yearly.map((y) => ({ year: y.year, filings: y.filings })),
+      latest_year,
+    } });
   }
 
   const occs = db.prepare(`SELECT soc_code, slug, soc_title, filings, n_wages,
@@ -173,7 +224,15 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
                                      WHERE soc_code = ? ORDER BY rank LIMIT 5`).all(code);
     const topEmps  = db.prepare(`SELECT canonical_name, filings FROM occupation_top_employer
                                     WHERE soc_code = ? ORDER BY rank LIMIT 5`).all(code);
-    jobs.push({ kind: 'occupation', slug, payload: { ...r, wage_levels: levels, top_states: topStates, top_employers: topEmps } });
+    const oy = db.prepare(`SELECT year, filings, p25_wage, median_wage, p75_wage
+                             FROM occupation_yearly WHERE soc_code = ? ORDER BY year`)
+                 .all(code) as Array<Record<string, number>>;
+    const oly = oy.at(-1);
+    const latest_year = oly ? {
+      year: oly.year, filings: oly.filings,
+      p25_wage: oly.p25_wage, median_wage: oly.median_wage, p75_wage: oly.p75_wage,
+    } : null;
+    jobs.push({ kind: 'occupation', slug, payload: { ...r, wage_levels: levels, top_states: topStates, top_employers: topEmps, latest_year } });
   }
 
   const states = db.prepare(`SELECT code, slug, name, filings FROM state`).all();
@@ -186,15 +245,28 @@ function collectJobs(db: DatabaseSync): SeoJob[] {
     const topSocs = db.prepare(`SELECT soc_code, soc_title, filings
                                   FROM state_top_occupation WHERE state_code = ?
                                   ORDER BY rank LIMIT 5`).all(code);
-    jobs.push({ kind: 'state', slug, payload: { ...r, top_employers: topEmps, top_occupations: topSocs } });
+    const sy = db.prepare(`SELECT year, filings FROM state_yearly WHERE state_code = ? ORDER BY year`)
+                 .all(code) as Array<Record<string, number>>;
+    const sly = sy.at(-1);
+    const latest_year = sly ? { year: sly.year, filings: sly.filings } : null;
+    jobs.push({ kind: 'state', slug, payload: { ...r, top_employers: topEmps, top_occupations: topSocs, latest_year } });
   }
 
   const secs = db.prepare(`SELECT naics2, slug, label, filings, employers FROM sector`).all();
   for (const r of secs as Array<Record<string, unknown>>) {
-    jobs.push({ kind: 'sector', slug: String(r.slug), payload: r });
+    const cy = db.prepare(`SELECT year, filings FROM sector_yearly WHERE naics2 = ? ORDER BY year`)
+                 .all(String(r.naics2)) as Array<Record<string, number>>;
+    const cly = cy.at(-1);
+    const latest_year = cly ? { year: cly.year, filings: cly.filings } : null;
+    jobs.push({ kind: 'sector', slug: String(r.slug), payload: { ...r, latest_year } });
   }
 
   return jobs;
+}
+
+/** Percentage (0–100, one decimal) of n over d; null when d is 0. */
+function pct(n: number, d: number): number | null {
+  return d > 0 ? Math.round((1000 * n) / d) / 10 : null;
 }
 
 /** Page-level summaries: index pages, ranking pages, and featured comparisons. */

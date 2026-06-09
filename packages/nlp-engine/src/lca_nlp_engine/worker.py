@@ -94,7 +94,18 @@ class NlpWorker:
 
     async def run(self) -> None:
         self._connect_db()
-        redis = await aioredis.from_url(self.redis_url, decode_responses=True)
+        # socket_timeout MUST exceed the brpoplpush block (5s) so the blocking pop
+        # isn't cut short; retry_on_timeout + health checks keep ops resilient when
+        # Redis is slow under many workers + a big sweep (the cause of the dropped
+        # batches in the FY2010-2019 backfill — see nlp_worker.job_failed below).
+        redis = await aioredis.from_url(
+            self.redis_url,
+            decode_responses=True,
+            socket_timeout=30,
+            socket_connect_timeout=10,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
         log.info("nlp_worker.started", concurrency=self.concurrency, queue=QUEUE_KEY)
 
         # Drain any backlog left by operator-ui resolves or offline backfills
@@ -111,26 +122,58 @@ class NlpWorker:
                 log.exception("nlp_worker.embed_backlog_failed")
 
         sem = asyncio.Semaphore(self.concurrency)
+        MAX_ATTEMPTS = 5
+        DLQ_KEY = "bull:nlp-tasks:dead"
 
         async def process_one() -> None:
             async with sem:
-                job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
-                if not job_id:
-                    return
+                job_id = None
+                ok = False
                 try:
+                    # The pull is INSIDE the try: a transient brpoplpush/redis error
+                    # must not escape and kill the worker (see the loop guard below).
+                    job_id = await redis.brpoplpush(QUEUE_KEY, PROCESSING_KEY, timeout=5)
+                    if not job_id:
+                        return
                     job_data_str = await redis.hget(f"bull:nlp-tasks:{job_id}", "data")
                     if not job_data_str:
                         log.warning("nlp_worker.missing_job_data", job_id=job_id)
+                        ok = True  # nothing to process — don't re-queue
                         return
                     job = json.loads(job_data_str)
                     await self._handle_job(job)
+                    ok = True
                 except Exception:
                     log.exception("nlp_worker.job_failed", job_id=job_id)
                 finally:
-                    await redis.lrem(PROCESSING_KEY, 1, job_id)
+                    if job_id:
+                        # Reliable-queue ACK: remove from the processing list. On FAILURE,
+                        # RE-QUEUE the job instead of dropping it — a transient redis/db
+                        # timeout under load must not silently lose a batch's ~5k records
+                        # (that bug left ~1.5M FY2010-2019 rows unclassified). Cap attempts
+                        # so a genuinely poisoned job lands in a dead-letter list, not a loop.
+                        await redis.lrem(PROCESSING_KEY, 1, job_id)
+                        if not ok:
+                            try:
+                                attempts = await redis.hincrby(f"bull:nlp-tasks:{job_id}", "attempts", 1)
+                                if attempts <= MAX_ATTEMPTS:
+                                    await redis.lpush(QUEUE_KEY, job_id)
+                                else:
+                                    await redis.lpush(DLQ_KEY, job_id)
+                                    log.error("nlp_worker.job_dead_lettered", job_id=job_id, attempts=attempts)
+                            except Exception:
+                                log.exception("nlp_worker.requeue_failed", job_id=job_id)
 
+        # Loop guard: a transient error in the pull/gather must NOT exit run(). Exiting
+        # makes the process restart and RELOAD the BERT model (~19s); over a long backfill
+        # that becomes a model-reload death spiral (observed: RestartCount=335, ~75% of CPU
+        # wasted on reloads, throughput ~17k/hr instead of ~90k/hr). Log and keep going.
         while self._running:
-            await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
+            try:
+                await asyncio.gather(*[process_one() for _ in range(self.concurrency)])
+            except Exception:
+                log.exception("nlp_worker.loop_error")
+                await asyncio.sleep(1)
 
         await redis.aclose()
         if self._db_conn:

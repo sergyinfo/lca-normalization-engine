@@ -13,7 +13,8 @@ import { entityMetadata } from '@/lib/seo';
 import { loadArticle } from '@/lib/article';
 import { SITE_URL } from '@/lib/site';
 
-import { EntityHero } from '@/components/EntityHero';
+import type { KpiTile } from '@/components/EntityHero';
+import { SectorHeroClient } from '@/components/hero/SectorHeroClient';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
@@ -102,7 +103,7 @@ export default async function SectorPage(
       <PageMinimap />
 
       <section data-section-id="hero" data-section-label="Overview">
-      <EntityHero
+      <SectorHeroClient
         eyebrow="NAICS industry sector"
         chips={chips}
         updatedAt={getSiteKpis().generated_at}
@@ -118,15 +119,17 @@ export default async function SectorPage(
             distinct sponsoring employers.
           </>
         }
-        kpis={[
-          { label: 'Filings',     value: fmt(s.filings),     sub: `Rank #${s.rank}`, accent: true },
-          { label: 'Employers',   value: fmt(s.employers),   sub: 'distinct sponsors' },
+        rank={s.rank}
+        allTime={{ filings: s.filings }}
+        yearly={yearly.map((y) => ({ year: y.year, filings: y.filings }))}
+        tailKpis={[
+          { label: 'Employers', value: fmt(s.employers), sub: 'distinct sponsors · all years' },
           ...(filingsPerEmployer != null ? [{
             label: 'Filings / employer',
             value: fmt(filingsPerEmployer),
-            sub: 'concentration hint',
+            sub: 'concentration hint · all years',
           }] : []),
-        ]}
+        ] satisfies KpiTile[]}
       />
       </section>
 

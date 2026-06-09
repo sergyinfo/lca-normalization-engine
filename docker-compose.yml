@@ -86,7 +86,10 @@ services:
     build:
       context: ./packages/nlp-engine
       dockerfile: Dockerfile
-    container_name: lca_nlp_worker
+    # No container_name: this service is horizontally scaled on the decoupled NLP
+    # processor (`docker compose up -d --scale nlp-worker=N`) — a fixed name would
+    # collide. The worker coordinates across replicas via a Postgres advisory lock
+    # (see worker.py auto_embed), so running N processes is safe and ~N× throughput.
     restart: unless-stopped
     environment:
       REDIS_URL: redis://redis:6379

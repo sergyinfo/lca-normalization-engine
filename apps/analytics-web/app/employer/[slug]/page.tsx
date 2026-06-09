@@ -12,7 +12,7 @@ import { entityMetadata, organizationJsonLd } from '@/lib/seo';
 import { loadArticle } from '@/lib/article';
 import { SITE_URL } from '@/lib/site';
 
-import { EntityHero } from '@/components/EntityHero';
+import { EmployerHeroClient } from '@/components/hero/EmployerHeroClient';
 import { Summary } from '@/components/Summary';
 import { Article } from '@/components/Article';
 import { AdSlot } from '@/components/AdSlot';
@@ -102,7 +102,7 @@ export default async function EmployerPage(
       <PageMinimap />
 
       <section data-section-id="hero" data-section-label="Overview">
-      <EntityHero
+      <EmployerHeroClient
         eyebrow="H-1B sponsor"
         chips={chips}
         updatedAt={getSiteKpis().generated_at}
@@ -118,12 +118,14 @@ export default async function EmployerPage(
             ) : '.'}
           </>
         }
-        kpis={[
-          { label: 'Total filings', value: fmt(e.filings),         sub: e.rank != null ? `Rank #${e.rank}` : 'Outside top-N',       accent: true },
-          { label: 'Certified',     value: fmtPct(e.certified_pct), sub: 'unconditional approval' },
-          { label: 'Withdrawn',     value: fmtPct(e.withdrawn_pct), sub: 'incl. cert-withdrawn' },
-          { label: 'Denied',        value: fmtPct(e.denied_pct),    sub: 'rejection rate' },
-        ]}
+        rank={e.rank}
+        allTime={{
+          filings: e.filings,
+          certified_pct: e.certified_pct,
+          withdrawn_pct: e.withdrawn_pct,
+          denied_pct: e.denied_pct,
+        }}
+        yearly={yearly}
       />
       </section>
 
@@ -141,7 +143,8 @@ export default async function EmployerPage(
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Outcome breakdown</CardTitle>
             <CardDescription>
-              Share of {e.canonical_name}&rsquo;s LCAs by DOL case status.
+              Share of {e.canonical_name}&rsquo;s LCAs by DOL case status, all
+              fiscal years. Use the year filter above for a single-year breakdown.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -162,8 +165,8 @@ export default async function EmployerPage(
           <CardHeader>
             <CardTitle>Top occupations sponsored</CardTitle>
             <CardDescription>
-              SOC codes filed most by {e.canonical_name}. Click any row to open
-              the national salary guide.
+              SOC codes filed most by {e.canonical_name} across all fiscal years.
+              Click any row to open the national salary guide.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-0 pb-0">

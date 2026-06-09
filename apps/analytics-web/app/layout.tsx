@@ -9,10 +9,12 @@ import './globals.css';
 import { SITE_NAME, SITE_URL, GTM_ID } from '@/lib/site';
 import { FEATURES } from '@/lib/features';
 import { ADSENSE_CLIENT_ID } from '@/lib/adsense';
+import { getSiteKpis } from '@/lib/queries';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileNav } from '@/components/MobileNav';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -129,18 +131,21 @@ function SiteHeader() {
           />
         </form>
         <ThemeToggle />
+        <MobileNav links={navLinks} />
       </div>
     </header>
   );
 }
 
 function SiteFooter() {
+  let yearRange = '';
+  try { const k = getSiteKpis(); yearRange = `, FY${k.first_year}–FY${k.last_year}`; } catch { /* lca.db unavailable in this render context */ }
   return (
     <footer className="border-t bg-muted/30">
       <div className="mx-auto max-w-6xl px-4 py-8 text-xs text-muted-foreground space-y-2">
         <p>
           Data sourced from the US Department of Labor Office of Foreign
-          Labor Certification (LCA disclosures, FY2020-FY2025). This site is
+          Labor Certification (LCA disclosures{yearRange}). This site is
           independent and not affiliated with the DOL.
         </p>
         <p className="flex gap-3">
@@ -149,6 +154,8 @@ function SiteFooter() {
           <Link href="/methodology" className="hover:text-foreground">Methodology</Link>
           <span aria-hidden>·</span>
           <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
+          <span aria-hidden>·</span>
+          <Link href="/h1b-2026" className="hover:text-foreground">H-1B 2026 Forecast</Link>
           {FEATURES.api ? (
             <>
               <span aria-hidden>·</span>
