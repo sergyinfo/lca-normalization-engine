@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileNav } from '@/components/MobileNav';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -130,6 +131,7 @@ function SiteHeader() {
           />
         </form>
         <ThemeToggle />
+        <MobileNav links={navLinks} />
       </div>
     </header>
   );
