@@ -1,12 +1,14 @@
 /**
- * /h1b-2026 — forward-year H-1B forecast landing page.
+ * /h1b-forecast — forward-year H-1B forecast landing page.
  *
- * A data-driven projection of FY2026 H-1B / LCA activity, produced BEFORE any
- * FY2026 data exists: deterministic trend numbers (OLS + CAGR, in site_forecast)
- * with an LLM-written narrative. Clearly labelled as a projection, not official data.
+ * A data-driven projection of the next fiscal year's H-1B / LCA activity, produced
+ * BEFORE that year's data exists: deterministic trend numbers (OLS + CAGR, in
+ * site_forecast) with an LLM-written narrative. Clearly labelled as a projection.
  *
- * Lifecycle: when FY2026 real data lands, generate-forecast.ts moves the forecast
- * to FY2027 and there is no site_forecast row for 2026 → this route 301s to home.
+ * The URL is YEAR-AGNOSTIC (`/h1b-forecast`) and the page reads the current forecast
+ * year from the data — so when the forecast rolls (FY2026 → FY2027 …) the page keeps
+ * working and the footer/sitemap never go stale. Old `/h1b-<year>` URLs 301 here
+ * (next.config.ts). If no forecast row exists, this route 301s to home.
  */
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -14,7 +16,7 @@ import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { TrendingUp, LineChart as LineIcon, Info, ArrowRight } from 'lucide-react';
 
-import { getForecast, getSiteYearly, listTopEmployers, listTopOccupations } from '@/lib/queries';
+import { getCurrentForecast, getSiteYearly, listTopEmployers, listTopOccupations } from '@/lib/queries';
 import { fmt, fmtUsd } from '@/lib/format';
 import { entityMetadata } from '@/lib/seo';
 import { SITE_NAME } from '@/lib/site';
@@ -24,23 +26,22 @@ import {
 } from '@/components/ui/card';
 import { LineChartClient } from '@/components/charts/LineChartClient';
 
-const FORECAST_YEAR = 2026;
-
 export function generateMetadata(): Metadata {
-  const f = getForecast(FORECAST_YEAR);
-  if (!f) return entityMetadata({ title: `H-1B ${FORECAST_YEAR} Forecast`, description: '', path: `/h1b-${FORECAST_YEAR}` });
+  const f = getCurrentForecast();
+  if (!f) return entityMetadata({ title: 'H-1B Forecast', description: '', path: '/h1b-forecast' });
   return entityMetadata({
     title: f.content.meta_title,
     description: f.content.meta_description,
-    path: `/h1b-${FORECAST_YEAR}`,
+    path: '/h1b-forecast',
   });
 }
 
 export default function ForecastPage() {
-  const f = getForecast(FORECAST_YEAR);
-  // No forecast for this year → its real data has landed (or never generated).
-  // Preserve the indexed URL's equity with a redirect to home.
+  const f = getCurrentForecast();
+  // No forecast row → nothing to project yet. Redirect to home.
   if (!f) redirect('/');
+  // Year-agnostic: every label/title below derives from the forecast's own year.
+  const FORECAST_YEAR = f.year;
 
   const yearly = getSiteYearly();
   const c = f.content;

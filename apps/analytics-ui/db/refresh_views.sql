@@ -30,6 +30,13 @@ REFRESH MATERIALIZED VIEW analytics.mv_wage_premium_by_soc;
 REFRESH MATERIALIZED VIEW analytics.mv_state_concentration;
 REFRESH MATERIALIZED VIEW analytics.mv_soc_share_by_year;
 
+-- Year-view dashboard (added 2026-06; reads lca_records directly, no deps).
+-- ⚠️ This list MUST cover every matview in analytics_views.sql. A missing entry
+-- silently ships STALE data on the quarterly burst — mv_site_dims_by_year was
+-- missing here, so the homepage Sponsors/SOCs KPIs went blank for the new year.
+-- The CI guard scripts/check-matview-refresh-coverage.mjs now enforces parity.
+REFRESH MATERIALIZED VIEW analytics.mv_site_dims_by_year;
+
 SELECT relname,
        pg_size_pretty(pg_relation_size(oid)) AS size,
        (SELECT reltuples::bigint FROM pg_class c2 WHERE c2.oid = c.oid) AS approx_rows

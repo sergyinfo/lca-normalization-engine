@@ -47,6 +47,9 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter analytics-web typecheck
+      # Guard: refresh_views.sql must refresh every matview analytics_views.sql defines,
+      # or the quarterly burst silently ships stale data (blanked the FY2026 KPIs).
+      - run: node scripts/check-matview-refresh-coverage.mjs
 
   deploy:
     needs: typecheck

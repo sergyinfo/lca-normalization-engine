@@ -110,6 +110,17 @@ else
 fi
 unset CF_TOKEN CLOUDFLARE_API_TOKEN
 
+# Wait for the A-record to actually resolve before announcing. The upsert is instant
+# in Cloudflare, but the email fires the same second and the operator would hit
+# ERR_NAME_NOT_RESOLVED if their resolver had just cached the NXDOMAIN. Poll until the
+# name resolves from here, then a short margin for wider propagation. Best-effort.
+echo "[$(date -u +%FT%TZ)] waiting for operator.h1b.report to resolve before notifying..."
+for _i in $(seq 1 20); do
+  python3 -c "import socket;socket.gethostbyname('operator.h1b.report')" 2>/dev/null && break
+  sleep 6
+done
+sleep 15   # extra margin so the operator's resolver sees it when the email lands
+
 # ----- Notify: ready for review (box stays up; teardown on operator command) -----
 aws sns publish --region "$REGION" --topic-arn "$NOTIFY_TOPIC" \
   --subject "[LCA] review environment ready ($RELEASE)" \

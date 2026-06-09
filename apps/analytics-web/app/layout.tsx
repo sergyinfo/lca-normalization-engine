@@ -155,7 +155,7 @@ function SiteFooter() {
           <span aria-hidden>·</span>
           <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
           <span aria-hidden>·</span>
-          <Link href="/h1b-2026" className="hover:text-foreground">H-1B 2026 Forecast</Link>
+          <Link href="/h1b-forecast" className="hover:text-foreground">H-1B Forecast</Link>
           {FEATURES.api ? (
             <>
               <span aria-hidden>·</span>
