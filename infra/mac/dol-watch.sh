@@ -2,18 +2,27 @@
 #
 # dol-watch.sh — tiny daily DOL LCA-release checker for macOS.
 #
-# Runs from a launchd LaunchAgent (at login + once a day). Your Mac has a
-# residential IP, so DOL's Akamai WAF lets it through (it blocks AWS and
-# datacenter hosts — that's why this can't run in the cloud).
+# Runs from a launchd LaunchAgent (at login + once a day). The OFLC performance
+# PAGE sits behind Akamai Bot Manager, which now hard-403s curl regardless of IP
+# (it fingerprints the TLS/HTTP client, not just the address). So we read the page
+# out of your REAL Safari via AppleScript — a genuine browser runs Akamai's JS and
+# is allowed through. The data FILES, by contrast, are on AkamaiNetStorage (a plain
+# static CDN, no bot check) and download fine with curl.
 #
 # Each run:
-#   1. Fetch the DOL OFLC performance page.
-#   2. Find the newest in-scope "LCA_Disclosure_Data_FY<year>" file
-#      (filing_year >= START_YEAR; annual/Q4 are cumulative supersets).
+#   1. Load the DOL OFLC performance page in Safari; read the .xlsx links from the DOM.
+#   2. Find the newest in-scope LCA disclosure file (filing_year >= START_YEAR;
+#      annual/Q4 are cumulative supersets). NB: DOL sometimes MISSPELLS the name
+#      (e.g. FY2026 Q2 shipped as "LCA_Dislclosure_Data_FY2026_Q2.xlsx"), so the
+#      match tolerates "Dis…closure".
 #   3. If it's newer than what we last processed (a tiny state file):
-#        download it -> upload to the S3 inbox -> fire the burst -> NOTIFY.
+#        download it (curl) -> upload to the S3 inbox -> fire the burst -> NOTIFY.
 #   4. Nothing new  -> exit silently (no notification — zero nag).
 #      Anything fails -> NOTIFY with the reason.
+#
+# One-time setup for the Safari read: Safari → Settings → Advanced → "Show features
+# for web developers", then Develop → "Allow JavaScript from Apple Events" (persists),
+# and grant Automation control of Safari when macOS first prompts.
 #
 # AWS auth: the `aws` CLI signs the requests using the `dol-watch` profile
 # (a dedicated, least-privilege key: s3:PutObject incoming/* + events:PutEvents).
@@ -57,20 +66,65 @@ LOCK="$STATE_DIR/.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then echo "[$(ts)] another run in progress — exiting"; exit 0; fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 
-# Akamai serves the residential IP a 200 *most* of the time, but occasionally a
-# JS challenge curl can't solve (intermittent 403). Retry with backoff (reusing
-# any cookie Akamai sets) before treating it as a real failure.
-HDRS=(-H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      -H 'Accept-Language: en-US,en;q=0.9')
-fetch_page() {  # echoes HTML on success; returns 1 after all retries fail
-  local a html
-  for a in 1 2 3 4; do
-    if html="$(curl -fsS --compressed -A "$UA" "${HDRS[@]}" \
-                 -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$DOL_URL")"; then
-      printf '%s' "$html"; return 0
+# The performance PAGE is Akamai-Bot-Manager-gated → curl gets a hard 403. Read it
+# from the user's real Safari instead (it runs Akamai's JS legitimately). Returns
+# the newline-separated absolute .xlsx URLs from the page DOM. Retries a couple
+# times (Safari slow to launch / page slow to settle) before giving up.
+SAFARI_OSA="$(cat <<'OSA'
+on run argv
+  set theURL to item 1 of argv
+  set safariWasRunning to (application "Safari" is running)
+  tell application "Safari"
+    make new document
+    set myWin to front window
+    set URL of document 1 to theURL
+    set waited to 0
+    repeat
+      delay 1
+      set waited to waited + 1
+      try
+        set rs to (do JavaScript "document.readyState" in document 1)
+      on error
+        set rs to "?"
+      end try
+      if rs is "complete" then exit repeat
+      if waited > 60 then exit repeat
+    end repeat
+    delay 2
+    set linksOut to ""
+    set theErr to ""
+    try
+      set curURL to (URL of document 1)
+      if curURL does not contain "foreign-labor/performance" then error "unexpected URL after load: " & curURL
+      set jsCmd to "Array.from(document.querySelectorAll('a[href$=\".xlsx\"]')).map(function(a){return a.href}).join(String.fromCharCode(10))"
+      set linksOut to (do JavaScript jsCmd in document 1)
+    on error e
+      set theErr to e
+    end try
+    -- Close the tab/window we opened; quit Safari if we launched it (or nothing's
+    -- left open) so the agent never leaves a stray browser behind. A user's existing
+    -- windows are preserved (we only quit when none remain).
+    try
+      close myWin
+    end try
+    try
+      if (not safariWasRunning) or ((count of windows) is 0) then quit
+    end try
+    if theErr is not "" then error theErr
+    if linksOut is "" then error "no .xlsx links found on page"
+    return linksOut
+  end tell
+end run
+OSA
+)"
+browser_links() {  # echoes newline-separated absolute .xlsx URLs; returns 1 after retries
+  local a out
+  for a in 1 2 3; do
+    if out="$(osascript - "$DOL_URL" <<<"$SAFARI_OSA" 2>&1)"; then
+      printf '%s' "$out"; return 0
     fi
-    echo "[$(ts)] page fetch attempt $a/4 failed (Akamai challenge?) — backing off" >&2
-    sleep $(( a * 20 ))
+    echo "[$(ts)] Safari page-read attempt $a/3 failed: $out" >&2
+    sleep $(( a * 15 ))
   done
   return 1
 }
@@ -85,15 +139,18 @@ download() {  # url dest ; retries on transient failure
   return 1
 }
 
-# 1. Fetch the DOL page (residential IP; retried against Akamai's intermittent 403).
-html="$(fetch_page)" || fail "DOL page fetch failed after 4 tries — IP blocked or page down"
+# 1. Read the DOL page via Safari (Akamai 403s curl; a real browser passes).
+links="$(browser_links)" \
+  || fail "Safari page-read failed — check: Safari 'Allow JavaScript from Apple Events' is on, Automation control of Safari is granted, and you're logged into the GUI session"
 
 # 2. Pick the newest in-scope LCA Disclosure file. Mark = "YYYY-Q" (annual = Q4).
+#    Match tolerates DOL's "Dislclosure" misspelling (FY2026 Q2) but still excludes
+#    the FLAG sub-files (LCA_Appendix_A_*, LCA_Worksites_*) — they lack "closure_Data".
 best_mark=""; best_url=""; best_name=""
 while IFS= read -r href; do
   [ -n "$href" ] || continue
   name="${href##*/}"
-  [[ "$name" =~ LCA_Disclosure_Data_FY(20[0-9][0-9]) ]] || continue
+  [[ "$name" =~ LCA_Dis[A-Za-z]*closure_Data_FY(20[0-9][0-9]) ]] || continue
   year="${BASH_REMATCH[1]}"
   [ "$year" -lt "$START_YEAR" ] && continue
   if [[ "$name" =~ _Q([1-4]) ]]; then q="${BASH_REMATCH[1]}"; else q=4; fi
@@ -102,12 +159,22 @@ while IFS= read -r href; do
   if [ -z "$best_mark" ] || [[ "$mark" > "$best_mark" ]]; then
     best_mark="$mark"; best_url="$url"; best_name="$name"
   fi
-done < <(printf '%s' "$html" | grep -oE 'href="[^"]+\.xlsx"' | sed -E 's/^href="//; s/"$//')
+done < <(printf '%s\n' "$links")
 
 [ -n "$best_mark" ] || fail "No in-scope LCA Disclosure files on the page (blocked or page layout changed)"
 
 state="$(cat "$STATE_FILE" 2>/dev/null || echo '0000-0')"
 echo "[$(ts)] newest on page: $best_mark ($best_name); last processed: $state"
+
+# Dry run: report what we found + whether it's new, then stop (no download / upload /
+# burst). Handy for testing detection without spending anything. `DOL_WATCH_DRY_RUN=1`.
+if [ -n "${DOL_WATCH_DRY_RUN:-}" ]; then
+  if [[ "$best_mark" > "$state" ]]; then isnew="YES (would download + upload + fire burst)"; else isnew="no"; fi
+  echo "[$(ts)] DRY_RUN: newest=$best_mark name=$best_name new-vs-state($state)=$isnew"
+  echo "[$(ts)] DRY_RUN: url=$best_url"
+  exit 0
+fi
+
 if [[ ! "$best_mark" > "$state" ]]; then
   echo "[$(ts)] no new release — done (silent)"; exit 0
 fi
