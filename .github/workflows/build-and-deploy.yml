@@ -81,7 +81,16 @@ jobs:
           BUCKET=$(aws cloudformation describe-stack-resources --stack-name LcaSharedStack \
             --query "StackResources[?starts_with(LogicalResourceId,'LcaDbBucket')].PhysicalResourceId | [0]" --output text)
           mkdir -p apps/analytics-web/data
-          aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
+          # Prefer the freshest box output (candidates/last) so the image always bakes
+          # the newest SCHEMA — the prod key only advances on promote, so it can trail
+          # the frontend code and break SSG with "no such column: …". Fall back to the
+          # prod key if no candidate exists yet (e.g. first deploy).
+          if aws s3 cp "s3://${BUCKET}/candidates/last/lca.db" apps/analytics-web/data/lca.db; then
+            echo "Baked lca.db from candidates/last (freshest)"
+          else
+            echo "No candidate found — falling back to the prod key s3://${BUCKET}/lca.db"
+            aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
+          fi
 
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
