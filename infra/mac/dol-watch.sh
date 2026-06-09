@@ -42,6 +42,7 @@ STATE_DIR="$HOME/.dol-watch"
 STATE_FILE="$STATE_DIR/state"
 LOG_FILE="$STATE_DIR/dol-watch.log"
 COOKIE_JAR="$STATE_DIR/cookies.txt"
+SAFARI_OSA_FILE="$STATE_DIR/fetch.applescript"
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
 # ---------------------------------------------------------------------------
 
@@ -70,7 +71,12 @@ trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 # from the user's real Safari instead (it runs Akamai's JS legitimately). Returns
 # the newline-separated absolute .xlsx URLs from the page DOM. Retries a couple
 # times (Safari slow to launch / page slow to settle) before giving up.
-SAFARI_OSA="$(cat <<'OSA'
+#
+# NB: the AppleScript is written to a FILE via a plain heredoc redirect — NOT
+# captured through $( … <<'OSA' … ) — because bash 3.2 (which launchd's /bin/bash
+# is) mis-parses a heredoc nested inside command substitution when the body has
+# parens/quotes, corrupting the rest of the script. The file form is 3.2-safe.
+cat >"$SAFARI_OSA_FILE" <<'OSA'
 on run argv
   set theURL to item 1 of argv
   set safariWasRunning to (application "Safari" is running)
@@ -116,11 +122,10 @@ on run argv
   end tell
 end run
 OSA
-)"
 browser_links() {  # echoes newline-separated absolute .xlsx URLs; returns 1 after retries
   local a out
   for a in 1 2 3; do
-    if out="$(osascript - "$DOL_URL" <<<"$SAFARI_OSA" 2>&1)"; then
+    if out="$(osascript "$SAFARI_OSA_FILE" "$DOL_URL" 2>&1)"; then
       printf '%s' "$out"; return 0
     fi
     echo "[$(ts)] Safari page-read attempt $a/3 failed: $out" >&2
@@ -128,12 +133,14 @@ browser_links() {  # echoes newline-separated absolute .xlsx URLs; returns 1 aft
   done
   return 1
 }
-download() {  # url dest ; retries on transient failure
+download() {  # url dest ; the file CDN (AkamaiNetStorage) intermittently 403s, so
+              # retry generously with resume (-C -) to ride a ~1-2 min bad window.
+              # No cookies: the page is read by Safari now, and a stale Akamai bot
+              # cookie here only risks a 403 — the static file needs none.
   local a
-  for a in 1 2 3; do
-    curl -fsS --compressed -A "$UA" -e "$DOL_URL" \
-      -c "$COOKIE_JAR" -b "$COOKIE_JAR" -o "$2" "$1" && return 0
-    echo "[$(ts)] download attempt $a/3 failed — backing off" >&2
+  for a in 1 2 3 4 5 6; do
+    curl -fsS --compressed -A "$UA" -e "$DOL_URL" -C - -o "$2" "$1" && return 0
+    echo "[$(ts)] download attempt $a/6 failed — backing off" >&2
     sleep $(( a * 20 ))
   done
   return 1
