@@ -90,8 +90,61 @@ With **no** domain context the stack still deploys against the raw
 > **tag**, and `cdk deploy` does **not** repoint it when `:latest` moves to a new
 > digest. After any push you must
 > `aws lambda update-function-code --image-uri …:latest` — `migrate-from-local.sh`
-> now does this automatically. See [`CLOUDFLARE_SETUP.md`](./CLOUDFLARE_SETUP.md)
-> for the DNS/ACM steps.
+> and the CI deploy (below) both do this automatically. See
+> [`CLOUDFLARE_SETUP.md`](./CLOUDFLARE_SETUP.md) for the DNS/ACM steps.
+
+---
+
+## CI/CD — automated code deploys (GitHub Actions)
+
+**This is the default way code ships** — no local Docker, no EC2 box. The
+workflow `.github/workflows/build-and-deploy.yml` is a **branch-per-environment**
+pipeline authenticated with **GitHub OIDC** into the IAM role
+`github-actions-deploy` (refs scoped to `develop`/`production`; no long-lived
+keys in the repo).
+
+| Trigger | What runs | Deploys to |
+|---|---|---|
+| PR → `develop` / `production` | `typecheck` only (required check) | — (gate) |
+| push → `develop` | build → deploy | `:latest` → `lca-analytics-web` → **dev.h1b.report** |
+| push → `production` | build → deploy | `:prod` → `lca-analytics-web-prod` → **h1b.report** |
+
+`develop` and `production` are protected (PR-only). To ship a **code / FE change**:
+open a PR to `develop`, merge → it auto-deploys to dev in ~4 min; then PR
+`develop` → `production`, merge → it auto-deploys to prod.
+
+The `deploy` job (runs only on `push`, never on a PR):
+
+1. **Resolves the target** from the branch (tag / Lambda fn / serve stack).
+2. **OIDC** into `github-actions-deploy`; ECR login.
+3. **Pulls `lca.db` from S3** — `candidates/last/lca.db` (freshest box output),
+   falling back to the prod key `lca.db`. **No data is built in CI** — the image
+   bakes whatever db is in S3 (zero LLM / `build:summaries` calls). Refresh data
+   via the burst pipeline or a local `build:data`.
+4. **Schema guard** — `apps/analytics-web/scripts/check-db-schema.mjs` diffs the
+   pulled db against every table/column in `lib/schema.ts` and **fails fast** if
+   the db lags the code (otherwise a missing column surfaces ~30s into the build
+   as a cryptic `no such column: X` SSG crash).
+5. **Builds + pushes** the `linux/arm64` image on a native `ubuntu-24.04-arm`
+   runner (no QEMU; `--provenance=false --sbom=false` so Lambda accepts it),
+   tagged `:<TAG>` + `:<git-sha>`.
+6. **Deploys** — `update-function-code` on the target Lambda (the `:latest`/`:prod`
+   tag is unchanged but now resolves to a new digest, so this is required — see
+   the repointing gotcha above), then invalidates the target CloudFront (`/*`).
+
+**When CI is *not* enough — schema/data changes.** CI can only bake a pre-built
+`lca.db` (there's no Postgres in CI). A change that adds a SQLite column must
+regenerate the db **first**: fire a rebuild-only box (`NLP_REPLICAS=0`, see
+[`NLP-PROCESSOR.md`](./NLP-PROCESSOR.md)) which republishes
+`candidates/last/lca.db`, **then** merge — CI bakes the fresh candidate. If you
+merge code ahead of the db, the schema guard (step 4) red-flags it.
+
+**Manual fallbacks** (CI down, or a hotfix): build on dev with
+`scripts/migrate-from-local.sh`, then ship to prod box-less with
+`scripts/promote-to-prod.sh` (retags `:latest`→`:prod`, repoints the prod
+Lambda, invalidates prod CF — no rebuild). So there are **two prod paths**: the
+`production`-branch CI deploy (rebuilds) and `promote-to-prod.sh` (retags an
+existing `:latest`). Full lifecycle narrative: [`DEPLOY.md` §3.2](../../DEPLOY.md#32-code-lifecycle).
 
 ---
 

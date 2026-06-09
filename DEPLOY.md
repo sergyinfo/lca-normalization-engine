@@ -163,17 +163,33 @@ pnpm --filter analytics-web build:sqlite
 
 ### 3.2 Code lifecycle
 
-Code changes follow a separate rhythm — typically several deploys per quarter, more during active development.
+Code changes follow a separate rhythm — typically several deploys per quarter, more during active development. **The default path is fully automated by GitHub Actions** (`.github/workflows/build-and-deploy.yml`) — no local Docker, no EC2 box. It's a **branch-per-environment** flow authenticated via GitHub OIDC into the `github-actions-deploy` IAM role (no long-lived keys):
 
 ```
-git push  ─► CI tests   ─► Docker build  ─► Image registry  ─► Deploy        ─► Smoke test
-              (pnpm test,   (~60s)            (push)             (compose up)    (curl health)
-               typecheck)
+PR → develop|production      ─► typecheck (required merge gate; no deploy)
+
+merge → develop  (push)      ─► build arm64 image ─► dev  Lambda  ─► dev.h1b.report   (~4 min)
+merge → production (push)    ─► build arm64 image ─► prod Lambda  ─► h1b.report        (~4 min)
 ```
 
-CI runs typecheck + tests on every push. On merges to `main`, CI builds and pushes the image, then triggers a deploy hook on the VPS. See [Appendix B](#appendix-b--github-actions-workflow) for a sample workflow.
+So shipping a **pure code / FE change** is just: open a PR to `develop`, merge → it auto-deploys to **dev.h1b.report**; then PR `develop` → `production`, merge → it auto-deploys to **h1b.report**. Both `develop` and `production` are protected (PR-only, `typecheck` required).
 
-The site has **no database migration concept** at runtime — every prod release is a complete artifact. The SQLite schema is defined in `apps/analytics-web/lib/schema.ts` and applied fresh each `build:sqlite` run, so schema changes ship with code.
+The `deploy` job (only runs on `push`, never on a PR) does, in order:
+
+1. **Resolve target by branch** — `develop` → tag `:latest`, fn `lca-analytics-web`, dev CloudFront; `production` → tag `:prod`, fn `lca-analytics-web-prod`, prod CloudFront.
+2. **OIDC auth** into `arn:aws:iam::…:role/github-actions-deploy`.
+3. **Pull `lca.db` from S3** — prefers `s3://<LcaDbBucket>/candidates/last/lca.db` (the freshest box-rebuild output) and falls back to the prod key `…/lca.db` only if no candidate exists. *Data is never built here — the image bakes whatever db is in S3 (no LLM / `build:summaries` calls). Data is refreshed by the quarterly burst or a local `build:data`.*
+4. **Schema guard** (`apps/analytics-web/scripts/check-db-schema.mjs`) — diffs every table + column the code expects (parsed from `lib/schema.ts`) against the pulled db and **fails fast** with an actionable message if the db lags the code, instead of letting a missing column surface ~30s into the build as a cryptic `no such column: X` SSG prerender crash.
+5. **Build + push** the `linux/arm64` image (native arm64 runner — no QEMU; `--provenance=false --sbom=false` so Lambda accepts the manifest) tagged `:<TAG>` + `:<git-sha>`.
+6. **Deploy** — `update-function-code` on the target Lambda (the image tag string is unchanged but now resolves to a new digest, so `cdk deploy` is a no-op here — this step is required), wait for update, then invalidate the target CloudFront (`/*`).
+
+**When you still need a box:** a *schema or data* change (e.g. a new SQLite column) requires regenerating `lca.db` from Postgres **first** — CI only bakes a pre-built db, it can't run `build:sqlite` (no Postgres in CI). Fire a rebuild-only box (`NLP_REPLICAS=0`, see [`infra/aws/NLP-PROCESSOR.md`](infra/aws/NLP-PROCESSOR.md)) which republishes `candidates/last/lca.db`, *then* merge — CI bakes the fresh candidate. If you merge code ahead of the db, the schema guard (step 4) red-flags it with the fix.
+
+**Manual fallbacks** (still supported, used when CI is unavailable or for a hotfix): build on dev with `infra/aws/scripts/migrate-from-local.sh` (pulls/bakes `lca.db`, pushes `:latest`, repoints the dev Lambda), then ship to prod **box-less** with `infra/aws/scripts/promote-to-prod.sh` (retags `:latest`→`:prod`, repoints the prod Lambda, invalidates prod CF — no rebuild). Note this means there are **two prod paths**: the `production`-branch CI deploy (rebuilds the image) and `promote-to-prod.sh` (retags the already-built `:latest`).
+
+The site has **no database migration concept** at runtime — every prod release is a complete artifact. The SQLite schema is defined in `apps/analytics-web/lib/schema.ts` and applied fresh each `build:sqlite` run, so schema changes ship with code (and the CI schema guard keeps the baked db in lockstep).
+
+> The legacy single-VPS topology (`docker compose` + SSH deploy) is documented in [Appendix B](#appendix-b--github-actions-workflow) as an alternative for non-AWS hosts.
 
 ### 3.3 LLM summary lifecycle
 
@@ -822,7 +838,79 @@ Required env: `DATABASE_URL` for steps 0 and 1 (typically sourced from `.env`).
 
 ## Appendix B — GitHub Actions workflow
 
-Create `.github/workflows/build-and-deploy.yml`:
+### B.1 — The live workflow (AWS, branch-per-environment) ✅
+
+This is what actually ships the site — `.github/workflows/build-and-deploy.yml`, already in the repo. The behaviour is documented in [§3.2 Code lifecycle](#32-code-lifecycle); this is the at-a-glance reference.
+
+| Trigger | Job(s) | Result |
+|---|---|---|
+| PR → `develop` or `production` | `typecheck` only | required merge gate; no deploy |
+| push → `develop` | `typecheck` → `deploy` | `:latest` → `lca-analytics-web` Lambda → **dev.h1b.report** |
+| push → `production` | `typecheck` → `deploy` | `:prod` → `lca-analytics-web-prod` Lambda → **h1b.report** |
+
+Key properties:
+
+- **Auth:** GitHub OIDC → IAM role `github-actions-deploy` (develop/production refs only — no stored AWS keys).
+- **Runner:** `ubuntu-24.04-arm` — builds the `linux/arm64` Lambda image natively (no QEMU).
+- **Data is not built here.** The image bakes `lca.db` pulled from S3 (`candidates/last`, falling back to the prod key) — **zero LLM / `build:summaries` calls**. Refresh data via the quarterly burst or `pnpm build:data` locally.
+- **Schema guard:** `apps/analytics-web/scripts/check-db-schema.mjs` fails the deploy fast if the pulled db lags `lib/schema.ts` (see §3.2 step 4).
+- **`paths:` filter** — only `apps/analytics-web/**`, `packages/**`, lockfile, root `package.json`, and the workflow file trigger a deploy.
+
+Required GitHub configuration: the OIDC IAM role `github-actions-deploy` (trust policy scoped to the `develop`/`production` refs). No repository secrets are needed for the deploy — the role grants ECR push, `lambda:UpdateFunctionCode`, and `cloudfront:CreateInvalidation`. (The separate `nlp-engine-smoke.yml` Python CI is unrelated to deploys.)
+
+The `deploy` job in full (abridged for the data-pull + guard + build + deploy steps):
+
+```yaml
+  deploy:
+    needs: typecheck
+    if: github.event_name == 'push'      # deploy only on a merge, never on a PR
+    runs-on: ubuntu-24.04-arm            # native arm64 — no QEMU
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve target by branch   # production → :prod / -prod fn / prod stack; else dev
+        run: |
+          if [ "${{ github.ref_name }}" = "production" ]; then
+            { echo "TAG=prod"; echo "FN=lca-analytics-web-prod"; echo "STACK=LcaServeProdStack"; } >> "$GITHUB_ENV"
+          else
+            { echo "TAG=latest"; echo "FN=lca-analytics-web"; echo "STACK=LcaServeStack"; } >> "$GITHUB_ENV"
+          fi
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::299834553927:role/github-actions-deploy
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Pull lca.db from S3 (candidates/last → prod-key fallback)
+        run: |
+          BUCKET=$(aws cloudformation describe-stack-resources --stack-name LcaSharedStack \
+            --query "StackResources[?starts_with(LogicalResourceId,'LcaDbBucket')].PhysicalResourceId | [0]" --output text)
+          mkdir -p apps/analytics-web/data
+          aws s3 cp "s3://${BUCKET}/candidates/last/lca.db" apps/analytics-web/data/lca.db \
+            || aws s3 cp "s3://${BUCKET}/lca.db" apps/analytics-web/data/lca.db
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Verify baked lca.db matches lib/schema.ts   # fail fast if db lags code
+        run: node apps/analytics-web/scripts/check-db-schema.mjs apps/analytics-web/data/lca.db
+      - uses: docker/setup-buildx-action@v4
+      - name: Build + push image
+        run: |
+          docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
+            -f apps/analytics-web/Dockerfile.lambda \
+            -t "$ECR_URI:$TAG" -t "$ECR_URI:${{ github.sha }}" --push .
+      - name: Deploy (update Lambda + invalidate cache)
+        run: |
+          aws lambda update-function-code --function-name "$FN" --image-uri "$ECR_URI:$TAG"
+          aws lambda wait function-updated --function-name "$FN"
+          DIST=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths '/*'
+```
+
+---
+
+### B.2 — Alternative: single-VPS via SSH (compose topology)
+
+Use this only for the non-AWS, `docker compose`-on-a-VPS topology in §5.1/§5.2 (not the live setup). Create `.github/workflows/build-and-deploy.yml`:
 
 ```yaml
 name: Build and Deploy
