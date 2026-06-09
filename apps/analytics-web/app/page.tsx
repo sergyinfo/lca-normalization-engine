@@ -19,7 +19,8 @@ import { Summary } from '@/components/Summary';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { HomeYearProvider, HomeYearBar } from '@/components/home/HomeYearContext';
+import { HomeYearProvider } from '@/components/home/HomeYearContext';
+import { YearNav } from '@/components/home/YearNav';
 import { HomeKpiStrip } from '@/components/home/HomeKpiStrip';
 import { HomeCharts } from '@/components/home/HomeCharts';
 import { HomeTopTables } from '@/components/home/HomeTopTables';
@@ -164,9 +165,22 @@ export default function HomePage() {
 
       {/* ----- Year-aware dashboard (2025 default; pick a year / all years) - */}
       <HomeYearProvider years={years} defaultYear={lastYear}>
-        <HomeYearBar />
+       <div className="md:flex md:gap-6">
+        {/* Desktop: sticky left year rail that follows the scroll */}
+        <div className="hidden shrink-0 md:block">
+          <div className="sticky top-20">
+            <YearNav orientation="vertical" />
+          </div>
+        </div>
 
-        <section className="pt-6 pb-12">
+        {/* Main dashboard column */}
+        <div className="min-w-0 flex-1">
+        {/* Mobile: sticky top year bar (under the header) */}
+        <div className="sticky top-14 z-30 -mx-4 mb-3 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/75 md:hidden">
+          <YearNav orientation="horizontal" />
+        </div>
+
+        <section className="pt-2 pb-12 md:pt-0">
           <HomeKpiStrip bundles={kpiBundles} firstYear={kpis.first_year} lastYear={kpis.last_year} />
         </section>
 
@@ -207,6 +221,8 @@ export default function HomePage() {
         <AdSlot name="home-mid" />
 
         <HomeTopTables bundles={tableBundles} />
+        </div>
+       </div>
       </HomeYearProvider>
 
       <AdSlot name="home-bottom" />

@@ -33,6 +33,12 @@ export function BiggestMoversChart({ data, height = 360 }: BiggestMoversChartPro
   // Recharts wants a mutable array.
   const rows = [...data].sort((a, b) => b.deltaPct - a.deltaPct);
 
+  // The y-axis labels differ by page: 2-letter state codes ("CA"), 7-char SOC
+  // codes ("11-3021"), NAICS digits, etc. A fixed 40px gutter clipped the long
+  // ones — size it to the widest label instead (~8px/char at 12px bold + pad).
+  const maxLen = rows.reduce((m, r) => Math.max(m, r.code.length), 0);
+  const labelWidth = Math.max(40, maxLen * 8 + 16);
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart
@@ -50,7 +56,7 @@ export function BiggestMoversChart({ data, height = 360 }: BiggestMoversChartPro
         <YAxis
           type="category"
           dataKey="code"
-          width={40}
+          width={labelWidth}
           tick={{ fill: 'var(--color-foreground)', fontSize: 12, fontWeight: 600 }}
           axisLine={false}
           tickLine={false}
